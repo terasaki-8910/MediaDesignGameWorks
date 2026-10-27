@@ -51,6 +51,7 @@ export type TransformGroup =
       initial: number; // index into states
       durationMs?: number;
       label?: L10n;
+      stateLabels?: L10n[]; // shown in Fold Mode; describe the pose, not whether it is correct
     }
   | {
       id: Id;
