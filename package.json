@@ -17,7 +17,8 @@
     "ai:metrics": "node tools/ai/metrics.ts",
     "ai:gate": "node tools/ai/gate.ts",
     "ai:check": "node tools/ai/check.ts",
-    "ai:apply": "node tools/ai/apply.ts"
+    "ai:apply": "node tools/ai/apply.ts",
+    "e2e": "node tests/e2e/walk.cjs"
   },
   "dependencies": {
     "@pixiv/three-vrm": "3.5.5",

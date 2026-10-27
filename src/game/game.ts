@@ -15,6 +15,7 @@ import { Input } from './input.ts';
 import { createMaterials } from './materials.ts';
 import { Player, cloakAvatar } from './player.ts';
 import { Telemetry, clientInfo, defaultConsent } from './telemetry.ts';
+import { loadVrmAvatar } from './vrmAvatar.ts';
 import { World, type EdgeMarker } from './world.ts';
 
 export interface Revision { revision: number; updated: string; recent: { date: string; summary: string }[] }
@@ -96,6 +97,14 @@ export class Game {
       if (this.automated) return;
       if (!document.pointerLockElement && (this.mode === 'play' || this.mode === 'fold')) this.openPause();
     });
+    const vrmUrl = params.get('vrm') ?? './assets/player.vrm';
+    loadVrmAvatar(vrmUrl)
+      .then((a) => a && this.player.setAvatar(a))
+      .catch((e) => console.warn('VRM avatar not loaded:', e));
+    this.world
+      .loadGateModel('./assets/gate.glb')
+      .catch((e) => console.warn('gate model not loaded, keeping the procedural gate:', e))
+      .finally(() => this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene));
     requestAnimationFrame((t) => this.frame(t));
   }
 
@@ -152,7 +161,15 @@ export class Game {
     if (announce) {
       this.hud.toast(sec.name.ja, sec.name.en.toUpperCase());
       this.telemetry.log({ type: 'section_enter', section: sec.id });
+      if (sec.intro) {
+        const intro = sec.intro.ja;
+        this.hud.hint(intro);
+        setTimeout(() => this.run.hintTier === 0 && this.hud.hint(null), 9000);
+      }
     }
+    // precompute sweep checks so opening Fold Mode does not hitch
+    const warm = () => sec.consoles.forEach((c) => this.cs.consoleActions(c, this.state));
+    (window.requestIdleCallback ?? ((f: () => void) => setTimeout(f, 50)))(warm);
     this.hud.status(`${this.cs.stage.title.ja} ・ ${sec.name.ja}`);
   }
 
@@ -180,6 +197,11 @@ export class Game {
       case 'fold':
         this.updateFold();
         break;
+      case 'title': {
+        const a = this.time * 0.05;
+        this.rig.setCinematic(new THREE.Vector3(4 + Math.cos(a) * 70, 34, -6 + Math.sin(a) * 70), new THREE.Vector3(2, 6, -4));
+        break;
+      }
       case 'finale':
         this.finaleClock += dt;
         if (this.finaleClock > 6) this.showClear();
@@ -338,6 +360,7 @@ export class Game {
   private commit(a: Action) {
     const sec = this.section;
     this.closeFold(true);
+    this.hud.prompt(null);
     this.mode = 'anim';
     this.run.actions++;
     this.telemetry.log({ type: 'action', section: sec.id, console: a.console, action: actionKey(a), ok: true, cell: this.player.cell });

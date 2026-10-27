@@ -80,7 +80,7 @@ export interface PuzzleSection {
   start: Id; // checkpoint id
   exit: Vec3[]; // reaching any of these cells clears the section
   intent: IntentContract;
-  hintDelaySec?: number;
+  intro?: L10n; // caption shown when the section starts
 }
 
 export interface IntentContract {

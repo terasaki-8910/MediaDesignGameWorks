@@ -194,6 +194,41 @@ export class World {
     });
   }
 
+  /** Swap the procedural gate for the Blender-generated model when public/assets/gate.glb is available. */
+  async loadGateModel(url: string) {
+    const deco = this.cs.modules.find((m) => m.type === 'deco' && m.params.kind === 'gate');
+    const node = deco ? this.root.getObjectByName(deco.id) : undefined;
+    if (!node) return;
+    const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+    const gltf = await new GLTFLoader().loadAsync(url);
+    gltf.scene.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) o.castShadow = o.receiveShadow = true;
+    });
+    node.clear();
+    node.add(gltf.scene);
+    this.gateDisc = gltf.scene.getObjectByName('CoreDisc') ?? null;
+  }
+
+  /** Compile every material once (including the Fold Mode ghosts) so the first fold does not stutter. */
+  warmUp(renderer: THREE.WebGLRenderer, camera: THREE.Camera, scene: THREE.Scene) {
+    for (const g of this.cs.stage.groups) {
+      const ghost = this.ghostFor(g.id);
+      ghost.visible = true;
+      ghost.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).material = this.M.ghost;
+      });
+    }
+    const probe = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), this.M.blockedFlash);
+    this.overlay.add(probe);
+    renderer
+      .compileAsync(scene, camera)
+      .catch(() => {})
+      .finally(() => {
+        for (const g of this.ghosts.values()) g.visible = false;
+        this.overlay.remove(probe);
+      });
+  }
+
   highlightConsole(id: Id | null) {
     this.highlighted = id;
   }

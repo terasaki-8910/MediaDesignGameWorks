@@ -49,11 +49,8 @@ export function paverTexture(seed = 1): THREE.CanvasTexture {
   const q = S / n;
   for (let i = 0; i < n; i++)
     for (let j = 0; j < n; j++) {
-      const v = 206 + Math.floor(r() * 22);
-      const g = ctx.createLinearGradient(i * q, j * q, (i + 1) * q, (j + 1) * q);
-      g.addColorStop(0, `rgb(${v},${v - 6},${v - 14})`);
-      g.addColorStop(1, `rgb(${v - 10},${v - 16},${v - 24})`);
-      ctx.fillStyle = g;
+      const v = 204 + Math.floor(r() * 18);
+      ctx.fillStyle = `rgb(${v},${v - 7},${v - 16})`;
       ctx.fillRect(i * q + 7, j * q + 7, q - 14, q - 14);
     }
   ctx.strokeStyle = 'rgba(255,240,220,0.22)';

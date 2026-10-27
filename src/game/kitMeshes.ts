@@ -20,10 +20,9 @@ function slabMesh(M: Materials, w: number, d: number, cellsU: number, cellsV: nu
   const g = box(w, SLAB, d);
   const uv = g.getAttribute('uv') as THREE.BufferAttribute;
   const top = g.groups[2];
-  for (let i = top.start; i < top.start + top.count; i++) {
-    const vi = g.index!.getX(i);
-    uv.setXY(vi, uv.getX(vi) * cellsU, uv.getY(vi) * cellsV);
-  }
+  const verts = new Set<number>(); // each vertex once: the index buffer repeats shared corners
+  for (let i = top.start; i < top.start + top.count; i++) verts.add(g.index!.getX(i));
+  for (const vi of verts) uv.setXY(vi, uv.getX(vi) * cellsU, uv.getY(vi) * cellsV);
   const m = mesh(g, [M.slabSide, M.slabSide, M.floor, M.slabSide, M.slabSide, M.slabSide]);
   m.position.y = -SLAB / 2;
   m.userData.collider = true;

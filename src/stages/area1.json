@@ -566,6 +566,10 @@
           "c1"
         ],
         "maxDeadEndStates": 0
+      },
+      "intro": {
+        "ja": "道が途切れている。手前の操作盤に立って <kbd>E</kbd>。建築の向きを変えて、道をつなごう。",
+        "en": "The road is broken. Stand at the console and press E to turn the bridge."
       }
     },
     {
@@ -604,6 +608,10 @@
           "c_yaw"
         ],
         "maxDeadEndStates": 0
+      },
+      "intro": {
+        "ja": "巨大な立方体の各面には、それぞれ違う道が刻まれている。転がすと、上を向く面が変わる。",
+        "en": "Each face of the cube carries a different path. Rolling it changes which face is on top."
       }
     },
     {
@@ -644,6 +652,10 @@
           "c_h"
         ],
         "maxDeadEndStates": 0
+      },
+      "intro": {
+        "ja": "谷の向こうに門が見える。吊り下がった街路を倒せば橋になるはずだが……。",
+        "en": "The gate lies across the gorge. The hanging street could become a bridge, if nothing is in the way."
       }
     }
   ],
