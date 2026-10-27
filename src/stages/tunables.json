@@ -1,0 +1,10 @@
+{
+  "player": { "walkSpeed": 5, "dashMultiplier": 1.6 },
+  "camera": { "distance": 8 },
+  "fold": { "durationScale": 1 },
+  "sections": {
+    "s1_first_fold": { "firstHintSec": 20, "secondHintSec": 45, "beacon": 0.7 },
+    "s2_path_cube": { "firstHintSec": 50, "secondHintSec": 100, "beacon": 0.5 },
+    "s3_fold_gate": { "firstHintSec": 60, "secondHintSec": 120, "beacon": 0.5 }
+  }
+}

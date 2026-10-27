@@ -1,0 +1,772 @@
+{
+  "schema": "fold-city/stage@1",
+  "stageId": "area1",
+  "version": "1.0.0",
+  "title": {
+    "ja": "第一区画 折り目",
+    "en": "Area 1: The Fold"
+  },
+  "seed": 1207,
+  "modules": [
+    {
+      "id": "m_start",
+      "type": "tile",
+      "at": [
+        -11,
+        3,
+        -1
+      ],
+      "params": {
+        "size": [
+          3,
+          3
+        ]
+      }
+    },
+    {
+      "id": "m_road1",
+      "type": "tile",
+      "at": [
+        -8,
+        3,
+        0
+      ],
+      "params": {
+        "size": [
+          3,
+          1
+        ]
+      }
+    },
+    {
+      "id": "m_bridge1",
+      "type": "bridge",
+      "at": [
+        -5,
+        3,
+        0
+      ],
+      "group": "g_b1",
+      "params": {
+        "length": 3,
+        "inset": 0.4,
+        "lamps": true
+      }
+    },
+    {
+      "id": "m_road2",
+      "type": "tile",
+      "at": [
+        -2,
+        3,
+        0
+      ],
+      "params": {
+        "size": [
+          3,
+          1
+        ]
+      }
+    },
+    {
+      "id": "plate_w",
+      "type": "plate",
+      "at": [
+        1,
+        3,
+        0
+      ],
+      "params": {
+        "dir": "E"
+      }
+    },
+    {
+      "id": "m_cube",
+      "type": "cube3",
+      "at": [
+        2,
+        0,
+        -1
+      ],
+      "group": "g_cube",
+      "params": {
+        "faces": {
+          "top": [
+            "N",
+            "S"
+          ],
+          "north": [
+            "W",
+            "D"
+          ],
+          "bottom": [
+            "N",
+            "E",
+            "S"
+          ],
+          "south": [
+            "W",
+            "D"
+          ],
+          "east": [
+            "U",
+            "D"
+          ],
+          "west": [
+            "N",
+            "S"
+          ]
+        }
+      },
+      "label": {
+        "ja": "パスキューブ",
+        "en": "Path cube"
+      }
+    },
+    {
+      "id": "plate_n",
+      "type": "plate",
+      "at": [
+        3,
+        3,
+        -2
+      ],
+      "params": {
+        "dir": "S"
+      }
+    },
+    {
+      "id": "m_bal_n",
+      "type": "tile",
+      "at": [
+        2,
+        3,
+        -3
+      ],
+      "params": {
+        "size": [
+          3,
+          1
+        ]
+      }
+    },
+    {
+      "id": "plate_s",
+      "type": "plate",
+      "at": [
+        3,
+        3,
+        2
+      ],
+      "params": {
+        "dir": "N"
+      }
+    },
+    {
+      "id": "m_bal_s",
+      "type": "tile",
+      "at": [
+        2,
+        3,
+        3
+      ],
+      "params": {
+        "size": [
+          3,
+          1
+        ]
+      }
+    },
+    {
+      "id": "d_mural",
+      "type": "deco",
+      "at": [
+        3,
+        3,
+        3
+      ],
+      "params": {
+        "kind": "mural"
+      }
+    },
+    {
+      "id": "plate_e",
+      "type": "plate",
+      "at": [
+        5,
+        3,
+        0
+      ],
+      "params": {
+        "dir": "W"
+      }
+    },
+    {
+      "id": "m_road3",
+      "type": "tile",
+      "at": [
+        6,
+        3,
+        0
+      ],
+      "params": {
+        "size": [
+          4,
+          1
+        ]
+      }
+    },
+    {
+      "id": "m_n0",
+      "type": "tile",
+      "at": [
+        10,
+        3,
+        0
+      ],
+      "params": {
+        "size": [
+          3,
+          2
+        ]
+      }
+    },
+    {
+      "id": "m_street",
+      "type": "bridge",
+      "at": [
+        11,
+        3,
+        -1
+      ],
+      "yaw": 1,
+      "group": "g_street",
+      "params": {
+        "length": 4,
+        "sidePorts": [
+          {
+            "i": 1,
+            "side": "N"
+          }
+        ],
+        "lamps": true
+      },
+      "label": {
+        "ja": "折り畳まれた街路",
+        "en": "Folded street"
+      }
+    },
+    {
+      "id": "m_tower",
+      "type": "tower",
+      "at": [
+        12,
+        3,
+        -2
+      ],
+      "group": "g_tower",
+      "params": {
+        "arms": [
+          "W",
+          "S"
+        ],
+        "depth": 30
+      },
+      "label": {
+        "ja": "腕の塔",
+        "en": "Arm tower"
+      }
+    },
+    {
+      "id": "m_ledge",
+      "type": "tile",
+      "at": [
+        10,
+        3,
+        -3
+      ],
+      "params": {
+        "size": [
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "id": "m_plateau",
+      "type": "tile",
+      "at": [
+        10,
+        3,
+        -7
+      ],
+      "params": {
+        "size": [
+          3,
+          3
+        ]
+      }
+    },
+    {
+      "id": "d_gate",
+      "type": "deco",
+      "at": [
+        11,
+        3,
+        -7
+      ],
+      "params": {
+        "kind": "gate",
+        "size": 1
+      }
+    }
+  ],
+  "groups": [
+    {
+      "id": "g_b1",
+      "kind": "states",
+      "pivot": [
+        -14,
+        12,
+        2
+      ],
+      "axis": "y",
+      "states": [
+        1,
+        0
+      ],
+      "initial": 0,
+      "durationMs": 1800,
+      "label": {
+        "ja": "回転橋",
+        "en": "Turning bridge"
+      },
+      "stateLabels": [
+        {
+          "ja": "南北に向ける",
+          "en": "Point north-south"
+        },
+        {
+          "ja": "東西に向ける",
+          "en": "Point east-west"
+        }
+      ]
+    },
+    {
+      "id": "g_cube",
+      "kind": "orientation",
+      "pivot": [
+        14,
+        6,
+        2
+      ],
+      "initial": 0,
+      "durationMs": 2200,
+      "label": {
+        "ja": "パスキューブ",
+        "en": "Path cube"
+      }
+    },
+    {
+      "id": "g_tower",
+      "kind": "states",
+      "pivot": [
+        50,
+        12,
+        -6
+      ],
+      "axis": "y",
+      "states": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "initial": 2,
+      "durationMs": 1600,
+      "label": {
+        "ja": "腕の塔",
+        "en": "Arm tower"
+      },
+      "stateLabels": [
+        {
+          "ja": "腕を西と南へ",
+          "en": "Arms west and south"
+        },
+        {
+          "ja": "腕を南と東へ",
+          "en": "Arms south and east"
+        },
+        {
+          "ja": "腕を東と北へ",
+          "en": "Arms east and north"
+        },
+        {
+          "ja": "腕を北と西へ",
+          "en": "Arms north and west"
+        }
+      ]
+    },
+    {
+      "id": "g_street",
+      "kind": "states",
+      "pivot": [
+        46,
+        11.4,
+        0
+      ],
+      "axis": "x",
+      "states": [
+        3,
+        0
+      ],
+      "initial": 0,
+      "durationMs": 3200,
+      "label": {
+        "ja": "折り畳まれた街路",
+        "en": "Folded street"
+      },
+      "stateLabels": [
+        {
+          "ja": "吊り下げる",
+          "en": "Let it hang"
+        },
+        {
+          "ja": "倒して水平にする",
+          "en": "Lower it flat"
+        }
+      ]
+    }
+  ],
+  "interactables": [
+    {
+      "id": "c1",
+      "kind": "console",
+      "at": [
+        -6,
+        3,
+        0
+      ],
+      "facing": "N",
+      "controls": "g_b1",
+      "label": {
+        "ja": "回転橋の操作盤",
+        "en": "Bridge console"
+      }
+    },
+    {
+      "id": "c_roll",
+      "kind": "console",
+      "at": [
+        0,
+        3,
+        0
+      ],
+      "facing": "N",
+      "controls": "g_cube",
+      "axis": "x",
+      "label": {
+        "ja": "転がす操作盤",
+        "en": "Roll console"
+      }
+    },
+    {
+      "id": "c_yaw",
+      "kind": "console",
+      "at": [
+        4,
+        3,
+        -3
+      ],
+      "facing": "N",
+      "controls": "g_cube",
+      "axis": "y",
+      "label": {
+        "ja": "回す操作盤",
+        "en": "Turn console"
+      }
+    },
+    {
+      "id": "c_t1",
+      "kind": "console",
+      "at": [
+        10,
+        3,
+        0
+      ],
+      "facing": "N",
+      "controls": "g_tower",
+      "label": {
+        "ja": "塔の操作盤（広場）",
+        "en": "Tower console (plaza)"
+      }
+    },
+    {
+      "id": "c_t2",
+      "kind": "console",
+      "at": [
+        10,
+        3,
+        -3
+      ],
+      "facing": "W",
+      "controls": "g_tower",
+      "label": {
+        "ja": "塔の操作盤（岩棚）",
+        "en": "Tower console (ledge)"
+      }
+    },
+    {
+      "id": "c_h",
+      "kind": "console",
+      "at": [
+        10,
+        3,
+        -2
+      ],
+      "facing": "W",
+      "controls": "g_street",
+      "label": {
+        "ja": "街路の操作盤",
+        "en": "Street console"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "s1_first_fold",
+      "name": {
+        "ja": "最初の折り目",
+        "en": "The First Fold"
+      },
+      "groups": [
+        "g_b1"
+      ],
+      "consoles": [
+        "c1"
+      ],
+      "start": "cp_1",
+      "exit": [
+        [
+          -2,
+          3,
+          0
+        ]
+      ],
+      "intent": {
+        "teaches": [
+          "fold.basic",
+          "preview"
+        ],
+        "optimalActions": {
+          "min": 1,
+          "max": 1
+        },
+        "mustUse": [
+          "c1"
+        ],
+        "maxDeadEndStates": 0
+      },
+      "intro": {
+        "ja": "道が途切れている。手前の操作盤に立って <kbd>E</kbd>。建築の向きを変えて、道をつなごう。",
+        "en": "The road is broken. Stand at the console and press E to turn the bridge."
+      }
+    },
+    {
+      "id": "s2_path_cube",
+      "name": {
+        "ja": "パスキューブ",
+        "en": "The Path Cube"
+      },
+      "groups": [
+        "g_cube"
+      ],
+      "consoles": [
+        "c_roll",
+        "c_yaw"
+      ],
+      "start": "cp_2",
+      "exit": [
+        [
+          7,
+          3,
+          0
+        ]
+      ],
+      "intent": {
+        "teaches": [
+          "fold.roll",
+          "fold.yaw",
+          "console-position-matters"
+        ],
+        "optimalActions": {
+          "min": 2,
+          "max": 3
+        },
+        "mustUse": [
+          "c_roll",
+          "c_yaw"
+        ],
+        "maxDeadEndStates": 0
+      },
+      "intro": {
+        "ja": "巨大な立方体の各面には、それぞれ違う道が刻まれている。転がすと、上を向く面が変わる。",
+        "en": "Each face of the cube carries a different path. Rolling it changes which face is on top."
+      }
+    },
+    {
+      "id": "s3_fold_gate",
+      "name": {
+        "ja": "フォールド・ゲート",
+        "en": "The Fold Gate"
+      },
+      "groups": [
+        "g_tower",
+        "g_street"
+      ],
+      "consoles": [
+        "c_t1",
+        "c_t2",
+        "c_h"
+      ],
+      "start": "cp_3",
+      "exit": [
+        [
+          11,
+          3,
+          -7
+        ]
+      ],
+      "intent": {
+        "teaches": [
+          "interference",
+          "strand-yourself"
+        ],
+        "optimalActions": {
+          "min": 3,
+          "max": 4
+        },
+        "mustUse": [
+          "c_t1",
+          "c_t2",
+          "c_h"
+        ],
+        "maxDeadEndStates": 0
+      },
+      "intro": {
+        "ja": "谷の向こうに門が見える。吊り下がった街路を倒せば橋になるはずだが……。",
+        "en": "The gate lies across the gorge. The hanging street could become a bridge, if nothing is in the way."
+      }
+    }
+  ],
+  "checkpoints": [
+    {
+      "id": "cp_1",
+      "at": [
+        -10,
+        3,
+        0
+      ],
+      "facing": "E"
+    },
+    {
+      "id": "cp_2",
+      "at": [
+        -1,
+        3,
+        0
+      ],
+      "facing": "E"
+    },
+    {
+      "id": "cp_3",
+      "at": [
+        8,
+        3,
+        0
+      ],
+      "facing": "E"
+    }
+  ],
+  "goal": {
+    "at": [
+      11,
+      3,
+      -7
+    ]
+  },
+  "slots": [
+    {
+      "id": "slot_yaw_console",
+      "description": "Where the cube's turn console stands on the north balcony",
+      "target": {
+        "kind": "console",
+        "id": "c_yaw"
+      },
+      "options": [
+        {
+          "at": [
+            4,
+            3,
+            -3
+          ],
+          "facing": "N"
+        },
+        {
+          "at": [
+            2,
+            3,
+            -3
+          ],
+          "facing": "N"
+        },
+        {
+          "at": [
+            3,
+            3,
+            -3
+          ],
+          "facing": "N"
+        }
+      ],
+      "current": 0
+    },
+    {
+      "id": "slot_tower_start",
+      "description": "Initial position of the arm tower in the Fold Gate",
+      "target": {
+        "kind": "groupInitial",
+        "id": "g_tower"
+      },
+      "options": [
+        {
+          "initial": 2
+        },
+        {
+          "initial": 1
+        }
+      ],
+      "current": 0
+    }
+  ],
+  "visualTheme": {
+    "sky": [
+      "#140f3a",
+      "#f0a7a0",
+      "#2a2346"
+    ],
+    "fog": {
+      "color": "#9a7f9e",
+      "density": 0.0042
+    },
+    "accent": "#5ff2ff",
+    "city": {
+      "seed": 1207,
+      "count": 2600,
+      "radius": [
+        85,
+        360
+      ]
+    }
+  }
+}

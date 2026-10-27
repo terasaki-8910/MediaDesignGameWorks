@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "status": { "type": "string", "enum": ["proposed", "no_change", "failed"] },
+    "summary": { "type": "string" },
+    "ops": { "type": "integer" },
+    "checkPassed": { "type": "boolean" }
+  },
+  "required": ["status", "summary", "ops", "checkPassed"],
+  "additionalProperties": false
+}

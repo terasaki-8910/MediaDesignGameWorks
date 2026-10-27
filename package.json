@@ -1,0 +1,35 @@
+{
+  "name": "fold-city",
+  "private": true,
+  "version": "0.1.0",
+  "description": "FOLD / CITY - a WebGL spatial puzzle game whose stages are tuned by an LLM from play data",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "validate": "node tools/validate.ts",
+    "ai:metrics": "node tools/ai/metrics.ts",
+    "ai:gate": "node tools/ai/gate.ts",
+    "ai:check": "node tools/ai/check.ts",
+    "ai:apply": "node tools/ai/apply.ts",
+    "e2e": "node tests/e2e/walk.cjs"
+  },
+  "dependencies": {
+    "@pixiv/three-vrm": "3.5.5",
+    "@vercel/blob": "2.8.2",
+    "postprocessing": "6.39.5",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/three": "0.186.0",
+    "typescript": "6.0.3",
+    "vite": "8.3.5"
+  }
+}

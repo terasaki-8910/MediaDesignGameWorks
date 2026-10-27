@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- . ':(exclude)ai/history'",
+  "functions": {
+    "api/telemetry-export.ts": { "maxDuration": 60 }
+  }
+}
