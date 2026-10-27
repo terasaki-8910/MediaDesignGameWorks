@@ -224,7 +224,7 @@ if (import.meta.main) {
   const out = opt('--out') ?? 'ai/work/metrics.json';
   const history = readHistory();
   const revision = JSON.parse(readFileSync('src/revision.json', 'utf8')).revision as number;
-  const batches = await loadBatches({ dir: opt('--dir'), token: process.env.BLOB_READ_WRITE_TOKEN, sinceDays: Number(opt('--days') ?? 60) });
+  const batches = await loadBatches({ dir: opt('--dir'), exportUrl: process.env.TELEMETRY_EXPORT_URL, sinceDays: Number(opt('--days') ?? 60) });
   const m = computeMetrics(batches, loadStages(), revision, history.lastRunAt);
   m.history = history.entries.slice(-5).map((e) => ({ date: e.date, revision: e.revision, ops: e.ops }));
   mkdirSync(dirname(out), { recursive: true });

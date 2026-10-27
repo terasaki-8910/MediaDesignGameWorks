@@ -1,6 +1,7 @@
 // Vercel Function: receives telemetry batches from the game and stores each batch as one JSON blob.
-// Storage: Vercel Blob (set BLOB_READ_WRITE_TOKEN by connecting a Blob store to the project).
-// Without a token the batch is validated and acknowledged but not stored, so local and preview builds work.
+// Storage: Vercel Blob. Connecting a store to the project sets BLOB_STORE_ID (OIDC) or BLOB_READ_WRITE_TOKEN,
+// and the SDK uses whichever is there. Without either, batches are validated and acknowledged but not stored,
+// so local and preview builds work. GET reports which of the two this deployment has.
 // The validator below is a copy of src/core/telemetry.ts (Vercel bundles api/ separately); a unit test keeps them equal.
 import { put } from '@vercel/blob';
 
@@ -17,24 +18,31 @@ export async function POST(request: Request): Promise<Response> {
   }
   const { batch, errors } = validateBatch(parsed);
   if (!batch) return json(400, { ok: false, errors });
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
-  if (!token) return json(202, { ok: true, stored: false });
+  if (storageMode() === 'none') return json(202, { ok: true, stored: false });
   const day = new Date().toISOString().slice(0, 10);
   const body = JSON.stringify({ ...batch, receivedAt: new Date().toISOString() });
-  const pathname = `telemetry/${day}/${batch.session}-${String(batch.seq).padStart(3, '0')}.json`;
-  const access = process.env.TELEMETRY_BLOB_ACCESS === 'public' ? 'public' : 'private';
-  try {
-    await put(pathname, body, { access, contentType: 'application/json', addRandomSuffix: true, token });
-  } catch (e) {
-    if (access === 'public') throw e;
-    // a store created as public rejects private blobs: fall back so data is not lost
-    await put(pathname, body, { access: 'public', contentType: 'application/json', addRandomSuffix: true, token });
-  }
+  await putJson(`telemetry/${day}/${batch.session}-${String(batch.seq).padStart(3, '0')}.json`, body);
   return json(200, { ok: true, stored: true, events: batch.events.length });
 }
 
 export function GET(): Response {
-  return json(200, { ok: true, service: 'fold-city telemetry' });
+  return json(200, { ok: true, service: 'fold-city telemetry', storage: storageMode() });
+}
+
+/** Which Blob credentials the project has; the SDK resolves the actual token itself. */
+export function storageMode(): 'oidc' | 'token' | 'none' {
+  return process.env.BLOB_STORE_ID ? 'oidc' : process.env.BLOB_READ_WRITE_TOKEN ? 'token' : 'none';
+}
+
+async function putJson(pathname: string, body: string) {
+  const access = process.env.TELEMETRY_BLOB_ACCESS === 'public' ? 'public' : 'private';
+  try {
+    await put(pathname, body, { access, contentType: 'application/json', addRandomSuffix: true });
+  } catch (e) {
+    if (access === 'public') throw e;
+    // a store created as public rejects private blobs: fall back so data is not lost
+    await put(pathname, body, { access: 'public', contentType: 'application/json', addRandomSuffix: true });
+  }
 }
 
 function json(status: number, data: unknown): Response {

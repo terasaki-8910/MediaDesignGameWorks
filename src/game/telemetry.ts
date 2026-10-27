@@ -46,8 +46,9 @@ export class Telemetry {
     this.samples.push([t, cell]);
   }
 
+  /** Send every 3 minutes at most: each batch is one Blob write, and the Hobby plan allows 2,000 a month. */
   tick() {
-    if (performance.now() - this.lastFlush > 45000) this.flush();
+    if (performance.now() - this.lastFlush > 180000) this.flush();
   }
 
   flush(beacon = false) {

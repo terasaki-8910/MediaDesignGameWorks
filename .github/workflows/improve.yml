@@ -1,5 +1,6 @@
 # Self-improvement loop: aggregate play data -> Claude Code proposes edits -> deterministic check/apply -> commit -> deploy.
-# The agent job has no write permission and no deploy credentials; the apply job never runs an LLM.
+# collect reads the play data through the game's API with a GitHub OIDC token (no stored secret);
+# analyze runs the agent with no write permission and no deploy credentials; apply never runs an LLM.
 name: improve
 
 on:
@@ -20,10 +21,14 @@ permissions:
   contents: read
 
 jobs:
-  analyze:
+  # Only this job may ask GitHub for an OIDC token; the game's export endpoint accepts it instead of a secret.
+  collect:
     if: vars.AI_LOOP_MODE != 'off'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       run: ${{ steps.gate.outputs.run }}
     steps:
@@ -36,18 +41,43 @@ jobs:
       - name: Aggregate telemetry (read-only)
         run: npm run ai:metrics -- --out ai/work/metrics.json
         env:
-          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+          TELEMETRY_EXPORT_URL: ${{ vars.TELEMETRY_EXPORT_URL || 'https://mirrordimension.vercel.app/api/telemetry-export' }}
       - name: Gate (enough new sessions, monthly cap)
         id: gate
         env:
           AI_MIN_NEW_SESSIONS: ${{ vars.AI_MIN_NEW_SESSIONS }}
           AI_MAX_RUNS_PER_MONTH: ${{ vars.AI_MAX_RUNS_PER_MONTH }}
         run: npm run ai:gate -- ai/work/metrics.json ${{ inputs.force && '--force' || '' }}
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Improvement loop" >> "$GITHUB_STEP_SUMMARY"
+          echo "gate: ${{ steps.gate.outputs.run }} (${{ steps.gate.outputs.reason }})" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: metrics
+          path: ai/work/metrics.json
+          retention-days: 30
+
+  analyze:
+    needs: collect
+    if: needs.collect.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: metrics
+          path: ai/work/
       - name: Install Claude Code
-        if: steps.gate.outputs.run == 'true'
         run: npm install -g @anthropic-ai/claude-code@2.1.311
       - name: Propose (Claude Code, headless)
-        if: steps.gate.outputs.run == 'true'
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           MODEL: ${{ vars.CLAUDE_MODEL }}
@@ -69,8 +99,6 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "### Improvement loop" >> "$GITHUB_STEP_SUMMARY"
-          echo "gate: ${{ steps.gate.outputs.run }} (${{ steps.gate.outputs.reason }})" >> "$GITHUB_STEP_SUMMARY"
           [ -f ai/work/proposal.json ] && { echo '```json'; cat ai/work/proposal.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
       - uses: actions/upload-artifact@v4
         if: always()
@@ -81,7 +109,6 @@ jobs:
 
   apply:
     needs: analyze
-    if: needs.analyze.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
