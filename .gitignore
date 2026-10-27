@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.vercel/
+ai/work/
+*.log
+.DS_Store
