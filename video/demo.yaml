@@ -1,0 +1,13 @@
+# Recording settings for `npm run video:capture` (see video/README.md).
+url: http://localhost:4173/   # or https://mirrordimension.vercel.app/
+out: video/out/demo-vertical.mp4
+size: [1080, 1920]   # vertical for shorts; [1920, 1080] for the class video
+fps: 30
+quality: high
+hud: true            # in-game UI: puzzle titles and the Fold Mode panel
+demo:                # seconds
+  title: 4           # title screen
+  establish: 3.5     # overview of each puzzle
+  browse: 0.9        # each Fold Mode option shown
+  hold: 1.2          # pause on the chosen option
+  end: 4             # orbit around the gate at the end

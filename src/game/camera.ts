@@ -13,6 +13,8 @@ export class CameraRig {
   private cinematic: { pos: THREE.Vector3; look: THREE.Vector3 } | null = null;
   private ray = new THREE.Raycaster();
   private initialised = false;
+  private following = true;
+  private blend = 0; // 1 right after leaving a framing or cinematic shot, easing back to 0
   private readonly camera: THREE.PerspectiveCamera;
   private readonly colliders: () => THREE.Object3D[];
 
@@ -29,9 +31,10 @@ export class CameraRig {
     this.cinematic = pos ? { pos: pos.clone(), look: (look ?? new THREE.Vector3()).clone() } : null;
   }
 
-  snapBehind(facingYaw: number) {
+  /** Put the follow camera behind the player; `smooth` glides there instead of cutting. */
+  snapBehind(facingYaw: number, smooth = false) {
     this.yaw = facingYaw;
-    this.initialised = false;
+    if (!smooth) this.initialised = false;
   }
 
   update(dt: number, input: Input, player: THREE.Vector3, s: CameraSettings, allowLook: boolean) {
@@ -41,9 +44,15 @@ export class CameraRig {
       this.pitch = Math.min(1.25, Math.max(-0.25, this.pitch));
     }
     const target = player.clone().add(new THREE.Vector3(0, 1.6, 0));
+    // a tall (phone-shaped) frame shows less to the sides, so stand further back
+    const portrait = this.camera.aspect < 1;
     let desiredPos: THREE.Vector3;
     let desiredLook: THREE.Vector3;
     let sharpness = 14;
+    const following = !this.cinematic && !this.frame;
+    if (following && !this.following) this.blend = 1;
+    this.following = following;
+    this.blend = Math.max(0, this.blend - dt / 0.9);
     if (this.cinematic) {
       desiredPos = this.cinematic.pos;
       desiredLook = this.cinematic.look;
@@ -53,7 +62,8 @@ export class CameraRig {
       const dir = new THREE.Vector3(from.x - center.x, 0, from.z - center.z);
       if (dir.lengthSq() < 1e-3) dir.set(0, 0, 1);
       dir.normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.6); // step aside so the player does not block the view
-      desiredPos = center.clone().addScaledVector(dir, radius * 1.55).add(new THREE.Vector3(0, radius * 1.05 + 4, 0));
+      const back = portrait ? 1.45 : 1;
+      desiredPos = center.clone().addScaledVector(dir, radius * 1.55 * back).add(new THREE.Vector3(0, radius * 1.05 * back + 4, 0));
       desiredPos.y = Math.max(desiredPos.y, player.y + 9);
       desiredLook = center.clone();
       sharpness = s.reduceMotion ? 50 : 3.2;
@@ -63,13 +73,14 @@ export class CameraRig {
         Math.sin(this.pitch),
         Math.cos(this.yaw) * Math.cos(this.pitch),
       );
-      let dist = s.distance;
+      let dist = s.distance * (portrait ? 1.15 : 1);
       this.ray.set(target, off);
       this.ray.far = dist;
       const hit = this.ray.intersectObjects(this.colliders(), false)[0];
       if (hit) dist = Math.max(1.4, hit.distance - 0.45);
       desiredPos = target.clone().addScaledVector(off, dist);
       desiredLook = target;
+      sharpness = s.reduceMotion ? 14 : 14 - 11 * this.blend;
     }
     if (!this.initialised) {
       this.pos.copy(desiredPos);

@@ -278,6 +278,34 @@ export function step(c: Vec3, s: Side): [number, number, number] {
   return [c[0] + d[0], c[1], c[2] + d[2]];
 }
 
+/**
+ * Shortest walk over the walk map from one tile to the nearest of `targets`, as the cell keys to pass through
+ * (start excluded; empty when already there), or null when none is reachable. Uses the same rule as the player:
+ * a tile is left through an open edge into an existing tile.
+ */
+export function walkPath(wm: WalkMap, from: string, targets: Iterable<string>): string[] | null {
+  const goal = new Set(targets);
+  if (goal.has(from)) return [];
+  const prev = new Map<string, string>([[from, '']]);
+  const queue = [from];
+  for (let i = 0; i < queue.length; i++) {
+    const t = wm.tiles.get(queue[i]);
+    if (!t) continue;
+    for (const s of SIDES) {
+      const n = cellKey(step(t.cell, s));
+      if (!t.open[s] || prev.has(n) || !wm.tiles.has(n)) continue;
+      prev.set(n, t.key);
+      if (goal.has(n)) {
+        const path = [n];
+        for (let k = t.key; k !== from; k = prev.get(k)!) path.unshift(k);
+        return path;
+      }
+      queue.push(n);
+    }
+  }
+  return null;
+}
+
 function addT(T: Transform, p: Vec3): [number, number, number] {
   const q = apply(T.R, p);
   return [q[0] + T.t[0], q[1] + T.t[1], q[2] + T.t[2]];

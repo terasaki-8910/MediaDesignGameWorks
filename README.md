@@ -4,7 +4,7 @@
 
 ## 遊び方
 
-キーボードとマウスで遊びます。WASD で移動（Shift でダッシュ、Space でジャンプ）、マウスで視点、操作盤の上で E を押すと Fold Mode に入り、A / D で変形先を選んで E で実行します。R でそのパズルをやり直し、Esc でポーズです。第一区画は「最初の折り目」「パスキューブ」「フォールド・ゲート」の3つのパズルで、最短手数はそれぞれ1手・2手・3手です。
+キーボードとマウスで遊びます。WASD で移動（Shift でダッシュ、Space でジャンプ）、マウスで視点、操作盤の上で E を押すと Fold Mode に入り、A / D で変形先を選んで E で実行します。R でそのパズルをやり直し、Esc でポーズです。第一区画は「最初の折り目」「パスキューブ」「フォールド・ゲート」の3つのパズルで、最短手数はそれぞれ1手・2手・3手です。URL に `?demo=1` を付けると、ゲームが自分で最後まで遊ぶデモ再生になります（動画の素材づくりは [video/README.md](video/README.md)）。
 
 ## 開発
 
@@ -17,7 +17,8 @@ npm test           # ソルバー・検証器・改善ループの単体テス�
 npm run validate   # ステージの検証（解けるか、詰みがないか、設計意図を満たすか）
 npm run build      # 型チェックと本番ビルド
 npm run preview    # ビルドの確認（http://localhost:4173）
-npm run e2e        # ブラウザで実際に歩くスモークテスト（preview 起動中に実行。Playwright が必要）
+npm run e2e        # ブラウザで歩くテストとデモ再生のテスト（preview 起動中に実行。npx playwright install chromium が必要）
+npm run video:capture -- video/demo.yaml   # デモを1コマずつ書き出して MP4 にする（ffmpeg が必要）
 ```
 
 URL に `?debug=1` を付けるとテスト用のフック（`window.__fold`）が有効になり、`?q=low|medium|high` で画質を指定できます。
@@ -31,6 +32,7 @@ URL に `?debug=1` を付けるとテスト用のフック（`window.__fold`）�
 | `src/stages/` | ステージデータ（`area1.json`）と調整用の数値（`tunables.json`）。改善ループが変更するのはここだけ |
 | `api/` | Vercel Function。`telemetry.ts` はプレイログを受け取って Vercel Blob に保存し、`telemetry-export.ts` は改善ループにログを渡す（GitHub Actions の OIDC トークンで認証し、前日までのログを日ごとにまとめる） |
 | `tools/ai/` | 改善ループの集計・判定・提案の検証・適用 |
+| `tools/video/`、`video/` | デモ再生を1コマずつ書き出すツールと、その設定（`video/demo.yaml`） |
 | `ai/` | エージェントへの指示（`prompts/`）、出力形式（`schemas/`）、改善履歴（`history/log.json`） |
 | `art/blender/` | Blender の Python スクリプトで生成するアセット（`gen_gate.py` → `public/assets/gate.glb`） |
 | `.github/workflows/` | `ci.yml`（テストとビルド）、`improve.yml`（毎日の改善ループ） |
