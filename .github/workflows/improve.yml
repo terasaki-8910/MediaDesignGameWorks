@@ -137,8 +137,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           MODE: ${{ vars.AI_LOOP_MODE }}
         run: |
-          git config user.name "${{ vars.BOT_GIT_NAME || 'fold-city-bot' }}"
-          git config user.email "${{ vars.BOT_GIT_EMAIL || '41898282+github-actions[bot]@users.noreply.github.com' }}"
+          # Vercel's Hobby plan deploys only commits by the project owner, so by default commit as the repository owner
+          git config user.name "${{ vars.BOT_GIT_NAME || github.repository_owner }}"
+          git config user.email "${{ vars.BOT_GIT_EMAIL || format('{0}+{1}@users.noreply.github.com', github.repository_owner_id, github.repository_owner) }}"
           git add src/stages src/revision.json ai/history
           if git diff --cached --quiet; then echo "nothing to commit"; exit 0; fi
           if [ "$MODE" = "pr" ] && [ "${{ steps.apply.outputs.changed }}" = "true" ]; then

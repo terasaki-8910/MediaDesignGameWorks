@@ -72,3 +72,26 @@ test('the Vercel function validator matches the shared one', () => {
   ];
   for (const s of samples) assert.deepEqual(apiValidateBatch(structuredClone(s)), validateBatch(structuredClone(s)));
 });
+
+test('feedback topics map to what the loop can change', () => {
+  assert.deepEqual(classifyText('歩くのが遅い'), ['walk_slow'], 'slow walking is not a performance complaint');
+  assert.deepEqual(classifyText('変形の演出が長くて待たされる'), ['fold_slow']);
+  assert.deepEqual(classifyText('操作盤に気づかなかった'), ['console_unnoticed'], 'the console is not a controls complaint');
+  assert.deepEqual(classifyText('画面がカクカクして重い'), ['performance']);
+  assert.deepEqual(classifyText('折りたたまれる街がきれい'), ['positive']);
+});
+
+test('with few players the loop makes one small change at a time', () => {
+  const few = ctx();
+  few.metrics = computeMetrics(syntheticBatches(2), few.stages, 1, null);
+  const base = {
+    schema: 'fold-city/proposal@1', summary: 's', noChange: false,
+    hypotheses: [{ id: 'H1', section: 's2_path_cube', problem: 'p', evidence: ['feedback.labels'], confidence: 'low' }],
+  };
+  const hint = (value: number) => ({ op: 'setTunable', path: 'sections.s2_path_cube.firstHintSec', value, why: 'H1' });
+  assert.deepEqual(checkProposal({ ...base, ops: [hint(35)] }, few).errors, [], 'one small change is fine with two sessions');
+  const two = checkProposal({ ...base, ops: [hint(35), { op: 'setTunable', path: 'camera.distance', value: 9, why: 'H1' }] }, few);
+  assert.ok(two.errors.some((e) => e.includes('at most one thing')));
+  const big = checkProposal({ ...base, ops: [hint(120)] }, ctx());
+  assert.ok(big.errors.some((e) => e.includes('move at most')), 'a number moves at most a quarter of its range per run');
+});

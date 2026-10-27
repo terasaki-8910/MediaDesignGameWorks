@@ -35,15 +35,22 @@ export interface Metrics {
   history: { date: string; revision: number; ops: string[] }[];
 }
 
+// Free text never reaches the agent: it only sees how many answers mention each topic.
 const LABELS: [string, RegExp][] = [
   ['camera_confusing', /カメラ|視点|見づら|見にく|camera/i],
   ['unclear_next_step', /分から|わから|迷|どこ|何をす|unclear|confus|lost/i],
+  ['console_unnoticed', /操作盤.{0,8}(分から|わから|見つから|気づ|気付)|console/i],
+  ['controls_confusing', /操作(?!盤)|キーボード|ボタン|マウス|\bcontrols?\b/i],
+  ['hint_mention', /ヒント|hint/i],
   ['too_hard', /難し|むずかし|詰ま|hard|difficult|stuck/i],
-  ['too_easy', /簡単|易し|すぐ|easy/i],
-  ['loved_fold', /折|変形|回転|すご|きれい|綺麗|美し|面白|おもしろ|楽し|fold|beautiful|fun/i],
+  ['too_easy', /簡単|易し|物足りな|easy/i],
+  ['walk_slow', /(歩|移動|足|動き).{0,6}(遅|のろ|もっさり)|もっと速|walk.{0,10}slow/i],
+  ['walk_fast', /(歩|移動|動き).{0,6}(速すぎ|早すぎ)|too fast/i],
+  ['fold_slow', /(変形|回転|折|アニメ|演出).{0,8}(遅|長|待)|待たさ|待ち時間/i],
   ['motion_sickness', /酔|気持ち悪|sick/i],
-  ['performance', /重|カク|遅|ラグ|lag|slow|fps/i],
-  ['bug', /バグ|おかし|動かな|bug|broken/i],
+  ['performance', /重い|重た|カクカク|カクつ|ラグ|フレーム|fps|\blag\b|stutter/i],
+  ['bug', /バグ|おかし|動かな|不具合|固ま|bug|broken|glitch/i],
+  ['positive', /すご|きれい|綺麗|美し|面白|おもしろ|楽し|好き|よかった|良かった|beautiful|\bfun\b|love/i],
 ];
 
 export function classifyText(text: string): string[] {
