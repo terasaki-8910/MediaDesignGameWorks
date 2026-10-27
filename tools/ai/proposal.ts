@@ -21,7 +21,16 @@ export interface Proposal {
   noChange: boolean;
 }
 
-export const LIMITS = { maxOps: 3, maxHypotheses: 5, slotMinEntered: 10, cooldownRuns: 2, maxSummary: 300 };
+export const LIMITS = {
+  maxOps: 3,
+  maxHypotheses: 5,
+  slotMinEntered: 10,
+  cooldownRuns: 2,
+  maxSummary: 300,
+  // with only a handful of sessions, one small change per run, so a single player cannot swing the stage
+  fewSessions: 5,
+  maxStepShare: 0.25, // a number moves at most this share of its range per run
+};
 
 export interface CheckResult {
   ok: boolean;
@@ -54,6 +63,8 @@ export function checkProposal(
   if (p.noChange && p.ops.length) fail('noChange is true but ops is not empty');
   if (!p.noChange && !p.ops.length) fail('ops is empty: set noChange to true instead');
   if (p.ops.length > LIMITS.maxOps) fail(`at most ${LIMITS.maxOps} ops per run`);
+  if (ctx.metrics.window.sessions < LIMITS.fewSessions && p.ops.length > 1)
+    fail(`with fewer than ${LIMITS.fewSessions} sessions, change at most one thing per run`);
 
   const sectionIds = new Set(ctx.stages.flatMap((s) => s.sections.map((x) => x.id)));
   const hyp = new Map(p.hypotheses.map((h) => [h.id, h]));
@@ -81,7 +92,13 @@ export function checkProposal(
       if (!r) fail(`${o.path}: not a tunable path`);
       else if (typeof o.value !== 'number' || o.value < r[0] || o.value > r[1]) fail(`${o.path}: value must be within [${r[0]}, ${r[1]}]`);
       else if (o.path.startsWith('sections.') && !sectionIds.has(o.path.split('.')[1])) fail(`${o.path}: unknown section`);
-      else setPath(tunables as unknown as Record<string, unknown>, o.path, o.value);
+      else {
+        const from = getPath(ctx.tunables, o.path);
+        const step = round((r[1] - r[0]) * LIMITS.maxStepShare);
+        if (typeof from === 'number' && Math.abs(o.value - from) > step + 1e-9)
+          fail(`${o.path}: move at most ${step} per run (now ${from}, so between ${round(from - step)} and ${round(from + step)})`);
+        else setPath(tunables as unknown as Record<string, unknown>, o.path, o.value);
+      }
     } else if (o.op === 'chooseSlot') {
       const st = stages.find((s) => s.stageId === o.stage);
       const slot = st?.slots?.find((s) => s.id === o.slot);
@@ -110,4 +127,8 @@ export function checkProposal(
   for (const r of reports) for (const i of r.issues) if (i.level === 'error') fail(`stage ${r.stageId} [${i.rule}] ${i.message}`);
   for (const e of tunableErrors(tunables, [...sectionIds])) fail(`tunables: ${e}`);
   return { ok: !errors.length, errors, stages, tunables, reports, opLabels: p.ops.map(opLabel) };
+}
+
+function round(x: number) {
+  return Math.round(x * 1000) / 1000;
 }
