@@ -18,7 +18,8 @@
     "ai:gate": "node tools/ai/gate.ts",
     "ai:check": "node tools/ai/check.ts",
     "ai:apply": "node tools/ai/apply.ts",
-    "e2e": "node tests/e2e/walk.cjs"
+    "e2e": "node tests/e2e/walk.cjs && node tests/e2e/demo.cjs",
+    "video:capture": "node tools/video/capture.ts"
   },
   "dependencies": {
     "@pixiv/three-vrm": "3.5.5",
@@ -29,7 +30,9 @@
   "devDependencies": {
     "@types/node": "22.20.5",
     "@types/three": "0.186.0",
+    "playwright": "1.63.0",
     "typescript": "6.0.3",
-    "vite": "8.3.5"
+    "vite": "8.3.5",
+    "yaml": "2.9.1"
   }
 }

@@ -1,6 +1,6 @@
 // E2E smoke test in a real browser: walk the route with simulated input and use the first console.
 // Needs a running build: `npm run build && npm run preview` (or set BASE_URL to a deployment).
-// Playwright is not a project dependency (CI does not run this); install it locally with `npm i -g playwright`.
+// CI does not run this; install the browser once with `npx playwright install chromium`.
 const assert = require('node:assert/strict');
 const { chromium } = require('playwright');
 
