@@ -3,8 +3,10 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { readHistory, runsThisMonth } from './history.ts';
 import type { Metrics } from './metrics.ts';
 
-const MIN_NEW = Number(process.env.AI_MIN_NEW_SESSIONS ?? 8);
-const MAX_RUNS = Number(process.env.AI_MAX_RUNS_PER_MONTH ?? 20);
+// unset GitHub variables arrive as empty strings, so fall back on anything that is not a number
+const num = (v: string | undefined, d: number) => (v && Number.isFinite(Number(v)) ? Number(v) : d);
+const MIN_NEW = num(process.env.AI_MIN_NEW_SESSIONS, 8);
+const MAX_RUNS = num(process.env.AI_MAX_RUNS_PER_MONTH, 20);
 const force = process.argv.includes('--force');
 const file = process.argv.slice(2).find((a) => !a.startsWith('--')) ?? 'ai/work/metrics.json';
 const m = JSON.parse(readFileSync(file, 'utf8')) as Metrics;

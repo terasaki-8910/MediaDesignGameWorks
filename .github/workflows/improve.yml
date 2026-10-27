@@ -39,6 +39,9 @@ jobs:
           BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
       - name: Gate (enough new sessions, monthly cap)
         id: gate
+        env:
+          AI_MIN_NEW_SESSIONS: ${{ vars.AI_MIN_NEW_SESSIONS }}
+          AI_MAX_RUNS_PER_MONTH: ${{ vars.AI_MAX_RUNS_PER_MONTH }}
         run: npm run ai:gate -- ai/work/metrics.json ${{ inputs.force && '--force' || '' }}
       - name: Install Claude Code
         if: steps.gate.outputs.run == 'true'
