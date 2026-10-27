@@ -198,6 +198,16 @@ export class World {
     this.highlighted = id;
   }
 
+  /** Faint guidance columns over the given consoles; level 0..1 comes from the `beacon` tunable. */
+  setGuidance(ids: Id[], level: number) {
+    for (const [id, node] of this.consoleNodes) {
+      const guide = node.getObjectByName('guide') as THREE.Mesh;
+      const on = ids.includes(id) && level > 0.01;
+      guide.visible = on;
+      if (on) (guide.material as THREE.MeshBasicMaterial).opacity = 0.05 + 0.22 * level;
+    }
+  }
+
   /** Expanding ring of light, used when a console fires. */
   pulse(at: THREE.Vector3) {
     const m = new THREE.Mesh(

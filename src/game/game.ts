@@ -147,6 +147,7 @@ export class Game {
     const cp = this.cs.stage.checkpoints.find((c) => c.id === sec.start)!;
     if (i === 0 || !announce) this.player.place(cp.at, cp.facing, this.cs.walkMap(this.state));
     this.world.highlightConsole(null);
+    this.world.setGuidance(sec.consoles, this.data.tunables.sections[sec.id]?.beacon ?? 0);
     this.hud.hint(null);
     if (announce) {
       this.hud.toast(sec.name.ja, sec.name.en.toUpperCase());

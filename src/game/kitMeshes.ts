@@ -275,7 +275,12 @@ export function consoleMesh(c: Interactable, M: Materials): THREE.Group {
   beacon.position.set(d[0] * 1.35, 16, d[2] * 1.35);
   beacon.visible = false;
   beacon.name = 'beacon';
-  g.add(ped, top, holo, ring, beacon);
+  // faint guidance column, brightness set by the section's `beacon` tunable
+  const guide = mesh(new THREE.CylinderGeometry(0.5, 0.5, 14, 12, 1, true), M.glowSoft.clone(), false, false);
+  guide.position.set(d[0] * 1.35, 7.6, d[2] * 1.35);
+  guide.name = 'guide';
+  guide.visible = false;
+  g.add(ped, top, holo, ring, beacon, guide);
   return g;
 }
 
