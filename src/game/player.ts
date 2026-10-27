@@ -92,10 +92,18 @@ export class Player {
     return this.jump > 0;
   }
 
-  update(dt: number, input: Input, camYaw: number, wm: WalkMap, opts: { locked: boolean; walkSpeed: number; dash: number }) {
+  /** `steer` (world XZ, length up to 1) replaces the keyboard, for the demo playback. */
+  update(
+    dt: number, input: Input, camYaw: number, wm: WalkMap,
+    opts: { locked: boolean; walkSpeed: number; dash: number; steer?: { x: number; z: number } | null },
+  ) {
     let mx = 0;
     let mz = 0;
-    if (!opts.locked) {
+    if (opts.steer && !opts.locked) {
+      const len = Math.hypot(opts.steer.x, opts.steer.z);
+      mx = len > 1 ? opts.steer.x / len : opts.steer.x;
+      mz = len > 1 ? opts.steer.z / len : opts.steer.z;
+    } else if (!opts.locked) {
       const f = (input.down('KeyW') || input.down('ArrowUp') ? 1 : 0) - (input.down('KeyS') || input.down('ArrowDown') ? 1 : 0);
       const r = (input.down('KeyD') || input.down('ArrowRight') ? 1 : 0) - (input.down('KeyA') || input.down('ArrowLeft') ? 1 : 0);
       mx = -Math.sin(camYaw) * f + Math.cos(camYaw) * r;

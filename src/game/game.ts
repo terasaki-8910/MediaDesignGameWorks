@@ -9,6 +9,7 @@ import type { Action, PuzzleSection, PuzzleState, StageFile } from '../core/type
 import { Sound } from './audio.ts';
 import { BackgroundCity, setupEnvironment } from './backdrop.ts';
 import { CameraRig } from './camera.ts';
+import { DemoDirector, type DemoOptions } from './demo.ts';
 import { Engine } from './engine.ts';
 import { Hud, type Settings } from './hud.ts';
 import { Input } from './input.ts';
@@ -20,6 +21,8 @@ import { World, type EdgeMarker } from './world.ts';
 
 export interface Revision { revision: number; updated: string; recent: { date: string; summary: string }[] }
 export interface GameData { stage: StageFile; tunables: Tunables; revision: Revision; build: string }
+/** `demo` plays the game by itself; `capture` leaves the clock to the caller (see advance()). */
+export interface GameOptions { demo?: DemoOptions; capture?: boolean }
 
 type Mode = 'title' | 'play' | 'fold' | 'anim' | 'pause' | 'finale' | 'clear';
 
@@ -45,7 +48,12 @@ export class Game {
   readonly telemetry: Telemetry;
   readonly city: BackgroundCity;
   readonly rig: CameraRig;
+  readonly director: DemoDirector | null = null;
   mode: Mode = 'title';
+  /** Walking direction set by the demo instead of the keyboard. */
+  steer: { x: number; z: number } | null = null;
+  /** True once the gate model is in and shaders are compiled (the capture waits for this). */
+  ready = false;
   state: PuzzleState;
   settings: Settings;
   private data: GameData;
@@ -63,13 +71,13 @@ export class Game {
   private automated = false;
   private telemetryAllowed = true;
 
-  constructor(canvas: HTMLCanvasElement, hudRoot: HTMLElement, data: GameData) {
+  constructor(canvas: HTMLCanvasElement, hudRoot: HTMLElement, data: GameData, opts: GameOptions = {}) {
     this.data = data;
     this.settings = loadSettings();
     const stage = resolveSlots(data.stage);
     this.cs = new CompiledStage(stage);
     this.state = this.cs.initialState();
-    this.engine = new Engine(canvas, this.settings.quality);
+    this.engine = new Engine(canvas, this.settings.quality, opts.capture);
     const M = createMaterials(stage.visualTheme.accent);
     setupEnvironment(this.engine.scene, this.engine.renderer, stage.visualTheme);
     this.world = new World(this.cs, M);
@@ -85,14 +93,15 @@ export class Game {
     const params = new URLSearchParams(location.search);
     const playtest = params.has('playtest');
     const local = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && !params.has('telemetry');
-    this.telemetry = new Telemetry(import.meta.env.VITE_TELEMETRY_URL ?? './api/telemetry', this.settings.telemetry && !local, playtest);
-    this.telemetryAllowed = !local;
+    // the demo is not a player: it must never reach the play data the improvement loop reads
+    this.telemetryAllowed = !local && !opts.demo;
+    this.telemetry = new Telemetry(import.meta.env.VITE_TELEMETRY_URL ?? './api/telemetry', this.settings.telemetry && this.telemetryAllowed, playtest);
     this.exitKeys = new Set();
     this.run = this.newRun();
     this.enterSection(0, false);
     this.showTitle();
-    // Automated browsers cannot hold pointer lock; do not treat that as the player pausing.
-    this.automated = navigator.webdriver === true;
+    // Automated browsers and the demo cannot hold pointer lock; do not treat that as the player pausing.
+    this.automated = navigator.webdriver === true || !!opts.demo;
     document.addEventListener('pointerlockchange', () => {
       if (this.automated) return;
       if (!document.pointerLockElement && (this.mode === 'play' || this.mode === 'fold')) this.openPause();
@@ -104,8 +113,12 @@ export class Game {
     this.world
       .loadGateModel('./assets/gate.glb')
       .catch((e) => console.warn('gate model not loaded, keeping the procedural gate:', e))
-      .finally(() => this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene));
-    requestAnimationFrame((t) => this.frame(t));
+      .finally(() => {
+        this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
+        this.ready = true;
+      });
+    if (opts.demo) this.director = new DemoDirector(this, opts.demo);
+    if (!opts.capture) requestAnimationFrame((t) => this.frame(t));
   }
 
   get section(): PuzzleSection {
@@ -131,13 +144,20 @@ export class Game {
     this.rig.setCinematic(new THREE.Vector3(-58, 34, 46), new THREE.Vector3(2, 8, -4));
   }
 
-  private begin() {
+  /** Leave the title as if Start was pressed (the demo uses this). */
+  startFromTitle() {
+    if (this.mode === 'title') this.begin(true);
+  }
+
+  private begin(keepCamera = false) {
     this.sound.start();
     this.sound.setMuted(this.settings.muted);
     if (!this.automated) this.input.requestLock();
     this.hud.hideTitle();
-    this.rig.setCinematic(null);
-    this.rig.snapBehind(-Math.PI / 2);
+    if (!keepCamera) {
+      this.rig.setCinematic(null);
+      this.rig.snapBehind(-Math.PI / 2);
+    }
     this.gameStart = this.time;
     this.telemetry.log({
       type: 'session_start', build: this.data.build, revision: this.data.revision.revision, stage: `${this.cs.stage.stageId}@${this.cs.stage.version}`,
@@ -182,14 +202,23 @@ export class Game {
     requestAnimationFrame((t) => this.frame(t));
   }
 
+  /** Capture mode: one simulation step and (unless a test skips it) one rendered frame, at the caller's time step. */
+  advance(dt: number, render = true) {
+    this.step(dt);
+    if (render) this.engine.render(dt);
+  }
+
   /** One simulation step; also used by automated tests through the debug hook. */
   step(dt: number) {
+    this.director?.update(dt);
     this.time += dt;
     const wm = this.cs.walkMap(this.state);
     const tun = this.data.tunables;
     const lockedMove = this.mode !== 'play';
     if (this.mode !== 'title' && this.mode !== 'pause' && this.mode !== 'clear')
-      this.player.update(dt, this.input, this.rig.yaw, wm, { locked: lockedMove, walkSpeed: tun.player.walkSpeed, dash: tun.player.dashMultiplier });
+      this.player.update(dt, this.input, this.rig.yaw, wm, {
+        locked: lockedMove, walkSpeed: tun.player.walkSpeed, dash: tun.player.dashMultiplier, steer: this.steer,
+      });
     switch (this.mode) {
       case 'play':
         this.updatePlay();
@@ -253,7 +282,7 @@ export class Game {
   private updateHints() {
     const sec = this.section;
     const t = this.data.tunables.sections[sec.id];
-    if (!t) return;
+    if (!t || this.director) return;
     const idle = this.time - this.run.lastProgress;
     const want: 0 | 1 | 2 = idle > t.secondHintSec ? 2 : idle > t.firstHintSec ? 1 : 0;
     if (want <= this.run.hintTier) return;
@@ -366,7 +395,7 @@ export class Game {
     this.telemetry.log({ type: 'action', section: sec.id, console: a.console, action: actionKey(a), ok: true, cell: this.player.cell });
     const c = this.cs.consoles.get(a.console)!;
     const g = this.cs.groups.get(a.group)!;
-    const scale = this.data.tunables.fold.durationScale * (this.settings.reduceMotion ? 0.7 : 1);
+    const scale = this.foldScale;
     this.world.pulse(new THREE.Vector3(...cellFloor(c.at)));
     const big = a.group === 'g_street';
     this.city.wave(new THREE.Vector3(...g.pivot), big ? 0.85 : 0.3, big ? 55 : 90, big ? 2.6 : 1.6);
@@ -383,6 +412,11 @@ export class Game {
       if (remainingActions(this.cs, sec.id, this.state, this.player.cell) === null)
         this.hud.hint('ここからは先に進めないようです。<kbd>R</kbd> でこのパズルをやり直せます。');
     });
+  }
+
+  /** How much longer or shorter than designed the fold animations run. */
+  get foldScale() {
+    return this.data.tunables.fold.durationScale * (this.settings.reduceMotion ? 0.7 : 1);
   }
 
   private resetSection(reason: 'manual' | 'softlock') {
@@ -434,6 +468,7 @@ export class Game {
 
   private showClear() {
     this.mode = 'clear';
+    if (this.director) return; // the demo ends on the city, not on the feedback form
     document.exitPointerLock?.();
     this.hud.clear(
       { totalSec: this.time - this.gameStart, sections: this.results },

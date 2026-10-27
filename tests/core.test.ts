@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { CompiledStage } from '../src/core/compile.ts';
+import { CompiledStage, walkPath } from '../src/core/compile.ts';
 import { cellKey } from '../src/core/math.ts';
 import { resolveSlots } from '../src/core/slots.ts';
 import { remainingActions, solveSection } from '../src/core/solver.ts';
@@ -33,6 +33,28 @@ test('rolling the cube once opens the west-north corner', () => {
   // the plate between the road end and the cube only exists while the cube shows a west arm
   assert.equal(cs.walkMap(s0).tiles.has(cellKey([1, 3, 0])), false);
   assert.equal(cs.walkMap(s1).tiles.get(cellKey([1, 3, 0]))?.plate, true);
+});
+
+test('walk paths follow open edges and appear once the bridge is folded', () => {
+  const cs = new CompiledStage(load());
+  const s0 = cs.initialState();
+  const start = cellKey([-10, 3, 0]);
+  const exit = cellKey([-2, 3, 0]);
+  const toConsole = walkPath(cs.walkMap(s0), start, [cellKey([-6, 3, 0])])!;
+  assert.deepEqual(toConsole, ['-9,3,0', '-8,3,0', '-7,3,0', '-6,3,0']);
+  assert.equal(walkPath(cs.walkMap(s0), start, [exit]), null, 'the broken bridge cuts the way');
+  assert.deepEqual(walkPath(cs.walkMap(s0), start, [start]), []);
+  const s1 = cs.apply(s0, solveSection(cs, 's1_first_fold').plan[0]);
+  const path = walkPath(cs.walkMap(s1), start, [exit])!;
+  assert.equal(path.at(-1), exit);
+  const wm = cs.walkMap(s1);
+  let prev = start;
+  for (const k of path) {
+    const [a, b] = [prev, k].map((x) => x.split(',').map(Number));
+    assert.equal(Math.abs(a[0] - b[0]) + Math.abs(a[2] - b[2]), 1, `${prev} -> ${k} is one step`);
+    assert.ok(wm.tiles.has(k));
+    prev = k;
+  }
 });
 
 test('the tower arm blocks the street fold only where it intrudes into the lane', () => {

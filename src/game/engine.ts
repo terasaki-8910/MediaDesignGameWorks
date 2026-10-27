@@ -14,11 +14,14 @@ export class Engine {
   readonly bloom: BloomEffect;
   quality: Quality;
   private scale = 1;
+  private readonly exactPixelRatio: boolean;
   private frameTimes: number[] = [];
   private sinceAdapt = 0;
 
-  constructor(canvas: HTMLCanvasElement, quality: Quality) {
+  /** `exactPixelRatio` renders at the full device pixel ratio (the capture asks for exact output sizes). */
+  constructor(canvas: HTMLCanvasElement, quality: Quality, exactPixelRatio = false) {
     this.quality = quality;
+    this.exactPixelRatio = exactPixelRatio;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, stencil: false, powerPreference: 'high-performance' });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.NoToneMapping; // done in post
@@ -39,11 +42,12 @@ export class Engine {
   resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const dpr = Math.min(window.devicePixelRatio, 2) * this.scale;
+    const dpr = (this.exactPixelRatio ? window.devicePixelRatio : Math.min(window.devicePixelRatio, 2)) * this.scale;
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h, false);
     this.composer.setSize(w, h, false);
     this.camera.aspect = w / h;
+    this.camera.fov = w < h ? 72 : 62; // keep enough width in a vertical (shorts) frame
     this.camera.updateProjectionMatrix();
   }
 
