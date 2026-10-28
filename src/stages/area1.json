@@ -1,7 +1,7 @@
 {
   "schema": "fold-city/stage@1",
   "stageId": "area1",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "title": {
     "ja": "第一区画 折り目",
     "en": "Area 1: The Fold"

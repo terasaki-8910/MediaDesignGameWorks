@@ -21,7 +21,7 @@
       "beacon": 0.5
     },
     "s3_fold_gate": {
-      "firstHintSec": 60,
+      "firstHintSec": 45,
       "secondHintSec": 120,
       "beacon": 0.5
     }
