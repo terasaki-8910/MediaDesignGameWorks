@@ -33,9 +33,22 @@ interface FoldSession {
   browsed: Set<number>;
 }
 
-interface SectionRun { start: number; actions: number; hints: number; resets: number; hintTier: 0 | 1 | 2; lastProgress: number; optimal: number }
+interface SectionRun {
+  start: number;
+  actions: number;
+  hints: number;
+  resets: number;
+  hintTier: 0 | 1 | 2;
+  lastProgress: number;
+  optimal: number;
+  /** Optimal actions still needed from where the player stands; only a fold that lowers it is progress. */
+  remaining: number;
+  /** A fold or reset changed the next step, so a hint on screen has to point somewhere else. */
+  hintStale: boolean;
+}
 
 const SETTINGS_KEY = 'fold-city:settings';
+const UP = new THREE.Vector3(0, 1, 0);
 
 export class Game {
   readonly engine: Engine;
@@ -70,6 +83,7 @@ export class Game {
   private exitKeys: Set<string>;
   private automated = false;
   private telemetryAllowed = true;
+  private introTimer = 0;
 
   constructor(canvas: HTMLCanvasElement, hudRoot: HTMLElement, data: GameData, opts: GameOptions = {}) {
     this.data = data;
@@ -126,7 +140,7 @@ export class Game {
   }
 
   private newRun(): SectionRun {
-    return { start: this.time, actions: 0, hints: 0, resets: 0, hintTier: 0, lastProgress: this.time, optimal: 0 };
+    return { start: this.time, actions: 0, hints: 0, resets: 0, hintTier: 0, lastProgress: this.time, optimal: 0, remaining: 0, hintStale: false };
   }
 
   private showTitle() {
@@ -173,18 +187,21 @@ export class Game {
     this.exitKeys = new Set(sec.exit.map((c) => cellKey(c)));
     this.run = this.newRun();
     this.run.optimal = solveSection(this.cs, sec.id).optimal ?? 0;
+    this.run.remaining = this.run.optimal;
     const cp = this.cs.stage.checkpoints.find((c) => c.id === sec.start)!;
     if (i === 0 || !announce) this.player.place(cp.at, cp.facing, this.cs.walkMap(this.state));
     this.world.highlightConsole(null);
     this.world.setGuidance(sec.consoles, this.data.tunables.sections[sec.id]?.beacon ?? 0);
     this.hud.hint(null);
+    // a previous section's intro timer must not hide this section's text
+    clearTimeout(this.introTimer);
     if (announce) {
       this.hud.toast(sec.name.ja, sec.name.en.toUpperCase());
       this.telemetry.log({ type: 'section_enter', section: sec.id });
       if (sec.intro) {
         const intro = sec.intro.ja;
         this.hud.hint(intro);
-        setTimeout(() => this.run.hintTier === 0 && this.hud.hint(null), 9000);
+        this.introTimer = window.setTimeout(() => this.run.hintTier === 0 && this.hud.hint(null), 9000);
       }
     }
     // precompute sweep checks so opening Fold Mode does not hitch
@@ -279,22 +296,31 @@ export class Game {
     this.updateHints();
   }
 
+  /**
+   * Hints come after `firstHintSec` / `secondHintSec` without progress. Progress means a fold that brings the goal
+   * closer: folding back and forth or resetting does not restart the clock, so a player who flails still gets help.
+   */
   private updateHints() {
     const sec = this.section;
     const t = this.data.tunables.sections[sec.id];
     if (!t || this.director) return;
     const idle = this.time - this.run.lastProgress;
     const want: 0 | 1 | 2 = idle > t.secondHintSec ? 2 : idle > t.firstHintSec ? 1 : 0;
-    if (want <= this.run.hintTier) return;
-    this.run.hintTier = want;
+    const raise = want > this.run.hintTier;
+    const retarget = this.run.hintStale && this.run.hintTier > 0;
+    this.run.hintStale = false;
+    if (!raise && !retarget) return;
+    if (raise) this.run.hintTier = want;
     const next = nextAction(this.cs, sec.id, this.state, this.player.cell);
     if (!next) return;
-    this.run.hints++;
+    if (raise) {
+      this.run.hints++;
+      this.telemetry.log({ type: 'hint', section: sec.id, tier: want === 2 ? 2 : 1 });
+    }
     this.world.highlightConsole(next.console);
-    this.telemetry.log({ type: 'hint', section: sec.id, tier: want === 2 ? 2 : 1 });
     const c = this.cs.consoles.get(next.console)!;
     this.hud.hint(
-      want === 1
+      this.run.hintTier === 1
         ? '光の柱が立っている操作盤を調べてみよう。'
         : `「${c.label?.ja ?? '操作盤'}」で「${this.actionLabel(next)}」を試してみよう。`,
     );
@@ -306,6 +332,7 @@ export class Game {
     this.fold = { console: consoleId, options, index: 0, browsed: new Set([0]) };
     this.mode = 'fold';
     this.hud.prompt(null);
+    this.world.setGuidanceHidden(true); // the guidance columns would stand in front of the preview
     this.sound.select();
     this.showFoldOption();
   }
@@ -321,15 +348,55 @@ export class Game {
     const fr = this.world.framing(c.controls, [this.state, target], this.player.pos);
     this.rig.setFrame(fr.center, fr.radius, this.player.pos);
     const reach = this.reachChange(target, cellKey(c.at));
+    const blocked = opt.blockedBy.length > 0;
     this.hud.fold({
       title: g.label?.ja ?? g.id,
       index: f.index,
       count: f.options.length,
       label: this.actionLabel(opt.action),
-      blocked: opt.blockedBy.length ? opt.blockedBy.map((b) => this.moduleName(b)).join('、') : null,
+      blocked: blocked ? opt.blockedBy.map((b) => this.moduleName(b)).join('、') : null,
+      fix: blocked ? this.blockerFix(opt.blockedBy) : null,
+      frees: blocked ? [] : this.freedActions(f.console, target),
       opens: reach.gained,
       closes: reach.lost,
     });
+  }
+
+  /** Where the thing in the way can be moved from, e.g. 腕の塔は「塔の操作盤（岩棚）」で動かせる. Prefers a console the player can walk to. */
+  private blockerFix(blockedBy: string[]): string | null {
+    const wm = this.cs.walkMap(this.state);
+    const here = wm.region.get(this.player.cell);
+    for (const id of blockedBy) {
+      const group = this.cs.modules.find((m) => m.id === id)?.group;
+      if (!group) continue;
+      const movers = this.section.consoles.map((k) => this.cs.consoles.get(k)!).filter((k) => k.controls === group);
+      const near = movers.filter((k) => wm.region.get(cellKey(k.at)) === here);
+      const dist = (k: (typeof movers)[number]) => {
+        const p = cellFloor(k.at);
+        return Math.hypot(p[0] - this.player.pos.x, p[2] - this.player.pos.z);
+      };
+      const pick = (near.length ? near : movers).sort((a, b) => dist(a) - dist(b))[0];
+      if (pick) return `${this.moduleName(id)}は「${pick.label?.ja ?? pick.id}」で動かせる`;
+    }
+    return null;
+  }
+
+  /**
+   * Actions of the section's other consoles that this option would free from interference. Only the freeing side is
+   * shown: in the Fold Gate the move that reaches the ledge is exactly the one that blocks the street.
+   */
+  private freedActions(consoleId: string, target: PuzzleState): string[] {
+    const moving = this.cs.consoles.get(consoleId)!.controls;
+    const out: string[] = [];
+    for (const id of this.section.consoles) {
+      const c = this.cs.consoles.get(id)!;
+      if (c.controls === moving) continue;
+      const before = new Map(this.cs.consoleActions(id, this.state).map((o) => [actionKey(o.action), o.blockedBy.length > 0]));
+      for (const o of this.cs.consoleActions(id, target))
+        if (before.get(actionKey(o.action)) && !o.blockedBy.length)
+          out.push(`「${c.label?.ja ?? id}」で「${this.actionLabel(o.action)}」ができるようになる`);
+    }
+    return out.slice(0, 2);
   }
 
   /** How many tiles become reachable / unreachable from where the player stands. */
@@ -382,6 +449,7 @@ export class Game {
     this.hud.fold(null);
     if (!committed) {
       this.rig.setFrame(null);
+      this.world.setGuidanceHidden(false);
       this.mode = 'play';
     }
   }
@@ -402,16 +470,53 @@ export class Game {
     this.sound.fold(((g.durationMs ?? 2000) / 1000) * scale);
     this.world.highlightConsole(null);
     this.hud.hint(null);
+    this.frameFold(a);
     this.world.startAction(a, scale, () => {
       this.state = this.world.state;
       this.mode = 'play';
       this.rig.setFrame(null);
-      this.run.lastProgress = this.time;
-      this.run.hintTier = 0;
+      this.world.setGuidanceHidden(false);
       this.sound.open();
-      if (remainingActions(this.cs, sec.id, this.state, this.player.cell) === null)
-        this.hud.hint('ここからは先に進めないようです。<kbd>R</kbd> でこのパズルをやり直せます。');
+      const left = remainingActions(this.cs, sec.id, this.state, this.player.cell);
+      if (left !== null && left < this.run.remaining) {
+        // the goal came closer: the hint clock starts over
+        this.run.lastProgress = this.time;
+        this.run.hintTier = 0;
+      } else this.run.hintStale = true;
+      if (left !== null) this.run.remaining = left;
+      else this.hud.hint('ここからは先に進めないようです。<kbd>R</kbd> でこのパズルをやり直せます。');
     });
+  }
+
+  /**
+   * Camera for the fold itself. Turns about the vertical stay framed from above, as in Fold Mode. A tipping motion is
+   * watched so the swing happens in the picture instead of towards the lens: something hinged at one end (the street)
+   * from behind its hinge, looking the way it will lie, like a drawbridge seen from its gate; something turning about
+   * its middle (the cube) along its axis, from whichever side has the clearer view.
+   */
+  private frameFold(a: Action) {
+    const target = this.cs.apply(this.state, a);
+    const fr = this.world.framing(a.group, [this.state, target], this.player.pos);
+    const motion = this.cs.motionOf(this.state, a);
+    if (motion.axis === 'y') return this.rig.setFrame(fr.center, fr.radius, this.player.pos);
+    const r = fr.radius * (this.engine.camera.aspect < 1 ? 1.45 : 1); // a tall frame shows less to the sides
+    const pivot = new THREE.Vector3(...motion.pivot);
+    const lie = this.world.groupCentre(a.group, target).sub(pivot).setY(0);
+    const height = Math.max(this.player.pos.y + 6, fr.center.y + r * 0.55 + 4);
+    let shots: THREE.Vector3[];
+    if (lie.length() > fr.radius * 0.5) {
+      const behind = lie.normalize().negate();
+      shots = [pivot.clone().addScaledVector(behind, r * 1.5).setY(Math.max(height, pivot.y + r * 1.1 + 4))];
+    } else {
+      const hinge = motion.axis === 'x' ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
+      const towardsPlayer = this.player.pos.clone().sub(fr.center).setY(0).normalize();
+      shots = [hinge, hinge.clone().negate()].map((h) => {
+        // a quarter profile turned away from the player, so the avatar does not stand in the middle of the shot
+        const dir = [0.38, -0.38].map((t) => h.clone().applyAxisAngle(UP, t)).sort((p, q) => p.dot(towardsPlayer) - q.dot(towardsPlayer))[0];
+        return fr.center.clone().addScaledVector(dir, r * 2).setY(height);
+      });
+    }
+    this.rig.setFrame(fr.center, fr.radius, this.player.pos, this.rig.clearestShot(fr.center, shots));
   }
 
   /** How much longer or shorter than designed the fold animations run. */
@@ -431,8 +536,9 @@ export class Game {
     this.rig.snapBehind(this.player.root.rotation.y);
     this.hud.flash();
     this.run.resets++;
-    this.run.lastProgress = this.time;
-    this.run.hintTier = 0;
+    // starting over is not progress: the hint clock keeps running, and a shown hint points at the first step again
+    this.run.remaining = this.run.optimal;
+    this.run.hintStale = true;
     this.world.highlightConsole(null);
     this.hud.hint(null);
     this.telemetry.log({ type: 'reset', section: sec.id, reason });
@@ -459,6 +565,8 @@ export class Game {
     this.finaleClock = 0;
     const gate = new THREE.Vector3(...cellFloor(this.cs.stage.goal.at));
     this.rig.setCinematic(gate.clone().add(new THREE.Vector3(26, 22, 30)), gate.clone().add(new THREE.Vector3(0, 6, 0)));
+    this.world.setGuidanceHidden(true);
+    this.world.openGate();
     this.city.wave(gate, 1.25, 45, 3.2);
     this.sound.chime();
     this.hud.toast('第一区画 踏破', 'THE FOLD IS OPEN', 5200);

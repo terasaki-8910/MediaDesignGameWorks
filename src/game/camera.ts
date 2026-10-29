@@ -9,7 +9,7 @@ export class CameraRig {
   pitch = 0.32;
   private pos = new THREE.Vector3();
   private look = new THREE.Vector3();
-  private frame: { center: THREE.Vector3; radius: number; from: THREE.Vector3 } | null = null;
+  private frame: { center: THREE.Vector3; radius: number; from: THREE.Vector3; shot: THREE.Vector3 | null } | null = null;
   private cinematic: { pos: THREE.Vector3; look: THREE.Vector3 } | null = null;
   private ray = new THREE.Raycaster();
   private initialised = false;
@@ -23,8 +23,23 @@ export class CameraRig {
     this.colliders = colliders;
   }
 
-  setFrame(center: THREE.Vector3 | null, radius = 10, from?: THREE.Vector3) {
-    this.frame = center ? { center: center.clone(), radius, from: (from ?? this.pos).clone() } : null;
+  /** Frame a sphere, by default from above the side `from` is on; `shot` puts the camera at a chosen place instead. */
+  setFrame(center: THREE.Vector3 | null, radius = 10, from?: THREE.Vector3, shot?: THREE.Vector3) {
+    this.frame = center ? { center: center.clone(), radius, from: (from ?? this.pos).clone(), shot: shot?.clone() ?? null } : null;
+  }
+
+  /** Of the camera positions `shots`, the one that sees `look` across the fewest colliders (ties: the nearest to the camera now). */
+  clearestShot(look: THREE.Vector3, shots: THREE.Vector3[]): THREE.Vector3 {
+    let best = shots[0];
+    let bestScore = Infinity;
+    for (const s of shots) {
+      const to = s.clone().sub(look);
+      this.ray.set(look, to.clone().normalize());
+      this.ray.far = to.length();
+      const score = this.ray.intersectObjects(this.colliders(), false).length * 1000 + s.distanceTo(this.pos);
+      if (score < bestScore) [best, bestScore] = [s, score];
+    }
+    return best;
   }
 
   setCinematic(pos: THREE.Vector3 | null, look?: THREE.Vector3) {
@@ -58,13 +73,16 @@ export class CameraRig {
       desiredLook = this.cinematic.look;
       sharpness = s.reduceMotion ? 50 : 1.6;
     } else if (this.frame) {
-      const { center, radius, from } = this.frame;
-      const dir = new THREE.Vector3(from.x - center.x, 0, from.z - center.z);
-      if (dir.lengthSq() < 1e-3) dir.set(0, 0, 1);
-      dir.normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.6); // step aside so the player does not block the view
-      const back = portrait ? 1.45 : 1;
-      desiredPos = center.clone().addScaledVector(dir, radius * 1.55 * back).add(new THREE.Vector3(0, radius * 1.05 * back + 4, 0));
-      desiredPos.y = Math.max(desiredPos.y, player.y + 9);
+      const { center, radius, from, shot } = this.frame;
+      if (shot) desiredPos = shot;
+      else {
+        const dir = new THREE.Vector3(from.x - center.x, 0, from.z - center.z);
+        if (dir.lengthSq() < 1e-3) dir.set(0, 0, 1);
+        dir.normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.6); // step aside so the player does not block the view
+        const back = portrait ? 1.45 : 1;
+        desiredPos = center.clone().addScaledVector(dir, radius * 1.55 * back).add(new THREE.Vector3(0, radius * 1.05 * back + 4, 0));
+        desiredPos.y = Math.max(desiredPos.y, player.y + 9);
+      }
       desiredLook = center.clone();
       sharpness = s.reduceMotion ? 50 : 3.2;
     } else {

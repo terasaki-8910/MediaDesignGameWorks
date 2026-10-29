@@ -18,7 +18,7 @@
     "ai:gate": "node tools/ai/gate.ts",
     "ai:check": "node tools/ai/check.ts",
     "ai:apply": "node tools/ai/apply.ts",
-    "e2e": "node tests/e2e/walk.cjs && node tests/e2e/demo.cjs",
+    "e2e": "node tests/e2e/walk.cjs && node tests/e2e/demo.cjs && node tests/e2e/hints.cjs",
     "video:capture": "node tools/video/capture.ts"
   },
   "dependencies": {
