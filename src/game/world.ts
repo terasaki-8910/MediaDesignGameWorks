@@ -8,8 +8,11 @@ import type { Action, CubeFace, Id, PuzzleState } from '../core/types.ts';
 import type { DirName } from '../core/math.ts';
 import { buildModuleMesh, consoleMesh } from './kitMeshes.ts';
 import type { Materials } from './materials.ts';
+import { portalMaterial, prepareDisc } from './portal.ts';
 
 export interface EdgeMarker { pos: THREE.Vector3; side: Side; kind: 'open' | 'close' }
+
+interface ConsoleParts { holo: THREE.Object3D; beacon: THREE.Mesh; guide: THREE.Mesh }
 
 const AXIS: Record<'x' | 'y' | 'z', THREE.Vector3> = {
   x: new THREE.Vector3(1, 0, 0),
@@ -50,14 +53,19 @@ export class World {
   private pulses: { mesh: THREE.Mesh; t: number }[] = [];
   private anim: Anim | null = null;
   private gateDisc: THREE.Object3D | null = null;
+  private gateOpening = false;
   private highlighted: Id | null = null;
+  private consoleParts = new Map<Id, ConsoleParts>();
+  private guidance = { ids: new Set<Id>(), level: 0, hidden: false };
   private time = 0;
+  private readonly portal: THREE.ShaderMaterial;
   private readonly cs: CompiledStage;
   private readonly M: Materials;
 
   constructor(cs: CompiledStage, M: Materials) {
     this.cs = cs;
     this.M = M;
+    this.portal = portalMaterial(M.accent);
     this.state = cs.initialState();
     const cube = cs.modules.find((m) => m.type === 'cube3');
     const ctx = cube && cube.type === 'cube3' ? { cubeFaces: cube.params.faces as Record<CubeFace, DirName[]> } : {};
@@ -86,13 +94,18 @@ export class World {
         holder.scale.z = 0.001;
         this.plates.set(m.id, { holder, cell: m.at.join(','), target: 0 });
       }
-      if (m.type === 'deco' && m.params.kind === 'gate') this.gateDisc = v.root.getObjectByName('gateDisc') ?? null;
+      if (m.type === 'deco' && m.params.kind === 'gate') this.useGateDisc(v.root.getObjectByName('gateDisc'));
     }
     for (const c of cs.stage.interactables) {
       const node = consoleMesh(c, M);
       const f = cellFloor(c.at);
       node.position.set(f[0], f[1], f[2]);
       this.consoleNodes.set(c.id, node);
+      this.consoleParts.set(c.id, {
+        holo: node.getObjectByName('holo')!,
+        beacon: node.getObjectByName('beacon') as THREE.Mesh,
+        guide: node.getObjectByName('guide') as THREE.Mesh,
+      });
       this.root.add(node);
     }
     this.root.add(this.rails, this.overlay);
@@ -168,20 +181,20 @@ export class World {
       pl.holder.scale.z = Math.max(0.001, Math.abs(nz - pl.target) < 0.002 ? pl.target : nz);
       pl.holder.visible = pl.holder.scale.z > 0.01;
     }
-    for (const [id, node] of this.consoleNodes) {
-      const holo = node.getObjectByName('holo')!;
-      holo.rotation.y += dt * (id === this.highlighted ? 3 : 0.8);
-      holo.rotation.x += dt * 0.5;
-      holo.position.y = 1.6 + Math.sin(this.time * 2 + holo.id) * 0.06;
-      const beacon = node.getObjectByName('beacon') as THREE.Mesh;
-      beacon.visible = id === this.highlighted;
-      if (beacon.visible) beacon.scale.x = beacon.scale.z = 1 + Math.sin(this.time * 6) * 0.35;
+    for (const [id, p] of this.consoleParts) {
+      p.holo.rotation.y += dt * (id === this.highlighted ? 3 : 0.8);
+      p.holo.rotation.x += dt * 0.5;
+      p.holo.position.y = 1.6 + Math.sin(this.time * 2 + p.holo.id) * 0.06;
+      p.beacon.visible = id === this.highlighted;
+      if (p.beacon.visible) p.beacon.scale.x = p.beacon.scale.z = 1 + Math.sin(this.time * 6) * 0.35;
     }
     if (this.gateDisc) this.gateDisc.scale.setScalar(1 + Math.sin(this.time * 1.7) * 0.03);
+    this.portal.uniforms.uTime.value = this.time;
+    if (this.gateOpening) this.portal.uniforms.uOpen.value = Math.min(1, this.portal.uniforms.uOpen.value + dt / 2.5);
     this.glows = this.glows.filter((g) => {
       g.life -= dt;
       (g.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, g.life / g.max) * 0.85;
-      if (g.life <= 0) this.overlay.remove(g.mesh);
+      if (g.life <= 0) this.dropOverlay(g.mesh);
       return g.life > 0;
     });
     this.pulses = this.pulses.filter((p) => {
@@ -189,7 +202,7 @@ export class World {
       const k = p.t / 1.6;
       p.mesh.scale.setScalar(1 + k * 30);
       (p.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 1 - k) * 0.7;
-      if (k >= 1) this.overlay.remove(p.mesh);
+      if (k >= 1) this.dropOverlay(p.mesh);
       return k < 1;
     });
   }
@@ -202,11 +215,34 @@ export class World {
     const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
     const gltf = await new GLTFLoader().loadAsync(url);
     gltf.scene.traverse((o) => {
-      if ((o as THREE.Mesh).isMesh) o.castShadow = o.receiveShadow = true;
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.castShadow = mesh.receiveShadow = true;
+      // the core material glows at strength 4 in Blender, which blooms to flat white here: keep its colour readable
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      if (mat.emissiveIntensity > 1.5) mat.emissiveIntensity = 1.5;
     });
     node.clear();
     node.add(gltf.scene);
-    this.gateDisc = gltf.scene.getObjectByName('CoreDisc') ?? null;
+    this.useGateDisc(gltf.scene.getObjectByName('CoreDisc'));
+  }
+
+  /** The gate's disc pulses and shows the portal shader instead of a flat glow. */
+  private useGateDisc(o: THREE.Object3D | undefined) {
+    this.gateDisc = o ?? null;
+    let disc: THREE.Mesh | undefined;
+    o?.traverse((x) => {
+      if (!disc && (x as THREE.Mesh).isMesh) disc = x as THREE.Mesh;
+    });
+    if (!disc) return;
+    prepareDisc(disc.geometry);
+    disc.material = this.portal;
+    disc.castShadow = false;
+  }
+
+  /** The finale: the portal brightens and turns faster. */
+  openGate() {
+    this.gateOpening = true;
   }
 
   /** Compile every material once (including the Fold Mode ghosts) so the first fold does not stutter. */
@@ -225,7 +261,7 @@ export class World {
       .catch(() => {})
       .finally(() => {
         for (const g of this.ghosts.values()) g.visible = false;
-        this.overlay.remove(probe);
+        this.dropOverlay(probe);
       });
   }
 
@@ -235,11 +271,23 @@ export class World {
 
   /** Faint guidance columns over the given consoles; level 0..1 comes from the `beacon` tunable. */
   setGuidance(ids: Id[], level: number) {
-    for (const [id, node] of this.consoleNodes) {
-      const guide = node.getObjectByName('guide') as THREE.Mesh;
-      const on = ids.includes(id) && level > 0.01;
-      guide.visible = on;
-      if (on) (guide.material as THREE.MeshBasicMaterial).opacity = 0.05 + 0.22 * level;
+    this.guidance.ids = new Set(ids);
+    this.guidance.level = level;
+    this.applyGuidance();
+  }
+
+  /** Hide the guidance columns while they would stand in front of what matters (Fold Mode, folds, the finale). */
+  setGuidanceHidden(hidden: boolean) {
+    this.guidance.hidden = hidden;
+    this.applyGuidance();
+  }
+
+  private applyGuidance() {
+    const { ids, level, hidden } = this.guidance;
+    for (const [id, p] of this.consoleParts) {
+      const on = !hidden && ids.has(id) && level > 0.01;
+      p.guide.visible = on;
+      if (on) (p.guide.material as THREE.MeshBasicMaterial).opacity = 0.05 + 0.22 * level;
     }
   }
 
@@ -251,6 +299,7 @@ export class World {
     );
     m.rotation.x = -Math.PI / 2;
     m.position.copy(at).add(new THREE.Vector3(0, 0.05, 0));
+    m.userData.ownMaterial = true;
     this.overlay.add(m);
     this.pulses.push({ mesh: m, t: 0 });
   }
@@ -282,13 +331,22 @@ export class World {
       plane.position.copy(mk.pos).add(new THREE.Vector3(0, 1.1, 0));
       plane.rotation.y = mk.side === 'N' || mk.side === 'S' ? 0 : Math.PI / 2;
       plane.userData.kind = 'preview';
+      plane.userData.ownMaterial = true;
       (plane.material as THREE.Material).side = THREE.DoubleSide;
       this.overlay.add(plane);
     }
   }
 
   private clearOverlayKind(kind: string) {
-    for (const o of [...this.overlay.children]) if (o.userData.kind === kind) this.overlay.remove(o);
+    for (const o of [...this.overlay.children]) if (o.userData.kind === kind) this.dropOverlay(o);
+  }
+
+  /** Remove an overlay mesh and free its geometry (and its material, when nothing else shares it). */
+  private dropOverlay(o: THREE.Object3D) {
+    this.overlay.remove(o);
+    const m = o as THREE.Mesh;
+    m.geometry?.dispose();
+    if (o.userData.ownMaterial) (m.material as THREE.Material).dispose();
   }
 
   private ghostFor(groupId: Id): THREE.Object3D {
@@ -324,6 +382,7 @@ export class World {
         );
         m.rotation.x = -Math.PI / 2;
         m.position.set(f[0] + d[0] * 0.5, t.floorY + 0.04, f[2] + d[2] * 0.5);
+        m.userData.ownMaterial = true;
         this.overlay.add(m);
         this.glows.push({ mesh: m, life: 2.2, max: 2.2 });
       }
@@ -361,6 +420,15 @@ export class World {
       this.rails.add(wm1, cm);
     }
     for (const g of [...walls, ...caps]) g.dispose();
+  }
+
+  /** Centre of a group's solids in a state. */
+  groupCentre(groupId: Id, s: PuzzleState): THREE.Vector3 {
+    const box = new THREE.Box3();
+    const ids = new Set(this.cs.modules.filter((m) => m.group === groupId).map((m) => m.id));
+    for (const b of this.cs.worldBoxes(s))
+      if (ids.has(b.module)) box.expandByPoint(new THREE.Vector3(...b.min)).expandByPoint(new THREE.Vector3(...b.max));
+    return box.getCenter(new THREE.Vector3());
   }
 
   /** Centre and radius that frame a group over several states, limited to the band around the player's level. */

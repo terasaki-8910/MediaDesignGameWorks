@@ -32,7 +32,7 @@ export function createMaterials(accentHex: string): Materials {
     slate: new THREE.MeshStandardMaterial({ color: '#434757', roughness: 0.7, metalness: 0.1 }),
     glow: new THREE.MeshBasicMaterial({ color: hdr(accent, 4) }),
     glowSoft: new THREE.MeshBasicMaterial({ color: hdr(accent, 1.6), transparent: true, opacity: 0.6, depthWrite: false }),
-    lamp: new THREE.MeshBasicMaterial({ color: new THREE.Color('#ffd9a0').multiplyScalar(5) }),
+    lamp: new THREE.MeshBasicMaterial({ color: new THREE.Color('#ffd9a0').multiplyScalar(3) }),
     ghost: new THREE.MeshBasicMaterial({
       color: hdr(accent, 1.2), transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending,
     }),

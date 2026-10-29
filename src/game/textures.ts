@@ -40,6 +40,10 @@ function speckle(ctx: CanvasRenderingContext2D, w: number, h: number, amount: nu
 
 /** Stone pavers for one 4 m tile: 2 x 2 large slabs with soft joints (fine lines alias badly at grazing angles). */
 export function paverTexture(seed = 1): THREE.CanvasTexture {
+  return tex(paverCanvas(seed));
+}
+
+function paverCanvas(seed: number): HTMLCanvasElement {
   const S = 512;
   const [c, ctx] = canvas(S, S);
   const r = rng(seed);
@@ -57,11 +61,15 @@ export function paverTexture(seed = 1): THREE.CanvasTexture {
   ctx.lineWidth = 10;
   ctx.strokeRect(5, 5, S - 10, S - 10);
   speckle(ctx, S, S, 16, seed);
-  return tex(c);
+  return c;
 }
 
 /** Pale veined marble. */
 export function marbleTexture(seed = 7): THREE.CanvasTexture {
+  return tex(marbleCanvas(seed), true, true);
+}
+
+function marbleCanvas(seed: number): HTMLCanvasElement {
   const S = 512;
   const [c, ctx] = canvas(S, S);
   const r = rng(seed);
@@ -82,19 +90,22 @@ export function marbleTexture(seed = 7): THREE.CanvasTexture {
     ctx.stroke();
   }
   speckle(ctx, S, S, 14, seed);
-  return tex(c, true, true);
+  return c;
 }
 
-/** A path-cube face: marble with a carved walkway (centre + arms) and a glowing outline in the emissive map. */
+/**
+ * A path-cube face. The walkway (centre + arms) is paved like every other walkway and inlaid with light; the rest is
+ * darker carved stone. The puzzle is about which path faces up, so each face has to read from any side at a glance.
+ */
 export function cubeFaceTextures(arms: { u: number; v: number }[], accent: string, seed: number) {
   const S = 768;
   const q = S / 3;
   const [c, ctx] = canvas(S, S);
   const [e, ectx] = canvas(S, S);
-  const base = marbleTexture(seed).image as HTMLCanvasElement;
-  ctx.drawImage(base, 0, 0, S, S);
-  // carved ornament on non-path cells
-  ctx.strokeStyle = 'rgba(90,80,75,0.35)';
+  ctx.drawImage(marbleCanvas(seed), 0, 0, S, S);
+  ctx.fillStyle = 'rgba(48,42,66,0.45)';
+  ctx.fillRect(0, 0, S, S);
+  ctx.strokeStyle = 'rgba(232,222,205,0.2)';
   ctx.lineWidth = 4;
   for (let i = 0; i < 3; i++)
     for (let j = 0; j < 3; j++) {
@@ -103,29 +114,28 @@ export function cubeFaceTextures(arms: { u: number; v: number }[], accent: strin
       ctx.arc(i * q + q / 2, j * q + q / 2, q * 0.22, 0, Math.PI * 2);
       ctx.stroke();
     }
+  const paving = paverCanvas(seed);
+  for (const a of [{ u: 0, v: 0 }, ...arms]) ctx.drawImage(paving, (1 + a.u) * q, (1 + a.v) * q, q, q);
   ectx.fillStyle = '#000';
   ectx.fillRect(0, 0, S, S);
-  const cells = [{ u: 0, v: 0 }, ...arms];
-  for (const a of cells) {
-    const x = (1 + a.u) * q;
-    const y = (1 + a.v) * q;
-    ctx.fillStyle = '#b9ad9c';
-    ctx.fillRect(x + 6, y + 6, q - 12, q - 12);
-    ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    for (let k = 1; k < 4; k++) ctx.fillRect(x + (k * q) / 4 - 2, y + 6, 4, q - 12);
-  }
   ectx.strokeStyle = accent;
-  ectx.lineWidth = 10;
   ectx.lineCap = 'round';
-  ectx.beginPath();
-  for (const a of arms) {
-    ectx.moveTo(1.5 * q, 1.5 * q);
-    ectx.lineTo((1.5 + a.u * 1.5) * q, (1.5 + a.v * 1.5) * q);
-  }
-  ectx.stroke();
+  const inlay = (width: number, alpha: number) => {
+    ectx.globalAlpha = alpha;
+    ectx.lineWidth = width;
+    ectx.beginPath();
+    for (const a of arms) {
+      ectx.moveTo(1.5 * q, 1.5 * q);
+      ectx.lineTo((1.5 + a.u * 1.5) * q, (1.5 + a.v * 1.5) * q);
+    }
+    ectx.stroke();
+  };
+  inlay(70, 0.22); // soft halo on the paving
+  inlay(18, 1); // the bright line itself
+  ectx.globalAlpha = 1;
   ectx.fillStyle = accent;
   ectx.beginPath();
-  ectx.arc(1.5 * q, 1.5 * q, 18, 0, Math.PI * 2);
+  ectx.arc(1.5 * q, 1.5 * q, 26, 0, Math.PI * 2);
   ectx.fill();
   return { map: tex(c), emissive: tex(e) };
 }

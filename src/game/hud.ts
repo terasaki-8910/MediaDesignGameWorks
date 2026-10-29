@@ -7,6 +7,10 @@ export interface FoldPanel {
   count: number;
   label: string;
   blocked: string | null;
+  /** What could move the thing in the way, when the option is blocked. */
+  fix: string | null;
+  /** Other consoles' actions this option frees from interference. */
+  frees: string[];
   opens: number;
   closes: number;
 }
@@ -47,8 +51,12 @@ export class Hud {
     );
     const rev = h('div', 'rev', `都市改訂 第${o.revision}版 ・ ${o.updated}`);
     if (o.recent.length) {
+      // the latest revision in full; earlier ones as one line each, so the title stays readable as the log grows
       const ul = h('ul');
-      for (const r of o.recent.slice(0, 3)) ul.append(h('li', '', `― ${escapeHtml(r)}`));
+      o.recent.slice(0, 3).forEach((r, i) => {
+        const text = i === 0 || r.length <= 44 ? r : `${r.slice(0, 43)}…`;
+        ul.append(h('li', i ? 'older' : '', `― ${escapeHtml(text)}`));
+      });
       rev.append(ul);
     }
     const start = h('button', 'btn', '歩きはじめる');
@@ -66,10 +74,12 @@ export class Hud {
     this.titleEl.append(rev, start, keys, consent);
     this.titleEl.style.display = 'flex';
     this.titleEl.style.opacity = '1';
+    this.statusEl.style.visibility = 'hidden';
   }
 
   hideTitle() {
     this.titleEl.style.opacity = '0';
+    this.statusEl.style.visibility = '';
     setTimeout(() => (this.titleEl.style.display = 'none'), 800);
   }
 
@@ -93,8 +103,10 @@ export class Hud {
     this.panelEl.classList.toggle('show', !!p);
     if (!p) return;
     const status = p.blocked
-      ? `<div class="status blocked">干渉しています：${escapeHtml(p.blocked)}</div>`
-      : `<div class="status ok">${p.opens ? `新しく行ける場所 ${p.opens} マス` : '行ける場所は増えません'}${p.closes ? ` ・ 行けなくなる場所 ${p.closes} マス` : ''}</div>`;
+      ? `<div class="status blocked">干渉しています：${escapeHtml(p.blocked)}</div>` +
+        (p.fix ? `<div class="status fix">→ ${escapeHtml(p.fix)}</div>` : '')
+      : `<div class="status ok">${p.opens ? `新しく行ける場所 ${p.opens} マス` : '行ける場所は増えません'}${p.closes ? ` ・ 行けなくなる場所 ${p.closes} マス` : ''}</div>` +
+        p.frees.map((f) => `<div class="status frees">◆ ${escapeHtml(f)}</div>`).join('');
     this.panelEl.innerHTML =
       `<div class="head">FOLD MODE ・ ${escapeHtml(p.title)}</div>` +
       `<div class="opt">◀ ${escapeHtml(p.label)} ▶ <span style="font-size:13px;opacity:.6">${p.index + 1} / ${p.count}</span></div>` +

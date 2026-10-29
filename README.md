@@ -17,7 +17,7 @@ npm test           # ソルバー・検証器・改善ループの単体テス�
 npm run validate   # ステージの検証（解けるか、詰みがないか、設計意図を満たすか）
 npm run build      # 型チェックと本番ビルド
 npm run preview    # ビルドの確認（http://localhost:4173）
-npm run e2e        # ブラウザで歩くテストとデモ再生のテスト（preview 起動中に実行。npx playwright install chromium が必要）
+npm run e2e        # ブラウザで歩くテスト、デモ再生のテスト、ヒントと干渉の表示のテスト（preview 起動中に実行。npx playwright install chromium が必要）
 npm run video:capture -- video/demo.yaml   # デモを1コマずつ書き出して MP4 にする（ffmpeg が必要）
 ```
 
