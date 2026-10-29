@@ -82,6 +82,30 @@ export function setupEnvironment(scene: THREE.Scene, renderer: THREE.WebGLRender
   return { sun, hemi, dome };
 }
 
+/** Metres covered by one repeat of the facade texture (6 window columns by 14 floors). */
+const FACADE_TILE: [number, number] = [12, 24];
+
+/**
+ * Repeats the facade by each tower's own size, read from its instance matrix, so a 200 m landmark has as many floors
+ * as its height calls for instead of one texture stretched over it.
+ */
+function tileFacade(mat: THREE.MeshStandardMaterial) {
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <uv_vertex>',
+      /* glsl */ `#include <uv_vertex>
+      #ifdef USE_INSTANCING
+        vec3 towerSize = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
+        vec2 faceSize = abs(normal.y) > 0.5 ? towerSize.xz : abs(normal.x) > 0.5 ? towerSize.zy : towerSize.xy;
+        vec2 facadeUv = uv * faceSize / vec2(${FACADE_TILE[0].toFixed(1)}, ${FACADE_TILE[1].toFixed(1)});
+        vMapUv = facadeUv;
+        vEmissiveMapUv = facadeUv;
+      #endif`,
+    );
+  };
+  mat.customProgramCacheKey = () => 'city-facade';
+}
+
 interface Building { x: number; z: number; y: number; w: number; h: number; d: number; axis: THREE.Vector3; angle: number; sky: boolean }
 interface Wave { origin: THREE.Vector3; start: number; strength: number; speed: number; dur: number }
 
@@ -130,15 +154,14 @@ export class BackgroundCity {
     for (let i = 0; i < theme.city.count; i++) placeOne(false);
     for (let i = 0; i < Math.floor(theme.city.count * 0.6); i++) placeOne(true);
 
-    ARCHETYPES.forEach((A, k) => {
+    ARCHETYPES.forEach((_, k) => {
       const geo = new THREE.BoxGeometry(1, 1, 1);
       geo.translate(0, 0.5, 0);
-      const uv = geo.getAttribute('uv') as THREE.BufferAttribute;
-      for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * (A.w / 12), uv.getY(i) * (A.h / 24));
       const mat = new THREE.MeshStandardMaterial({
         map: tex.map, emissiveMap: tex.emissive, emissive: new THREE.Color(1, 1, 1), emissiveIntensity: 1.8,
         roughness: 0.75, metalness: 0.25,
       });
+      tileFacade(mat);
       const items = perType[k];
       const mesh = new THREE.InstancedMesh(geo, mat, items.length);
       const tint = new THREE.Color();

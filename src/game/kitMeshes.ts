@@ -49,10 +49,11 @@ function lampPost(M: Materials) {
   const g = new THREE.Group();
   const post = mesh(new THREE.CylinderGeometry(0.06, 0.09, 3.0, 8), M.brass);
   post.position.y = 1.5;
-  const bulb = mesh(new THREE.SphereGeometry(0.2, 12, 8), M.lamp, false, false);
+  // kept small: lamps pass right by the camera on the bridges, where a big bright bulb fills the frame
+  const bulb = mesh(new THREE.SphereGeometry(0.15, 12, 8), M.lamp, false, false);
   bulb.position.y = 3.1;
-  const cap = mesh(new THREE.ConeGeometry(0.28, 0.25, 10), M.brass);
-  cap.position.y = 3.38;
+  const cap = mesh(new THREE.ConeGeometry(0.2, 0.18, 10), M.brass);
+  cap.position.y = 3.31;
   g.add(post, bulb, cap);
   return g;
 }
