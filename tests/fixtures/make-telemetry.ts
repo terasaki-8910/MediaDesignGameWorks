@@ -13,7 +13,8 @@ export function syntheticBatches(n = 14, seed = 7): StoredBatch[] {
     let t = 0;
     const ev: Record<string, unknown>[] = [];
     const push = (e: Record<string, unknown>) => ev.push({ t: (t += 1000 + Math.floor(r() * 4000)), ...e });
-    push({ type: 'session_start', build: 'test', revision: 1, stage: 'area1@1.0.0', quality: 'medium',
+    // the first half played revision 1 of the city, the rest revision 2
+    push({ type: 'session_start', build: 'test', revision: i < n / 2 ? 1 : 2, stage: 'area1@1.0.0', quality: 'medium',
       client: { browser: 'chrome', os: 'mac', lang: 'ja', screen: 'l', gpuTier: 'high' } });
     push({ type: 'section_enter', section: 's1_first_fold' });
     push({ type: 'action', section: 's1_first_fold', console: 'c1', action: 'c1:set1', ok: true, cell: '-6,3,0' });
@@ -33,6 +34,8 @@ export function syntheticBatches(n = 14, seed = 7): StoredBatch[] {
       push({ type: 'section_clear', section: 's2_path_cube', ms: (wrong ? 150000 : 60000) + Math.floor(r() * 30000), actions: wrong ? 4 : 2, optimal: 2, hints: wrong ? 1 : 0, resets: 0 });
       push({ type: 'section_enter', section: 's3_fold_gate' });
       push({ type: 'action', section: 's3_fold_gate', console: 'c_t1', action: 'c_t1:set0', ok: true, cell: '10,3,0' });
+      // on the ledge, trying the street while the tower arm is in its way (no random draw, so the rest stays as it was)
+      ev.push({ t: (t += 1500), type: 'action', section: 's3_fold_gate', console: 'c_h', action: 'c_h:set1', ok: false, blockedBy: ['m_tower'], cell: '10,3,-2' });
       push({ type: 'section_clear', section: 's3_fold_gate', ms: 70000 + Math.floor(r() * 40000), actions: 3, optimal: 3, hints: 0, resets: 0 });
       push({ type: 'game_clear', ms: t });
       push({ type: 'feedback', fun: 4, difficulty: wrong ? 4 : 3, clarity: wrong ? 2 : 4, text: wrong ? 'キューブで何をすればいいか分からなかった' : '折りたたまれる街がきれい' });

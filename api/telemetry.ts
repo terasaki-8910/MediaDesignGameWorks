@@ -58,6 +58,13 @@ const TYPES = new Set([
 ]);
 const SHORT = /^[\w.,:\- ]{0,64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// fields the aggregator reads have exact shapes, so nothing else can ride along to the improvement agent
+const CELL = /^-?\d{1,4},-?\d{1,4},-?\d{1,4}$/;
+const ACTION = /^[\w-]{1,32}:(set\d{1,2}|[xyz]\d{2,3})$/;
+const ID = /^[\w:.-]{1,48}$/;
+
+const isSample = (s: unknown) =>
+  Array.isArray(s) && s.length === 2 && typeof s[0] === 'number' && Number.isFinite(s[0]) && typeof s[1] === 'string' && CELL.test(s[1]);
 
 /** Returns a cleaned batch, or a list of reasons it was rejected. */
 export function validateBatch(input: unknown): { batch?: TelemetryBatch; errors: string[] } {
@@ -82,7 +89,11 @@ export function validateBatch(input: unknown): { batch?: TelemetryBatch; errors:
       return false;
     });
     if (bad) continue;
-    if (e.type === 'pos' && (!Array.isArray(e.samples) || e.samples.length > 600)) continue;
+    if (e.type === 'pos' && !(Array.isArray(e.samples) && e.samples.length <= 600 && e.samples.every(isSample))) continue;
+    if ('cell' in e && !(typeof e.cell === 'string' && CELL.test(e.cell))) continue;
+    if (e.type === 'action' && !(typeof e.action === 'string' && ACTION.test(e.action))) continue;
+    if ('blockedBy' in e && !(Array.isArray(e.blockedBy) && e.blockedBy.length <= 8 && e.blockedBy.every((x) => typeof x === 'string' && ID.test(x))))
+      continue;
     for (const k of ['fun', 'difficulty', 'clarity'])
       if (k in e && !(Number.isInteger(e[k]) && (e[k] as number) >= 1 && (e[k] as number) <= 5)) delete e[k];
     events.push(e);
