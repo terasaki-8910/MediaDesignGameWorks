@@ -16,7 +16,7 @@
       "beacon": 0.7
     },
     "s2_path_cube": {
-      "firstHintSec": 50,
+      "firstHintSec": 40,
       "secondHintSec": 100,
       "beacon": 0.5
     },
