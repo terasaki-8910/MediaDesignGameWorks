@@ -57,6 +57,7 @@ export class World {
   private highlighted: Id | null = null;
   private consoleParts = new Map<Id, ConsoleParts>();
   private guidance = { ids: new Set<Id>(), level: 0, hidden: false };
+  private warmProbe: THREE.Object3D | null = null;
   private time = 0;
   private readonly portal: THREE.ShaderMaterial;
   private readonly cs: CompiledStage;
@@ -256,13 +257,39 @@ export class World {
     }
     const probe = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), this.M.blockedFlash);
     this.overlay.add(probe);
+    this.warmProbe = probe;
     renderer
       .compileAsync(scene, camera)
       .catch(() => {})
-      .finally(() => {
-        for (const g of this.ghosts.values()) g.visible = false;
-        this.dropOverlay(probe);
-      });
+      .finally(() => this.endWarmUp());
+  }
+
+  /** Hide the warm-up ghosts and drop the probe; safe to call again (compileAsync settles on its own schedule). */
+  private endWarmUp() {
+    for (const g of this.ghosts.values()) g.visible = false;
+    if (this.warmProbe) this.dropOverlay(this.warmProbe);
+    this.warmProbe = null;
+  }
+
+  /**
+   * Review shots: a clean scene at time zero in `state`, whatever happened before. Nothing is folding, no flash, ghost
+   * or warm-up leftover is shown, and the animations that run on time start from the same phase.
+   */
+  resetForShot(state: PuzzleState) {
+    this.anim = null;
+    this.endWarmUp();
+    this.preview(null, [], []);
+    for (const g of this.glows) this.dropOverlay(g.mesh);
+    for (const p of this.pulses) this.dropOverlay(p.mesh);
+    this.glows = [];
+    this.pulses = [];
+    this.time = 0;
+    this.gateOpening = false;
+    this.portal.uniforms.uOpen.value = 0;
+    this.highlighted = null;
+    for (const p of this.consoleParts.values()) p.holo.rotation.set(0, 0, 0); // turned a little every step, not derived from time
+    this.setGuidanceHidden(false);
+    this.setState(state, false);
   }
 
   highlightConsole(id: Id | null) {

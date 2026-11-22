@@ -13,6 +13,8 @@ export class Engine {
   readonly composer: EffectComposer;
   readonly bloom: BloomEffect;
   quality: Quality;
+  /** Off in review shots: the render scale stays where the quality setting put it. */
+  adaptive = true;
   private scale = 1;
   private readonly exactPixelRatio: boolean;
   private frameTimes: number[] = [];
@@ -57,6 +59,7 @@ export class Engine {
 
   /** Record a frame time and nudge the render scale to hold ~60 fps (adaptive resolution). */
   sample(ms: number) {
+    if (!this.adaptive) return;
     this.frameTimes.push(ms);
     if (this.frameTimes.length > 240) this.frameTimes.shift();
     this.sinceAdapt += ms;

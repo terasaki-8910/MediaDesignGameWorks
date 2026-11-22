@@ -17,11 +17,14 @@ npm test           # ソルバー・検証器・改善ループの単体テス�
 npm run validate   # ステージの検証（解けるか、詰みがないか、設計意図を満たすか）
 npm run build      # 型チェックと本番ビルド
 npm run preview    # ビルドの確認（http://localhost:4173）
-npm run e2e        # ブラウザで歩くテスト、デモ再生のテスト、ヒントと干渉の表示のテスト（preview 起動中に実行。npx playwright install chromium が必要）
+npm run e2e        # ブラウザで歩くテスト、デモ再生のテスト、ヒントと干渉の表示のテスト、レビュー用ショットのテスト（preview 起動中に実行。npx playwright install chromium が必要。画面が真っ白・真っ黒・単色だと失敗する）
+npm run e2e:headed # レビュー用ショットを、ウィンドウを開いた Chrome の標準の描画設定で、画質（low・medium・high）と表示倍率（1・1.25・1.5）の9通りに描いて確かめる（preview 起動中に実行。ウィンドウが開くので npm run e2e には含まれない）
 npm run video:capture -- video/demo.yaml   # デモを1コマずつ書き出して MP4 にする（ffmpeg が必要）
 ```
 
 URL に `?debug=1` を付けるとテスト用のフック（`window.__fold`）が有効になり、`?q=low|medium|high` で画質を指定できます。
+
+URL に `?shots=1` を付けると、美術レビュー用に8つの固定カメラのショットを撮れるモードになり（仮想クロックで動き、デモもテレメトリーの送信もなく、画質は `q=` がなければ `high`）、`window.__shots` が `ready()`（準備ができたら true）、`list()`（`title`・`s1-overview`・`s2-overview`・`s3-overview`・`s1-play`・`s2-play`・`s3-play`・`gate` の `{ id, label }`）、`show(id)`（その場面を整えて描き終えたら解決する Promise で、未知の id は reject）を公開し、同じビルドなら同じショットは見せる順番によらず同じ絵になります。Windows のヘッドレス Chrome は、標準の描画設定だと描画倍率が1でないときに画面が真っ白になるため、テストと `video:capture` は `--use-angle=gl` で起動します。
 
 ## 構成
 

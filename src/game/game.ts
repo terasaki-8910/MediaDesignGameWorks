@@ -21,10 +21,14 @@ import { World, type EdgeMarker } from './world.ts';
 
 export interface Revision { revision: number; updated: string; recent: { date: string; summary: string }[] }
 export interface GameData { stage: StageFile; tunables: Tunables; revision: Revision; build: string }
-/** `demo` plays the game by itself; `capture` leaves the clock to the caller (see advance()). */
-export interface GameOptions { demo?: DemoOptions; capture?: boolean }
+/**
+ * `demo` plays the game by itself; `capture` leaves the clock to the caller (see advance());
+ * `shots` is the review mode (shots.ts): fixed scenes, no telemetry, no adaptive resolution.
+ */
+export interface GameOptions { demo?: DemoOptions; capture?: boolean; shots?: boolean }
 
-type Mode = 'title' | 'play' | 'fold' | 'anim' | 'pause' | 'finale' | 'clear';
+/** `shot` is a still scene for the review shots: nothing walks, folds or reacts to input. */
+type Mode = 'title' | 'play' | 'fold' | 'anim' | 'pause' | 'finale' | 'clear' | 'shot';
 
 interface FoldSession {
   console: string;
@@ -84,14 +88,17 @@ export class Game {
   private automated = false;
   private telemetryAllowed = true;
   private introTimer = 0;
+  private readonly shots: boolean;
 
   constructor(canvas: HTMLCanvasElement, hudRoot: HTMLElement, data: GameData, opts: GameOptions = {}) {
     this.data = data;
-    this.settings = loadSettings();
+    this.shots = !!opts.shots;
+    this.settings = loadSettings(this.shots);
     const stage = resolveSlots(data.stage);
     this.cs = new CompiledStage(stage);
     this.state = this.cs.initialState();
     this.engine = new Engine(canvas, this.settings.quality, opts.capture);
+    this.engine.adaptive = !this.shots;
     const M = createMaterials(stage.visualTheme.accent);
     setupEnvironment(this.engine.scene, this.engine.renderer, stage.visualTheme);
     this.world = new World(this.cs, M);
@@ -107,15 +114,15 @@ export class Game {
     const params = new URLSearchParams(location.search);
     const playtest = params.has('playtest');
     const local = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && !params.has('telemetry');
-    // the demo is not a player: it must never reach the play data the improvement loop reads
-    this.telemetryAllowed = !local && !opts.demo;
+    // the demo and the review shots are not players: they must never reach the play data the improvement loop reads
+    this.telemetryAllowed = !local && !opts.demo && !this.shots;
     this.telemetry = new Telemetry(import.meta.env.VITE_TELEMETRY_URL ?? './api/telemetry', this.settings.telemetry && this.telemetryAllowed, playtest);
     this.exitKeys = new Set();
     this.run = this.newRun();
     this.enterSection(0, false);
     this.showTitle();
     // Automated browsers and the demo cannot hold pointer lock; do not treat that as the player pausing.
-    this.automated = navigator.webdriver === true || !!opts.demo;
+    this.automated = navigator.webdriver === true || !!opts.demo || this.shots;
     document.addEventListener('pointerlockchange', () => {
       if (this.automated) return;
       if (!document.pointerLockElement && (this.mode === 'play' || this.mode === 'fold')) this.openPause();
@@ -161,6 +168,31 @@ export class Game {
   /** Leave the title as if Start was pressed (the demo uses this). */
   startFromTitle() {
     if (this.mode === 'title') this.begin(true);
+  }
+
+  /**
+   * Review shots (shots.ts): jump to the start of section `index` in `state` without playing it. The player stands at
+   * the section's checkpoint, no fold is under way, no hint or toast is up, the HUD is hidden (the title shot keeps
+   * only the title) and everything that runs on time starts over at zero, so the same shot always looks the same.
+   * The caller then sets the camera and steps the simulation.
+   */
+  stageShot(index: number, state: PuzzleState, title: boolean) {
+    clearTimeout(this.introTimer);
+    this.time = this.finaleClock = this.perfClock = 0;
+    this.fold = null;
+    this.state = state;
+    this.world.resetForShot(state);
+    this.city.reset();
+    this.hud.fold(null);
+    this.hud.prompt(null);
+    this.hud.setVisible(title);
+    this.rig.setFrame(null);
+    this.rig.setCinematic(null);
+    this.enterSection(index, false);
+    this.engine.scene.updateMatrixWorld(true); // the camera's collision rays must see this pose, not the last frame's
+    if (title) this.showTitle();
+    else this.mode = 'shot';
+    this.rig.cut();
   }
 
   private begin(keepCamera = false) {
@@ -232,7 +264,7 @@ export class Game {
     const wm = this.cs.walkMap(this.state);
     const tun = this.data.tunables;
     const lockedMove = this.mode !== 'play';
-    if (this.mode !== 'title' && this.mode !== 'pause' && this.mode !== 'clear')
+    if (this.mode !== 'title' && this.mode !== 'pause' && this.mode !== 'clear' && this.mode !== 'shot')
       this.player.update(dt, this.input, this.rig.yaw, wm, {
         locked: lockedMove, walkSpeed: tun.player.walkSpeed, dash: tun.player.dashMultiplier, steer: this.steer,
       });
@@ -244,7 +276,7 @@ export class Game {
         this.updateFold();
         break;
       case 'title': {
-        const a = this.time * 0.05;
+        const a = (this.shots ? 0 : this.time) * 0.05; // the shots keep the orbit where a player first sees it
         this.rig.setCinematic(new THREE.Vector3(4 + Math.cos(a) * 70, 34, -6 + Math.sin(a) * 70), new THREE.Vector3(2, 6, -4));
         break;
       }
@@ -696,7 +728,8 @@ function round1(x: number) {
   return Math.round(x * 10) / 10;
 }
 
-function loadSettings(): Settings {
+/** `shots` (review mode) renders at quality high unless the URL says `q=`. */
+function loadSettings(shots = false): Settings {
   const d: Settings = { sensitivity: 1, invertY: false, reduceMotion: false, quality: 'medium', telemetry: defaultConsent(), muted: false };
   let s = d;
   try {
@@ -707,5 +740,6 @@ function loadSettings(): Settings {
   }
   const q = new URLSearchParams(location.search).get('q');
   if (q === 'low' || q === 'medium' || q === 'high') s = { ...s, quality: q };
+  else if (shots) s = { ...s, quality: 'high' };
   return s;
 }

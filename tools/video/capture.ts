@@ -52,7 +52,9 @@ for (const [k, v] of Object.entries(cfg.demo)) url.searchParams.set(k, String(v)
 
 const browser = await chromium.launch({
   // Linux containers have no GPU: SwiftShader renders the same image, only slower. macOS uses the GPU.
-  args: process.platform === 'linux' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : [],
+  // Windows: headless Chrome's default ANGLE backend (D3D11) renders this game white when the render scale is not 1
+  // (quality low or medium, or after the adaptive resolution lowered it), so use the GL backend there.
+  args: process.platform === 'linux' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : process.platform === 'win32' ? ['--use-angle=gl'] : [],
 });
 const page = await browser.newPage({
   viewport: { width: Math.round(width / uiScale), height: Math.round(height / uiScale) },
