@@ -7,7 +7,10 @@ export interface Materials {
   floor: THREE.MeshStandardMaterial;
   slabSide: THREE.MeshStandardMaterial;
   parapet: THREE.MeshStandardMaterial;
-  column: THREE.MeshStandardMaterial;
+  /** Columns of light over the consoles (guidance, highlight): additive, faded by vertex colours. */
+  column: THREE.MeshBasicMaterial;
+  /** Warm white for the stand-in avatar's eyes: not the accent, which is kept for what can be operated. */
+  warmGlow: THREE.MeshBasicMaterial;
   marble: THREE.MeshStandardMaterial;
   brass: THREE.MeshStandardMaterial;
   slate: THREE.MeshStandardMaterial;
@@ -27,7 +30,10 @@ export function createMaterials(accentHex: string): Materials {
     floor: new THREE.MeshStandardMaterial({ map: repeat(paverTexture(3)), roughness: 0.82, metalness: 0.02 }),
     slabSide: new THREE.MeshStandardMaterial({ color: '#8a8378', roughness: 0.9 }),
     parapet: new THREE.MeshStandardMaterial({ color: '#c2b8a8', roughness: 0.8 }),
-    column: new THREE.MeshStandardMaterial({ color: '#a39c90', roughness: 0.85 }),
+    column: new THREE.MeshBasicMaterial({
+      color: hdr(accent, 1.1), vertexColors: true, transparent: true, opacity: 0.4, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    }),
+    warmGlow: new THREE.MeshBasicMaterial({ color: new THREE.Color('#ffe2b0').multiplyScalar(1.6) }),
     marble: new THREE.MeshStandardMaterial({ map: marbleTexture(11), roughness: 0.45, metalness: 0.05 }),
     brass: new THREE.MeshStandardMaterial({ color: '#d4af37', roughness: 0.32, metalness: 1 }),
     slate: new THREE.MeshStandardMaterial({ color: '#4a4640', roughness: 0.75, metalness: 0.1 }),

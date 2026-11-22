@@ -25,7 +25,7 @@
       "license": "own",
       "source": "art/blender/gen_floor.py",
       "author": "terasaki-8910",
-      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs); embeds tinted copies of the Poly Haven textures listed below (CC0-1.0)",
+      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs)",
       "attribution": ""
     },
     {
@@ -33,7 +33,7 @@
       "license": "own",
       "source": "art/blender/gen_parapet.py",
       "author": "terasaki-8910",
-      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs); embeds tinted copies of the Poly Haven textures listed below (CC0-1.0)",
+      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs)",
       "attribution": ""
     },
     {
@@ -41,7 +41,7 @@
       "license": "own",
       "source": "art/blender/gen_pier.py",
       "author": "terasaki-8910",
-      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs); embeds tinted copies of the Poly Haven textures listed below (CC0-1.0)",
+      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs)",
       "attribution": ""
     },
     {
@@ -114,6 +114,30 @@
       "source": "https://polyhaven.com/a/kloppenheim_06_puresky",
       "author": "Greg Zaal (original), Jarod Guest (sky edits)",
       "tool": "Poly Haven 1K HDR, fetched by art/fetch-textures.mjs",
+      "attribution": ""
+    },
+    {
+      "path": "public/assets/kit/materials.glb",
+      "license": "own",
+      "source": "art/blender/gen_materials.py",
+      "author": "terasaki-8910",
+      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs); embeds tinted copies of the Poly Haven textures listed below (CC0-1.0)",
+      "attribution": ""
+    },
+    {
+      "path": "public/assets/kit/pylon.glb",
+      "license": "own",
+      "source": "art/blender/gen_pylon.py",
+      "author": "terasaki-8910",
+      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs)",
+      "attribution": ""
+    },
+    {
+      "path": "public/assets/city.glb",
+      "license": "own",
+      "source": "art/blender/gen_city.py",
+      "author": "terasaki-8910",
+      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs); no textures, colours per face",
       "attribution": ""
     }
   ]

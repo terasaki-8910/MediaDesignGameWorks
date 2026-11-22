@@ -11,32 +11,32 @@
   },
   "files": {
     "floor.glb": {
-      "maxFileBytes": 2200000,
+      "maxFileBytes": 200000,
       "maxTriangles": 2000,
       "maxDrawCalls": 8,
       "maxMaterials": 2,
-      "maxTextureSize": 1024,
-      "maxTextureBytes": 2000000
+      "maxTextureSize": 512,
+      "maxTextureBytes": 100000
     },
     "parapet.glb": {
-      "maxFileBytes": 1500000,
+      "maxFileBytes": 500000,
       "maxTriangles": 8000,
-      "maxDrawCalls": 20,
-      "maxMaterials": 1,
+      "maxDrawCalls": 22,
+      "maxMaterials": 2,
       "maxTextureSize": 1024,
-      "maxTextureBytes": 1300000
+      "maxTextureBytes": 300000
     },
     "pier.glb": {
-      "maxFileBytes": 1500000,
-      "maxTriangles": 2000,
-      "maxDrawCalls": 6,
-      "maxMaterials": 1,
-      "maxTextureSize": 1024,
-      "maxTextureBytes": 1300000
+      "maxFileBytes": 400000,
+      "maxTriangles": 4000,
+      "maxDrawCalls": 10,
+      "maxMaterials": 2,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 150000
     },
     "console.glb": {
-      "maxFileBytes": 300000,
-      "maxTriangles": 4000,
+      "maxFileBytes": 400000,
+      "maxTriangles": 7000,
       "maxDrawCalls": 6,
       "maxMaterials": 3,
       "maxTextureSize": 512,
@@ -49,6 +49,29 @@
       "maxMaterials": 3,
       "maxTextureSize": 512,
       "maxTextureBytes": 100000
+    },
+    "materials.glb": {
+      "maxFileBytes": 1600000,
+      "maxTriangles": 8,
+      "maxDrawCalls": 2,
+      "maxMaterials": 2,
+      "maxTextureSize": 1024,
+      "maxTextureBytes": 1600000
+    },
+    "pylon.glb": {
+      "maxFileBytes": 300000,
+      "maxTriangles": 2000,
+      "maxDrawCalls": 4,
+      "maxMaterials": 2,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 100000
+    },
+    "city.glb": {
+      "maxFileBytes": 900000,
+      "maxTriangles": 12000,
+      "maxDrawCalls": 14,
+      "maxMaterials": 1,
+      "maxTextureBytes": 0
     }
   }
 }

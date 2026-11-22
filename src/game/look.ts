@@ -17,9 +17,13 @@ export const LOOK = {
   zenithGain: 0.62,
   /** One exposure for the sky as background and as ambient light (the tone mapping pass has no exposure of its own). */
   skyIntensity: 0.55,
-  ambientIntensity: 0.55,
+  ambientIntensity: 0.9,
+  /** What the sky's lower half shows to the lighting: sunlit paving and stone, the bounce that fills the shaded faces. */
+  bounceColor: new THREE.Color(0.6, 0.47, 0.36),
+  /** Clouds low in the sky take the low sun's colour (the photo's are neutral grey), by up to this tint. */
+  cloudWarm: new THREE.Color(1.3, 1.0, 0.74),
   sunColor: '#ffb96a', // about 3000 K
-  sunIntensity: 6.5,
+  sunIntensity: 4.8,
   /** Towards the sun. The play axis runs +X, so the light crosses it from the right and a little from behind. */
   sunDir: new THREE.Vector3(Math.cos(sunAzimuth) * Math.cos(sunElevation), Math.sin(sunElevation), Math.sin(sunAzimuth) * Math.cos(sunElevation)),
   /** Half the side of the square the shadow map covers around the view's focus, in metres. */
@@ -28,14 +32,14 @@ export const LOOK = {
   hazeColor: new THREE.Color(0.44, 0.395, 0.395),
   hazeSunColor: new THREE.Color(1.15, 0.66, 0.42),
   /** Looking down into the city the haze turns to this: the low sun does not reach there (brief: the darkest values). */
-  hazeDeepColor: new THREE.Color(0.158, 0.175, 0.205),
+  hazeDeepColor: new THREE.Color(0.255, 0.225, 0.215),
   /** Whatever the view, things sink into the haze between these depths below the walkways (the piers fade out). */
-  hazeSink: [16, 44] as [number, number],
+  hazeSink: [2, 46] as [number, number],
   hazeDistance: 0.0030, // exp2 density with distance: nothing within the play space, the far city fades
   hazeFloor: 0.0022, // extinction per metre at the walkway level ...
   hazeLevel: 12, // ... (y of the walkways) ...
   hazeHeight: 18,
-  hazeCeiling: 150, // the mirrored city above sinks into the same haze, growing upwards from this level // ... growing e-fold for each this many metres below it
+  hazeCeiling: 106, // the mirrored city above sinks into the same haze, growing upwards from this level // ... growing e-fold for each this many metres below it
   /** Compared with AgX and ACES against A1.jpg in the fixed shots: both washed the gold stone and the blue sky out at this exposure. */
   toneMapping: ToneMappingMode.NEUTRAL as ToneMappingMode,
   bloom: { intensity: 0.7, threshold: 2.4, smoothing: 0.5 },
@@ -92,7 +96,7 @@ export function installHaze() {
 		float hazeU1 = ( ${LOOK.hazeCeiling.toFixed(2)} - vFogWorld.y ) / ${LOOK.hazeHeight.toFixed(2)};
 		float hazeF0 = exp( - clamp( hazeU0, -10.0, 30.0 ) );
 		float hazeF1 = exp( - clamp( hazeU1, -10.0, 30.0 ) );
-		hazeMean += abs( hazeDy ) > 1e-3 ? ( hazeF1 - hazeF0 ) / hazeDy : hazeF0;
+		hazeMean += 3.0 * ( abs( hazeDy ) > 1e-3 ? ( hazeF1 - hazeF0 ) / hazeDy : hazeF0 ); // the haze above is denser: it thins the mirrored city
 		float hazeTau = ${LOOK.hazeFloor.toFixed(5)} * hazeLen * hazeMean + fogDensity * fogDensity * hazeLen * hazeLen;
 		float fogFactor = 1.0 - exp( - hazeTau );
 		fogFactor = max( fogFactor, 0.94 * smoothstep( ${(-LOOK.hazeSink[0]).toFixed(1)}, ${(-LOOK.hazeSink[1]).toFixed(1)}, vFogWorld.y - ${LOOK.hazeLevel.toFixed(2)} ) );
@@ -141,9 +145,18 @@ export async function loadSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
       haze[0] += (LOOK.hazeDeepColor.r - haze[0]) * deep;
       haze[1] += (LOOK.hazeDeepColor.g - haze[1]) * deep;
       haze[2] += (LOOK.hazeDeepColor.b - haze[2]) * deep;
+      // clouds are the pixels with little colour of their own: warm them, most near the horizon
+      const hi = Math.max(data[i], data[i + 1], data[i + 2], 1e-4);
+      const lo = Math.min(data[i], data[i + 1], data[i + 2]);
+      const cloud = (1 - THREE.MathUtils.smoothstep((hi - lo) / hi, 0.12, 0.42)) * (1 - THREE.MathUtils.smoothstep(elevation, 0.15, 1.0));
+      // below the horizon the lighting sees the lit ground, not the haze (the haze floor hides that part of the picture)
+      // (only at shallow angles: that is what lights upright faces; straight below stays haze, so undersides stay dark)
+      const ground = THREE.MathUtils.smoothstep(-elevation, 0.1, 0.3) * (1 - THREE.MathUtils.smoothstep(-elevation, 0.75, 1.15));
       for (let c = 0; c < 3; c++) {
-        const sky = Math.min(data[i + c] * gain, LOOK.skyClamp) * LOOK.skyIntensity * zenith;
-        out[o + c] = THREE.DataUtils.toHalfFloat(sky + (haze[c] - sky) * Math.min(1, band));
+        const warm = 1 + (LOOK.cloudWarm.toArray()[c] - 1) * cloud;
+        const sky = Math.min(data[i + c] * gain, LOOK.skyClamp) * LOOK.skyIntensity * zenith * warm;
+        const hazed = sky + (haze[c] - sky) * Math.min(1, band);
+        out[o + c] = THREE.DataUtils.toHalfFloat(hazed + (LOOK.bounceColor.toArray()[c] - hazed) * ground);
       }
       out[o + 3] = THREE.DataUtils.toHalfFloat(1);
     }

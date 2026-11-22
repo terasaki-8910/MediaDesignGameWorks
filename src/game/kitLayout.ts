@@ -5,7 +5,7 @@ import type { CompiledStage } from '../core/compile.ts';
 import { SLAB } from '../core/kit.ts';
 import { CELL, DIRS, SIDES, apply, cellFloor, type Side, type Vec3 } from '../core/math.ts';
 import type { Id, ModuleInstance, PuzzleState } from '../core/types.ts';
-import { place, type Placement } from './kit.ts';
+import { place, type Placement, type WalkLine } from './kit.ts';
 
 const H = CELL / 2;
 /** Centre line of the parapets, from the cell centre (the kit's parapet pieces are modelled there). */
@@ -13,9 +13,16 @@ export const RAIL_LINE = 1.84;
 /** Top of the pier that carries a lamp (parapet.glb, post_lamp). */
 const LAMP_BASE = 1.18;
 const PIER_DEPTH = 46.6;
+/** A pylon stands beside the slabs: its centre this far out from both edges of an inside corner, its top this high. */
+const PYLON_HALF = 0.87;
+const PYLON_OUT = 0.17 + PYLON_HALF + 0.02;
+const PYLON_TOP = 8;
 
 type EdgeKind = 'none' | 'flush' | 'cornice';
 interface Cell { gx: number; gz: number; y: number; x0: number; x1: number; z0: number; z1: number; module: ModuleInstance }
+
+/** A walkway one cell wide (a road or a bridge), as against a plaza. */
+const isRoad = (m: ModuleInstance) => m.type === 'bridge' || (m.type === 'tile' && Math.min(...(m.params.size ?? [1, 1])) === 1);
 interface AABB { min: Vec3; max: Vec3 }
 
 export interface SlabPlan {
@@ -25,6 +32,9 @@ export interface SlabPlan {
   modules: Map<Id, Placement[]>;
   /** `x,y,z:side` (floor centre of a cell) of fixed slab edges another slab can stand against: they get a plain wall. */
   flushEdges: Set<string>;
+  /** Where feet have worn the paving lighter: along the roads and from each road into its plaza (world, and per module). */
+  walkWorld: WalkLine[];
+  walkModules: Map<Id, WalkLine[]>;
 }
 
 const TURNS: Record<Side, number> = { N: 0, E: 1, S: 2, W: 3 };
@@ -87,10 +97,13 @@ export function planSlabs(cs: CompiledStage): SlabPlan {
   };
 
   const flushEdges = new Set<string>();
+  const pylonFits = (x: number, y: number, z: number) =>
+    !blocked({ min: [x - PYLON_HALF, y - PIER_DEPTH, z - PYLON_HALF], max: [x + PYLON_HALF, y + PYLON_TOP, z + PYLON_HALF] }, null, new Set());
 
   /** The pieces of one set of cells that form slabs together (all fixed modules, or one moving module). */
-  const slabs = (cells: Cell[], frame: ModuleInstance | null): Placement[] => {
+  const slabs = (cells: Cell[], frame: ModuleInstance | null, walk: WalkLine[]): Placement[] => {
     const out: Placement[] = [];
+    const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
     const at = new Map(cells.map((c) => [key(c.gx, c.y, c.gz), c]));
     const own = new Set(frame ? [frame.id] : []);
     const kinds = new Map<Cell, Record<Side, EdgeKind>>();
@@ -132,11 +145,31 @@ export function planSlabs(cs: CompiledStage): SlabPlan {
       put('slab_bottom');
       SIDES.forEach((s, k) => {
         if (kind[s] !== 'none') put(kind[s] === 'cornice' ? 'edge_cornice' : 'edge_flush', TURNS[s]);
+        // the walking line: along roads, on to the edge where another slab joins, and from a road to the plaza's middle
+        const n = neighbour(c, s);
+        if (n && (s === 'E' || s === 'S') && (isRoad(c.module) || isRoad(n.module))) walk.push({ a: v(c.gx, c.y, c.gz), b: v(n.gx, n.y, n.gz) });
+        if (kind[s] === 'flush' && isRoad(c.module)) walk.push({ a: v(c.gx, c.y, c.gz), b: v(c.gx + DIRS[s][0] * H, c.y, c.gz + DIRS[s][2] * H) });
+        if (n && !isRoad(c.module) && isRoad(n.module) && c.module.type === 'tile' && !frame) {
+          const [w, d] = c.module.params.size ?? [1, 1];
+          const f = cellFloor(c.module.at);
+          walk.push({ a: v(c.gx, c.y, c.gz), b: v(f[0] + ((w - 1) * CELL) / 2, c.y, f[2] + ((d - 1) * CELL) / 2) });
+        }
         const next = SIDES[(k + 1) % 4]; // the corner between s and the side clockwise from it
         if (kind[s] === 'cornice' && kind[next] === 'cornice') put('corner_outer', k);
         const a = neighbour(c, s);
         const b = neighbour(c, next);
-        if (a && b && !neighbour(c, s, next) && kinds.get(a)![next] === 'cornice' && kinds.get(b)![s] === 'cornice') put('corner_inner', k);
+        if (a && b && !neighbour(c, s, next) && kinds.get(a)![next] === 'cornice' && kinds.get(b)![s] === 'cornice') {
+          put('corner_inner', k);
+          // a gilt-crowned pylon beside the slab where a road leaves a large plaza (brief: at the start and the end)
+          const road = [a, b].find((n) => isRoad(n.module));
+          const size = c.module.type === 'tile' ? (c.module.params.size ?? [1, 1]) : [1, 1];
+          if (!frame && road && Math.min(...size) >= 3) {
+            const px = c.gx + (DIRS[s][0] + DIRS[next][0]) * (H + PYLON_OUT);
+            const pz = c.gz + (DIRS[s][2] + DIRS[next][2]) * (H + PYLON_OUT);
+            // wings across the road it flanks
+            if (pylonFits(px, c.y, pz)) out.push(place('pylon', px, c.y, pz, road.gx !== c.gx ? 1 : 0));
+          }
+        }
       });
     }
     return out;
@@ -155,8 +188,33 @@ export function planSlabs(cs: CompiledStage): SlabPlan {
     return out;
   };
 
-  const world = slabs(fixed.flatMap((m) => cellsOf(cs, m, true)), null);
+  const walkWorld: WalkLine[] = [];
+  const world = slabs(fixed.flatMap((m) => cellsOf(cs, m, true)), null, walkWorld);
   for (const m of fixed) world.push(...lamps(m, cellFloor(m.at)));
+
+  // pylons before the gate too: beside the two corners of the goal's plaza that are nearest to the last checkpoint
+  const goal = cellFloor(cs.stage.goal.at);
+  const plaza = fixed.find((m) => {
+    if (m.type !== 'tile') return false;
+    const [w, d] = m.params.size ?? [1, 1];
+    const f = cellFloor(m.at);
+    return goal[1] === f[1] && goal[0] >= f[0] - H && goal[0] <= f[0] + (w - 1) * CELL + H && goal[2] >= f[2] - H && goal[2] <= f[2] + (d - 1) * CELL + H;
+  });
+  const last = cs.stage.checkpoints[cs.stage.checkpoints.length - 1];
+  if (plaza && plaza.type === 'tile' && last) {
+    const [w, d] = plaza.params.size ?? [1, 1];
+    const f = cellFloor(plaza.at);
+    const from = cellFloor(last.at);
+    const corners = [-1, 1].flatMap((sx) => [-1, 1].map((sz) => ({
+      x: f[0] + ((w - 1) * CELL) / 2 + sx * ((w * CELL) / 2 + PYLON_OUT),
+      z: f[2] + ((d - 1) * CELL) / 2 + sz * ((d * CELL) / 2 + PYLON_OUT),
+    })));
+    corners.sort((a, b) => Math.hypot(a.x - from[0], a.z - from[2]) - Math.hypot(b.x - from[0], b.z - from[2]));
+    // wings along the side the two share, so the pair reads as a gateway from the approach
+    const fits = corners.filter((c) => pylonFits(c.x, f[1], c.z)).slice(0, 2);
+    const turn = fits.length === 2 && Math.abs(fits[0].x - fits[1].x) < 0.01 ? 1 : 0;
+    for (const c of fits) world.push(place('pylon', c.x, f[1], c.z, turn));
+  }
 
   // piers: one thick pier under each fixed walkway, moved or left out where something folds through its place
   const taken: AABB[] = [];
@@ -187,11 +245,25 @@ export function planSlabs(cs: CompiledStage): SlabPlan {
   }
 
   const modules = new Map<Id, Placement[]>();
+  const walkModules = new Map<Id, WalkLine[]>();
   for (const m of kitModules) {
     if (fixed.includes(m)) continue;
-    modules.set(m.id, [...slabs(cellsOf(cs, m, false), m), ...lamps(m, [0, 0, 0])]);
+    const walk: WalkLine[] = [];
+    modules.set(m.id, [...slabs(cellsOf(cs, m, false), m, walk), ...lamps(m, [0, 0, 0])]);
+    walkModules.set(m.id, walk);
   }
-  return { world, modules, flushEdges };
+
+  // a round pier under the middle of every bridge that turns about a vertical axis: the bridge rests on it
+  for (const g of cs.stage.groups) {
+    if (g.kind !== 'states' || g.axis !== 'y') continue;
+    const members = cs.modules.filter((m) => m.group === g.id);
+    const bridge = members.find((m) => m.type === 'bridge');
+    if (!bridge) continue;
+    const y = cellFloor(bridge.at)[1];
+    const box: AABB = { min: [g.pivot[0] - 1.7, y - PIER_DEPTH, g.pivot[2] - 1.7], max: [g.pivot[0] + 1.7, y - SLAB, g.pivot[2] + 1.7] };
+    if (!blocked(box, null, new Set(members.map((m) => m.id))) && !taken.some((o) => overlaps(box, o))) world.push(place('pier_pivot', g.pivot[0], y, g.pivot[2]));
+  }
+  return { world, modules, flushEdges, walkWorld, walkModules };
 }
 
 /** Where a piece that turns with a side stands: the rotation that takes the kit's north edge to side `s`. */

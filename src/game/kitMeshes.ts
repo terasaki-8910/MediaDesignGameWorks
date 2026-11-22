@@ -2,6 +2,7 @@
 // only their camera collider here: what the player sees of them comes from the Blender kit (kit.ts, kitLayout.ts).
 // The other types are still procedural.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CUBE_FACE_NORMAL, SLAB } from '../core/kit.ts';
 import { DIRS, type DirName } from '../core/math.ts';
 import type { CubeFace, Interactable, ModuleInstance } from '../core/types.ts';
@@ -116,17 +117,18 @@ export function buildModuleMesh(m: ModuleInstance, M: Materials, ctx: BuildConte
       c.position.set(4, 6, 4);
       c.userData.collider = true;
       root.add(c);
-      // brass edges
+      // brass edges, as one mesh (twelve separate ones were 24 draw calls with their shadows)
       const e = 6.05;
+      const edges: THREE.BufferGeometry[] = [];
       for (const [sx, sy, sz, px, py, pz] of [
         [12.3, 0.3, 0.3, 0, e, e], [12.3, 0.3, 0.3, 0, -e, e], [12.3, 0.3, 0.3, 0, e, -e], [12.3, 0.3, 0.3, 0, -e, -e],
         [0.3, 12.3, 0.3, e, 0, e], [0.3, 12.3, 0.3, -e, 0, e], [0.3, 12.3, 0.3, e, 0, -e], [0.3, 12.3, 0.3, -e, 0, -e],
         [0.3, 0.3, 12.3, e, e, 0], [0.3, 0.3, 12.3, -e, e, 0], [0.3, 0.3, 12.3, e, -e, 0], [0.3, 0.3, 12.3, -e, -e, 0],
       ]) {
-        const b = mesh(box(sx, sy, sz), M.brass);
-        b.position.set(4 + px, 6 + py, 4 + pz);
-        root.add(b);
+        edges.push(box(sx, sy, sz).translate(4 + px, 6 + py, 4 + pz));
       }
+      root.add(mesh(mergeGeometries(edges), M.brass));
+      for (const g of edges) g.dispose();
       return { root, colliders: [c] };
     }
     case 'tower': {
@@ -214,6 +216,20 @@ export function buildModuleMesh(m: ModuleInstance, M: Materials, ctx: BuildConte
   }
 }
 
+/** An open cylinder whose vertex colours run from full at the foot to nothing at the top: a column of light with no cap. */
+function fadingColumn(radius: number, height: number, sides: number): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(radius, radius, height, sides, 10, true);
+  const pos = g.getAttribute('position');
+  const col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const t = pos.getY(i) / height + 0.5;
+    const v = (1 - t) ** 1.6 * THREE.MathUtils.smoothstep(t, 0, 0.06);
+    col.set([v, v, v], i * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
+
 /** Where a console stands in its cell: against the side it is named after. */
 export const CONSOLE_OFFSET = 1.35;
 
@@ -232,13 +248,13 @@ export function consoleMesh(c: Interactable, M: Materials): THREE.Group {
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.03;
   ring.name = 'ring';
-  const beacon = mesh(new THREE.CylinderGeometry(0.18, 0.18, 30, 8, 1, true), M.glowSoft, false, false);
+  const beacon = mesh(fadingColumn(0.18, 30, 8), M.column.clone(), false, false);
   beacon.position.set(d[0] * CONSOLE_OFFSET, 16, d[2] * CONSOLE_OFFSET);
   beacon.visible = false;
   beacon.name = 'beacon';
   // faint guidance column, brightness set by the section's `beacon` tunable
-  const guide = mesh(new THREE.CylinderGeometry(0.5, 0.5, 14, 12, 1, true), M.glowSoft.clone(), false, false);
-  guide.position.set(d[0] * CONSOLE_OFFSET, 8.4, d[2] * CONSOLE_OFFSET);
+  const guide = mesh(fadingColumn(0.45, 11, 12), M.column.clone(), false, false);
+  guide.position.set(d[0] * CONSOLE_OFFSET, 7.4, d[2] * CONSOLE_OFFSET);
   guide.name = 'guide';
   guide.visible = false;
   g.add(body, ring, beacon, guide);

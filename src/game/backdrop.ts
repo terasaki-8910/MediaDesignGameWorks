@@ -1,9 +1,10 @@
-// Sky, lights, fog, and the background city: thousands of instanced towers below the walkways and a
-// mirrored city hanging from the sky. Fold events send a wave through the city that tilts each tower.
+// Sky, lights, haze, and the background city: modelled buildings (art/blender/gen_city.py) laid out in streets as a
+// sea of rooftops below the walkways, and the same buildings hanging upside down as the mirrored city far above.
+// Fold events send a wave through both that tilts each building.
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { VisualTheme } from '../core/types.ts';
 import { LOOK, createSun, hazeFloor, installHaze, loadSky } from './look.ts';
-import { facadeTextures } from './textures.ts';
 
 function rng(seed: number) {
   let s = seed >>> 0 || 1;
@@ -26,114 +27,132 @@ export function setupEnvironment(scene: THREE.Scene, renderer: THREE.WebGLRender
   return { sun, sky: loadSky(scene, renderer) };
 }
 
-/** Metres covered by one repeat of the facade texture (6 window columns by 14 floors). */
-const FACADE_TILE: [number, number] = [12, 24];
+/** The buildings of city.glb: how often each stands in the streets, and how many rows of a street block it takes. */
+const VARIANTS = [
+  { name: 'haussmann_a', weight: 5, rows: 1, scale: 1 },
+  { name: 'haussmann_corner', weight: 3, rows: 1, scale: 1 },
+  { name: 'haussmann_step', weight: 3, rows: 1, scale: 1 },
+  { name: 'belfry', weight: 1.1, rows: 1, scale: 1 },
+  { name: 'deco_hall', weight: 0.7, rows: 1, scale: 0.78 },
+  { name: 'deco_tower', weight: 0.45, rows: 2, scale: 1 },
+  { name: 'dome', weight: 0.4, rows: 2, scale: 1 },
+] as const;
 
-/**
- * Repeats the facade by each tower's own size, read from its instance matrix, so a 200 m landmark has as many floors
- * as its height calls for instead of one texture stretched over it.
- */
-function tileFacade(mat: THREE.MeshStandardMaterial) {
-  mat.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader.replace(
-      '#include <uv_vertex>',
-      /* glsl */ `#include <uv_vertex>
-      #ifdef USE_INSTANCING
-        vec3 towerSize = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
-        vec2 faceSize = abs(normal.y) > 0.5 ? towerSize.xz : abs(normal.x) > 0.5 ? towerSize.zy : towerSize.xy;
-        vec2 facadeUv = uv * faceSize / vec2(${FACADE_TILE[0].toFixed(1)}, ${FACADE_TILE[1].toFixed(1)});
-        vMapUv = facadeUv;
-        vEmissiveMapUv = facadeUv;
-        // windows: lit in few towers of the city below, and only far out, where they sit near the horizon
-        float cityHash = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);
-        vCityLit = step(0.9, cityHash) * step(0.0, instanceMatrix[1].y) * smoothstep(170.0, 250.0, length(instanceMatrix[3].xz - vec2(4.0, -6.0)));
-      #endif`,
-    );
-    shader.vertexShader = 'varying float vCityLit;\n' + shader.vertexShader;
-    shader.fragmentShader = ('varying float vCityLit;\n' + shader.fragmentShader)
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance *= vCityLit * smoothstep(-50.0, -5.0, vFogWorld.y) * smoothstep(70.0, 25.0, vFogWorld.y);')
-      // the facade map paints coloured windows: keep them only as a faint grid on a grey silhouette
-      .replace('#include <map_fragment>', '#include <map_fragment>\n  diffuseColor.rgb = mix(vec3(0.5), vec3(dot(diffuseColor.rgb, vec3(0.3, 0.6, 0.1))), 0.12);');
-  };
-  mat.customProgramCacheKey = () => 'city-facade';
-}
+/** Street grid: one block is this wide and deep (building plus street), and the grid is turned off the walkways' axes. */
+const BLOCK: [number, number] = [54, 30];
+const GRID_TURN = 0.31;
+/** Lower city: the ground lies this far below y = 0, so the roofs (about 28 m up) sink into the haze under the walkways. */
+const GROUND = -38;
+/** Mirrored city: the buildings hang from this height, their roofs 100 m and more above the walkways, their feet lost in the haze above. */
+const SKY = 128;
+/** Buildings nearer than this to the middle of the stage get the detailed model. */
+const NEAR = 210;
 
-interface Building { x: number; z: number; y: number; w: number; h: number; d: number; axis: THREE.Vector3; angle: number; sky: boolean }
+interface Building { x: number; z: number; y: number; yaw: number; scale: number; axis: THREE.Vector3; angle: number; sky: boolean }
 interface Wave { origin: THREE.Vector3; start: number; strength: number; speed: number; dur: number }
-
-const ARCHETYPES = [
-  { w: 10, h: 36, d: 10 },
-  { w: 14, h: 22, d: 14 },
-  { w: 8, h: 58, d: 8 },
-  { w: 20, h: 14, d: 16 },
-];
 
 export class BackgroundCity {
   readonly group = new THREE.Group();
   private sets: { mesh: THREE.InstancedMesh; items: Building[] }[] = [];
   private waves: Wave[] = [];
   private time = 0;
-  private readonly mirrorY = 95;
   private readonly m4 = new THREE.Matrix4();
   private readonly q = new THREE.Quaternion();
+  private readonly qYaw = new THREE.Quaternion();
   private readonly flip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
+  private readonly up = new THREE.Vector3(0, 1, 0);
+  private readonly theme: VisualTheme;
+  private readonly center: THREE.Vector3;
+  private readonly exclude: THREE.Box3;
 
+  /** `exclude` is the play space: nothing of the lower city stands under it. The buildings appear once `load` is done. */
   constructor(theme: VisualTheme, center: THREE.Vector3, exclude: THREE.Box3) {
-    const r = rng(theme.city.seed);
-    const tex = facadeTextures(theme.city.seed);
-    const [r0, r1] = theme.city.radius;
-    const perType = ARCHETYPES.map(() => [] as Building[]);
-    const placeOne = (sky: boolean) => {
-      for (let tries = 0; tries < 20; tries++) {
-        const a = r() * Math.PI * 2;
-        const rad = Math.sqrt(r0 * r0 + r() * (r1 * r1 - r0 * r0));
-        const x = center.x + Math.cos(a) * rad;
-        const z = center.z + Math.sin(a) * rad;
-        if (!sky && exclude.containsPoint(new THREE.Vector3(x, 0, z))) continue;
-        const k = Math.floor(r() * ARCHETYPES.length);
-        const A = ARCHETYPES[k];
-        const s = 0.75 + r() * 0.6;
-        const radial = new THREE.Vector3(x - center.x, 0, z - center.z).normalize();
-        const axis = new THREE.Vector3(-radial.z, 0, radial.x); // tilt away from the centre
-        // Most roofs sit well below the walkways (a sea of rooftops); a few far landmarks rise above them.
-        const landmark = !sky && rad > r0 + (r1 - r0) * 0.35 && r() < 0.045;
-        const h = landmark ? 120 + r() * 90 : A.h * s;
-        const y = sky ? -20 - r() * 40 : landmark ? -100 - r() * 20 : -60 - h * (0.6 + r() * 0.9);
-        perType[k].push({ x, z, y, w: A.w * (0.8 + r() * 0.4), h, d: A.d * (0.8 + r() * 0.4), axis, angle: 0, sky });
-        return;
-      }
-    };
-    for (let i = 0; i < theme.city.count; i++) placeOne(false);
-    for (let i = 0; i < Math.floor(theme.city.count * 0.6); i++) placeOne(true);
+    this.theme = theme;
+    this.center = center;
+    this.exclude = exclude.clone().expandByVector(new THREE.Vector3(26, 0, 26));
+  }
 
-    ARCHETYPES.forEach((_, k) => {
-      const geo = new THREE.BoxGeometry(1, 1, 1);
-      geo.translate(0, 0.5, 0);
-      const mat = new THREE.MeshStandardMaterial({
-        map: tex.map, emissiveMap: tex.emissive, emissive: new THREE.Color(1, 0.72, 0.42), emissiveIntensity: 1.6,
-        roughness: 0.9, metalness: 0,
-      });
-      tileFacade(mat);
-      const items = perType[k];
-      const mesh = new THREE.InstancedMesh(geo, mat, items.length);
-      const tint = new THREE.Color();
+  async load(url: string) {
+    const gltf = await new GLTFLoader().loadAsync(url);
+    const r = rng(this.theme.city.seed);
+    const [r0, r1] = this.theme.city.radius;
+    const lists = new Map<string, Building[]>();
+    const push = (key: string, b: Building) => {
+      const l = lists.get(key);
+      if (l) l.push(b);
+      else lists.set(key, [b]);
+    };
+    const total = VARIANTS.reduce((s, v) => s + v.weight, 0);
+    const pick = () => {
+      let k = r() * total;
+      for (const v of VARIANTS) if ((k -= v.weight) <= 0) return v;
+      return VARIANTS[0];
+    };
+    const cos = Math.cos(GRID_TURN);
+    const sin = Math.sin(GRID_TURN);
+    const lay = (sky: boolean, block: [number, number], inner: number, outer: number, keep: number) => {
+      const nx = Math.ceil(outer / block[0]);
+      const nz = Math.ceil(outer / block[1]);
+      const used = new Set<string>();
+      for (let i = -nx; i <= nx; i++)
+        for (let j = -nz; j <= nz; j++) {
+          const v = pick();
+          const jitter = [(r() - 0.5) * 4, (r() - 0.5) * 3, (r() - 0.5) * 0.07, r(), r(), r()];
+          if (used.has(`${i},${j}`) || jitter[3] > keep) continue;
+          const gx = i * block[0] + (j % 2 ? block[0] * 0.5 : 0) + jitter[0];
+          const gz = (j + (v.rows - 1) / 2) * block[1] + jitter[1];
+          const x = this.center.x + gx * cos - gz * sin;
+          const z = this.center.z + gx * sin + gz * cos;
+          const rad = Math.hypot(x - this.center.x, z - this.center.z);
+          if (rad < inner || rad > outer) continue;
+          if (!sky && this.exclude.containsPoint(new THREE.Vector3(x, 0, z))) continue;
+          if (v.rows > 1) {
+            if (used.has(`${i},${j + 1}`)) continue;
+            used.add(`${i},${j + 1}`);
+          }
+          const radial = new THREE.Vector3(x - this.center.x, 0, z - this.center.z).normalize();
+          // the ground steps down a little from district to district, so the rooflines are not one level
+          const step = Math.round((Math.sin(i * 0.9 + 1.3) + Math.cos(j * 0.7)) * 1.5) * 2.5;
+          const b: Building = {
+            x, z,
+            y: sky ? SKY + step + jitter[4] * 14 : GROUND + step - ((rad - inner) / (outer - inner)) * 6,
+            yaw: -GRID_TURN + (jitter[5] < 0.5 ? 0 : Math.PI) + jitter[2],
+            scale: v.scale * (0.92 + jitter[4] * 0.2),
+            axis: new THREE.Vector3(-radial.z, 0, radial.x), // tilt away from the centre
+            angle: 0,
+            sky,
+          };
+          push(`${v.name}_lod${!sky && rad < NEAR ? 0 : 1}`, b);
+        }
+    };
+    lay(false, BLOCK, r0 - 12, r1, 0.93);
+    lay(true, [BLOCK[0] * 1.25, BLOCK[1] * 1.5], r0 + 40, r1 + 60, 0.5);
+
+    const tint = new THREE.Color();
+    for (const [key, items] of lists) {
+      const src = gltf.scene.getObjectByName(key) as THREE.Mesh | undefined;
+      if (!src?.isMesh) throw new Error(`city.glb has no mesh "${key}"`);
+      const mesh = new THREE.InstancedMesh(src.geometry, src.material, items.length);
       items.forEach((b, i) => {
-        tint.setHSL(0.62 + r() * 0.05, 0.05 + r() * 0.04, 0.3 + r() * 0.12); // cool grey; with the sun and the haze on it about #6E6A78 to #8A8494
-        mesh.setColorAt(i, tint);
+        // darker and greyer than the play area, a little warmer or cooler from house to house
+        const v = 0.62 + r() * 0.2;
+        const warm = (r() - 0.5) * 0.06;
+        mesh.setColorAt(i, tint.setRGB(v * (1 + warm), v, v * (1 - warm)));
         this.writeMatrix(mesh, i, b);
       });
       mesh.instanceMatrix.needsUpdate = true;
       mesh.frustumCulled = false;
+      mesh.name = `city:${key}`;
       this.group.add(mesh);
       this.sets.push({ mesh, items });
-    });
+    }
   }
 
   private writeMatrix(mesh: THREE.InstancedMesh, i: number, b: Building) {
     this.q.setFromAxisAngle(b.axis, b.angle);
-    if (b.sky) this.q.premultiply(this.flip);
-    const y = b.sky ? this.mirrorY * 2 - b.y : b.y;
-    this.m4.compose(new THREE.Vector3(b.x, y, b.z), this.q, new THREE.Vector3(b.w, b.h, b.d));
+    if (b.sky) this.q.multiply(this.flip);
+    this.q.multiply(this.qYaw.setFromAxisAngle(this.up, b.yaw));
+    this.m4.compose(new THREE.Vector3(b.x, b.y, b.z), this.q, new THREE.Vector3(b.scale, b.scale, b.scale));
     mesh.setMatrixAt(i, this.m4);
   }
 
@@ -142,7 +161,7 @@ export class BackgroundCity {
     this.waves.push({ origin: origin.clone(), start: this.time, strength, speed, dur });
   }
 
-  /** Back to time zero with every tower upright (review shots). */
+  /** Back to time zero with every building upright (review shots). */
   reset() {
     this.time = 0;
     this.waves = [];

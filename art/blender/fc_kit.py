@@ -26,9 +26,10 @@ TEXTURES = os.path.join(ROOT, "art", "textures")
 # (Poly Haven's "dimensions"); `target` is the mean base colour the brief asks for (sRGB hex).
 # The paving is 1K too: at the play camera its nearest texels are about one screen pixel, and 2K maps would put the
 # game over the brief's 96 MB texture budget (measured: 2K base + normal cost 43 MB against 11 MB).
-PAVING = {"id": "floor_tiles_02", "res": "1k", "size": 4.0, "target": "#D6CEC0", "rough": (0.55, 0.75), "nor_res": "1k"}
+PAVING = {"id": "floor_tiles_02", "res": "1k", "size": 4.0, "target": "#D8D0C2", "rough": (0.55, 0.75), "nor_res": "1k"}
 ASHLAR = {"id": "sandstone_blocks_04", "res": "1k", "size": 3.0, "target": "#B9AF9F", "rough": (0.7, 0.9), "nor_res": "1k"}
 STONE_SATURATION = 0.7  # the photo is yellower than the brief's warm grey limestone
+PAVING_SATURATION = 0.8
 
 
 def script_args():
@@ -136,7 +137,19 @@ def _base_material(name):
 
 
 def stone_material(name, spec, saturation=1.0):
-    """Tiling stone on UV0 (world scale): tinted base colour, roughness, OpenGL normal map. AO is added by bake_ao."""
+    """A stone material of the kit, by name only: the tiling maps live once in materials.glb (gen_materials.py) and the
+    game gives them to every kit material of this name. Here it carries the mean colour (for the bakes), the UV scale
+    and, after bake_ao, the piece family's own occlusion map."""
+    m, nt, bsdf = _base_material(name)
+    bsdf.inputs["Base Color"].default_value = (*srgb(spec["target"]), 1.0)
+    bsdf.inputs["Roughness"].default_value = sum(spec["rough"]) / 2
+    bsdf.inputs["Metallic"].default_value = 0.0
+    m["uv_size"] = spec["size"]
+    return m
+
+
+def stone_material_full(name, spec, saturation=1.0):
+    """Tiling stone on UV0 (world scale): tinted base colour, roughness, OpenGL normal map (materials.glb only)."""
     m, nt, bsdf = _base_material(name)
     uv = nt.nodes.new("ShaderNodeUVMap")
     uv.uv_map = "UV0"
@@ -278,16 +291,16 @@ def lathe(bm, profile, segments, material_index=0, centre=(0.0, 0.0)):
     return faces
 
 
-def tube(bm, path, radius, segments=6, material_index=0):
-    """A round tube along a polyline that lies in the XZ plane [(x, y, z), ...], closed with caps."""
+def tube(bm, path, radius, segments=6, material_index=0, side=(0, 1, 0)):
+    """A round tube along a polyline that lies in a plane whose normal is `side` (default: the XZ plane), with caps."""
     rings = []
     for i, p in enumerate(path):
         a = Vector(path[max(i - 1, 0)])
         b = Vector(path[min(i + 1, len(path) - 1)])
         t = (b - a).normalized()
-        side = Vector((0, 1, 0))
-        up = t.cross(side).normalized()
-        rings.append([bm.verts.new(Vector(p) + radius * (math.cos(2 * math.pi * k / segments) * side + math.sin(2 * math.pi * k / segments) * up))
+        side_v = Vector(side)
+        up = t.cross(side_v).normalized()
+        rings.append([bm.verts.new(Vector(p) + radius * (math.cos(2 * math.pi * k / segments) * side_v + math.sin(2 * math.pi * k / segments) * up))
                       for k in range(segments)])
     faces = []
     for k in range(len(rings) - 1):
@@ -493,6 +506,23 @@ def grime_vertex_colours(objects, ao_img, layer="UV1", tint="#7F8672", amount=0.
         attr.data.foreach_set("color", rgba.ravel())
         me.color_attributes.active_color = attr
         me.color_attributes.render_color_index = 0
+
+
+def depth_weathering(objects, z0, z1, tint="#9A9C96"):
+    """Multiply COLOR_0 towards `tint` from height z0 down to z1: stone that stands below the walkways is darker and
+    greyer (damp, never in the sun), so the piers do not outshine the paving."""
+    t = np.array(srgb(tint))
+    for ob in objects:
+        me = ob.data
+        attr = me.color_attributes["Color"]
+        col = np.empty(len(me.loops) * 4, dtype=np.float32)
+        attr.data.foreach_get("color", col)
+        col = col.reshape(-1, 4)
+        z = np.array([(ob.matrix_world @ me.vertices[l.vertex_index].co).z for l in me.loops])
+        k_ = np.clip((z0 - z) / (z0 - z1), 0, 1)
+        k_ = k_ * k_ * (3 - 2 * k_)
+        col[:, :3] *= 1.0 + (t[None, :] - 1.0) * k_[:, None]
+        attr.data.foreach_set("color", col.ravel())
 
 
 # ---------------------------------------------------------------------------------------------------------------

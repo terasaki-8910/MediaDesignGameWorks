@@ -36,7 +36,7 @@ if "paving" in opts:  # comparison builds: --paving <id> --paving-size <m> --pav
 if "ashlar" in opts:
     ashlar.update(id=opts["ashlar"], size=float(opts.get("ashlar-size", ashlar["size"])))
     K.TEXTURES = opts.get("textures", K.TEXTURES)
-PAVING = K.stone_material("M_paving", paving, saturation=0.8)
+PAVING = K.stone_material("M_paving", paving)
 STONE = K.stone_material("M_stone", ashlar, saturation=K.STONE_SATURATION)
 
 # the cornice profile as (projection from the edge, height), from the paving outwards and down
@@ -102,6 +102,7 @@ bpy.context.view_layer.update()
 K.unwrap_atlas(stone, "UV1", margin=0.01)
 ao = K.bake_ao(stone, "floor_ao", 512, occluders=slabs, distance=0.6, strength=1.2)
 K.grime_vertex_colours(stone, ao)
+K.depth_weathering([bottom], 1.0, 0.0, tint="#7C7E78")  # the underside: damp, never in the sun
 for ob in stone:
     ob.location = (0, 0, 0)
 for s in slabs:

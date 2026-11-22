@@ -8,6 +8,8 @@ Pieces (nodes), all modelled on the north edge of a 4 m cell, centre line 0.16 m
   wall_a, wall_b    low ashlar wall with coping; the two differ only in where the stone pattern falls
   post              newel / wall pier, origin at its base centre; the game puts one wherever segments meet or turn
   post_lamp         a slightly larger pier that carries a lamp (it encloses the balustrade's middle newel)
+  grime             a strip that lies on the paving along the inner foot of a parapet: grey-green dirt in vertex
+                    colours with alpha, densest at the foot and where water stands, fading out over half a metre
 Segments stop 4 cm short of the cell boundary so that posts cover straight joints, outer and inner corners.
 """
 import os
@@ -114,7 +116,7 @@ bpy.context.view_layer.update()
 K.unwrap_atlas(baked, "UV1")
 K.copy_uv(walls[0], walls[1], "UV1")
 ao = K.bake_ao(baked, "parapet_ao", 1024, occluders=[ground, *ends, *balusters], distance=0.9, strength=1.25)
-K.grime_vertex_colours(unique, ao)
+K.grime_vertex_colours(unique, ao, amount=0.6)
 for ob in spots:
     ob.location = (0, 0, 0)
 for ob in [ground, *ends]:
@@ -127,9 +129,41 @@ for ob in [body, *walls, *posts]:
 if abs(balusters[0].location.z - PLINTH) > 1e-6:
     raise RuntimeError("balusters do not stand on the plinth")
 
+# dirt on the paving at the foot of a parapet (reference A3): a strip of quads with alpha in the vertex colours
+from mathutils import noise, Vector  # noqa: E402
+
+GRIME = K.plain_material("M_grime", "#FFFFFF", metallic=0.0, roughness=1.0)
+GRIME.blend_method = "BLEND"
+GRIME.node_tree.nodes["Principled BSDF"].inputs["Alpha"].default_value = 0.999  # marks the material as blended
+NX, NY, REACH = 48, 7, 0.85
+bm = bmesh.new()
+y_foot = LINE - 0.17
+rows = [[bm.verts.new((-2.0 + 4.0 * i / NX, y_foot + 0.03 - REACH * j / NY, 0.012)) for i in range(NX + 1)] for j in range(NY + 1)]
+for j in range(NY):
+    for i in range(NX):
+        bm.faces.new((rows[j][i], rows[j + 1][i], rows[j + 1][i + 1], rows[j][i + 1]))
+grime = K.new_object("grime", bm, GRIME)
+if grime.data.polygons[0].normal.z < 0:  # recalculating the normals of a flat sheet can turn it face down
+    grime.data.flip_normals()
+attr = grime.data.color_attributes.new(name="Color", type="FLOAT_COLOR", domain="POINT")
+tint = K.srgb("#4A5140")
+for v in grime.data.vertices:
+    t = (y_foot + 0.03 - v.co.y) / REACH  # 0 at the foot, 1 at the outer edge
+    streak = 0.55 + 0.45 * noise.noise(Vector((v.co.x * 1.9 + 7.3, v.co.y * 0.6, 0.0)))
+    patch = 0.5 + 0.5 * noise.noise(Vector((v.co.x * 0.45 + 2.1, 3.7, 0.0)))
+    ends = min(1.0, (2.0 - abs(v.co.x)) / 0.05)
+    a = 1.5 * (1.0 - t) ** (1.1 + 1.3 * patch) * (0.5 + 0.6 * streak) * max(ends, 0.0)
+    attr.data[v.index].color = (*tint, max(0.0, min(0.65, a)))
+grime.data.color_attributes.active_color = attr
+uv = grime.data.uv_layers.new(name="UV0")
+for loop in grime.data.loops:
+    co = grime.data.vertices[loop.vertex_index].co
+    uv.data[loop.index].uv = (co.x, co.y)
+K.check_mesh(grime, closed=False)
+
 root = bpy.data.objects.new("balustrade", None)
 bpy.context.collection.objects.link(root)
 for ob in [body, *balusters]:
     ob.parent = root
 bpy.context.view_layer.update()
-K.export(OUT, [root, body, *balusters, *walls, *posts])
+K.export(OUT, [root, body, *balusters, *walls, *posts, grime])

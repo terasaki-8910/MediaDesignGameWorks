@@ -224,16 +224,21 @@ export class World {
     this.kit = kit;
     const plan = planSlabs(this.cs);
     this.flushEdges = plan.flushEdges;
-    const fixed = kit.build(plan.world, { tintOrigin: new THREE.Vector3() });
+    const fixed = kit.build(plan.world, { tintOrigin: new THREE.Vector3(), walk: plan.walkWorld });
     fixed.name = 'kit:fixed';
     this.root.add(fixed);
     for (const [id, placements] of plan.modules) {
       const f = cellFloor(this.moduleById.get(id)!.at);
-      this.root.getObjectByName(id)!.add(kit.build(placements, { tintOrigin: new THREE.Vector3(f[0], f[1], f[2]) }));
+      this.root.getObjectByName(id)!.add(kit.build(placements, { tintOrigin: new THREE.Vector3(f[0], f[1], f[2]), walk: plan.walkModules.get(id) }));
     }
+    // the bronze and gilt of all consoles are two meshes; each console keeps its own glass, lit by itself
+    this.root.updateMatrixWorld(true);
+    const stands: { piece: string; matrix: THREE.Matrix4 }[] = [];
     for (const [id, node] of this.consoleNodes) {
-      const body = kit.build([{ piece: 'console', matrix: new THREE.Matrix4() }], { own: ['M_console_glass'] });
-      node.getObjectByName('body')!.add(body);
+      const slot = node.getObjectByName('body')!;
+      for (const piece of ['console_body', 'console_head']) stands.push({ piece, matrix: slot.matrixWorld.clone() });
+      const body = kit.build([{ piece: 'console_glass', matrix: new THREE.Matrix4() }], { own: ['M_console_glass'] });
+      slot.add(body);
       const glass = body.getObjectByName('kit:M_console_glass') as THREE.Mesh | undefined;
       if (glass) {
         const mat = glass.material as THREE.MeshStandardMaterial;
@@ -242,7 +247,11 @@ export class World {
         this.consoleParts.get(id)!.glass = mat;
       }
     }
-    const bulb = kit.material('lamp', 'M_lamp_bulb');
+    const consoles = kit.build(stands);
+    consoles.name = 'kit:consoles';
+    consoles.applyMatrix4(new THREE.Matrix4().copy(this.root.matrixWorld).invert());
+    this.root.add(consoles);
+    const bulb = kit.material('M_lamp_bulb');
     if (bulb) bulb.emissiveIntensity = 2.6; // small and warm: just enough to glow against the dusk sky
     this.setState(this.state, false);
   }
@@ -357,7 +366,7 @@ export class World {
     for (const [id, p] of this.consoleParts) {
       const on = !hidden && ids.has(id) && level > 0.01;
       p.guide.visible = on;
-      if (on) (p.guide.material as THREE.MeshBasicMaterial).opacity = 0.04 + 0.14 * level;
+      if (on) (p.guide.material as THREE.MeshBasicMaterial).opacity = 0.07 + 0.16 * level; // of a column that is faint and fades upwards
     }
   }
 
@@ -511,6 +520,7 @@ export class World {
       ...kit.instances('wall_a', lists.wall_a, 0.08),
       ...kit.instances('wall_b', lists.wall_b, 0.08),
       ...kit.instances('post', [...posts.values()], 0.08),
+      ...kit.instances('grime', [...lists.balustrade, ...lists.wall_a, ...lists.wall_b]),
     );
   }
 

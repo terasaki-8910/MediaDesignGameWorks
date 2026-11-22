@@ -60,3 +60,23 @@ test('piers stand under fixed walkways and clear every box in every combination 
       }
   }
 });
+
+test('pylons flank the road where it leaves the start plaza, and the turning bridge rests on a pivot pier', () => {
+  const pylons = plan.world.filter((p) => p.piece === 'pylon').map((p) => position(p.matrix));
+  const start = pylons.filter((c) => c.x > -32 && c.x < -29);
+  assert.equal(start.length, 2, 'two pylons east of the start plaza');
+  assert.ok(start.some((c) => c.z < 0) && start.some((c) => c.z > 4), 'one on each side of the road (z 0..4)');
+  // and two more before the gate, beside the goal's plaza (cells 10..12, -7..-5), clear of everything that folds
+  const gate = pylons.filter((c) => c.z < -12);
+  assert.equal(gate.length, 2, 'two pylons at the gate plaza');
+  assert.equal(pylons.length, 4);
+  const pivots = plan.world.filter((p) => p.piece === 'pier_pivot').map((p) => position(p.matrix));
+  assert.deepEqual(pivots.map((c) => [c.x, c.y, c.z]), [[-14, 12, 2]]);
+});
+
+test('the walking line runs along the roads, onto the turning bridge and into the plaza', () => {
+  assert.ok(plan.walkWorld.length > 10);
+  assert.ok((plan.walkModules.get('m_bridge1') ?? []).length >= 2);
+  // from the plaza cell where the first road arrives to the plaza's middle
+  assert.ok(plan.walkWorld.some((w) => w.a.distanceTo(new THREE.Vector3(-34, 12, 2)) < 0.01 && w.b.distanceTo(new THREE.Vector3(-38, 12, 2)) < 0.01));
+});

@@ -146,7 +146,8 @@ export class Game {
         console.error('kit not loaded, showing the plain slabs:', e);
         this.world.showColliders();
       });
-    Promise.all([gate, sky, kit]).finally(() => {
+    const city = this.city.load('./assets/city.glb').catch((e) => console.warn('background city not loaded:', e));
+    Promise.all([gate, sky, kit, city]).finally(() => {
       this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
       this.ready = true;
     });
