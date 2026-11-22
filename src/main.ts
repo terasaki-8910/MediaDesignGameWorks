@@ -20,7 +20,7 @@ const isTouchOnly = matchMedia('(pointer: coarse)').matches && !matchMedia('(poi
 // ?demo=1 plays by itself (timings: &title= &establish= &browse= &hold= &end= in seconds);
 // ?capture=1 additionally hands the clock to tools/video/capture.ts; ?hud=0 hides the on-screen UI.
 // ?shots=1 is the review mode (src/game/shots.ts): the virtual clock too, but no demo and no telemetry;
-// with &ui=1 it also lists the HUD states for UI review.
+// with &ui=1 it also lists the HUD states for UI review, with &char=1 the two close views of the character.
 const shots = params.has('shots');
 const capture = params.has('capture') && !shots;
 const clock = capture || shots ? new VirtualClock() : null;
@@ -59,7 +59,7 @@ if (isTouchOnly && !demo && !shots) {
         clock.advance(dt);
         game.advance(dt, render);
       },
-      { ui: params.has('ui') },
+      { ui: params.has('ui'), char: params.has('char') },
     );
   else if (clock)
     (window as unknown as { __capture: unknown }).__capture = {

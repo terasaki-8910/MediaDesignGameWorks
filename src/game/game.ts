@@ -18,6 +18,7 @@ import { createMaterials } from './materials.ts';
 import { Player, cloakAvatar } from './player.ts';
 import { Telemetry, clientInfo, defaultConsent } from './telemetry.ts';
 import { loadVrmAvatar } from './vrmAvatar.ts';
+import { loadWandererAvatar, type WandererAvatar } from './wandererAvatar.ts';
 import { World, type EdgeMarker } from './world.ts';
 
 export interface Revision { revision: number; updated: string; recent: { date: string; summary: string }[] }
@@ -73,7 +74,7 @@ export class Game {
   mode: Mode = 'title';
   /** Walking direction set by the demo instead of the keyboard. */
   steer: { x: number; z: number } | null = null;
-  /** True once the gate model is in and shaders are compiled (the capture waits for this). */
+  /** True once the gate model and the character are in and shaders are compiled (the capture waits for this). */
   ready = false;
   state: PuzzleState;
   settings: Settings;
@@ -93,6 +94,8 @@ export class Game {
   private telemetryAllowed = true;
   private introTimer = 0;
   private readonly shots: boolean;
+  /** The character model, when it is the avatar in use (the review shots put it back into its rest pose). */
+  private wanderer: WandererAvatar | null = null;
 
   constructor(canvas: HTMLCanvasElement, hudRoot: HTMLElement, data: GameData, opts: GameOptions = {}) {
     this.data = data;
@@ -111,7 +114,7 @@ export class Game {
     const bounds = new THREE.Box3(new THREE.Vector3(-70, -200, -55), new THREE.Vector3(80, 200, 40));
     this.city = new BackgroundCity(stage.visualTheme, new THREE.Vector3(4, 0, -6), bounds);
     this.engine.scene.add(this.city.group);
-    this.player = new Player(cloakAvatar(M));
+    this.player = new Player({ object: new THREE.Group(), animate: () => {} }); // nothing until the character has loaded
     this.engine.scene.add(this.player.root);
     this.input = new Input(canvas);
     this.hud = new Hud(hudRoot);
@@ -133,9 +136,22 @@ export class Game {
       if (!document.pointerLockElement && (this.mode === 'play' || this.mode === 'fold')) this.openPause();
     });
     const vrmUrl = params.get('vrm') ?? './assets/player.vrm';
-    loadVrmAvatar(vrmUrl)
-      .then((a) => a && this.player.setAvatar(a))
-      .catch((e) => console.warn('VRM avatar not loaded:', e));
+    // The avatar: a VRM file if one is there, else the character model, else (loading failed) the old cloaked stand-in.
+    const character = loadVrmAvatar(vrmUrl)
+      .catch((e) => {
+        console.warn('VRM avatar not loaded:', e);
+        return null;
+      })
+      .then(async (vrm) => {
+        if (vrm) return this.player.setAvatar(vrm);
+        try {
+          this.wanderer = await loadWandererAvatar({ reduceMotion: () => this.settings.reduceMotion });
+          this.player.setAvatar(this.wanderer);
+        } catch (e) {
+          console.warn('character model not loaded, keeping the cloaked stand-in:', e);
+          this.player.setAvatar(cloakAvatar(M));
+        }
+      });
     const gate = this.world
       .loadGateModel('./assets/gate.glb')
       .catch((e) => console.warn('gate model not loaded, keeping the procedural gate:', e));
@@ -146,7 +162,7 @@ export class Game {
         console.error('kit not loaded, showing the plain slabs:', e);
         this.world.showColliders();
       });
-    Promise.all([gate, sky, kit]).finally(() => {
+    Promise.all([gate, sky, kit, character]).finally(() => {
       this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
       this.ready = true;
     });
@@ -202,6 +218,7 @@ export class Game {
     this.rig.setFrame(null);
     this.rig.setCinematic(null);
     this.enterSection(index, false);
+    this.wanderer?.reset();
     this.engine.scene.updateMatrixWorld(true); // the camera's collision rays must see this pose, not the last frame's
     if (title) this.showTitle();
     else this.mode = 'shot';

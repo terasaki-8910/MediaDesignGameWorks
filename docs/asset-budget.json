@@ -42,6 +42,14 @@
       "maxTextureSize": 512,
       "maxTextureBytes": 100000
     },
+    "wanderer.glb": {
+      "maxFileBytes": 1500000,
+      "maxTriangles": 20000,
+      "maxDrawCalls": 4,
+      "maxMaterials": 2,
+      "maxTextureSize": 2048,
+      "maxTextureBytes": 1200000
+    },
     "lamp.glb": {
       "maxFileBytes": 300000,
       "maxTriangles": 3000,
