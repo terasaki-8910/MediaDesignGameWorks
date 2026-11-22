@@ -18,7 +18,8 @@
     "ai:gate": "node tools/ai/gate.ts",
     "ai:check": "node tools/ai/check.ts",
     "ai:apply": "node tools/ai/apply.ts",
-    "e2e": "node tests/e2e/walk.cjs && node tests/e2e/demo.cjs && node tests/e2e/hints.cjs",
+    "e2e": "node tests/e2e/walk.cjs && node tests/e2e/demo.cjs && node tests/e2e/hints.cjs && node tests/e2e/shots.cjs",
+    "e2e:headed": "node tests/e2e/shots-headed.cjs",
     "video:capture": "node tools/video/capture.ts"
   },
   "dependencies": {

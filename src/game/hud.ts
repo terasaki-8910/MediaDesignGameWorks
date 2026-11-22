@@ -38,8 +38,10 @@ export class Hud {
   private clearEl = h('div', 'layer modal');
   private flashEl = h('div', 'layer flash');
   private toastTimer = 0;
+  private readonly root: HTMLElement;
 
   constructor(root: HTMLElement) {
+    this.root = root;
     root.append(this.statusEl, this.toastEl, this.promptEl, this.panelEl, this.hintEl, this.flashEl, this.pauseEl, this.clearEl, this.titleEl);
   }
 
@@ -75,6 +77,11 @@ export class Hud {
     this.titleEl.style.display = 'flex';
     this.titleEl.style.opacity = '1';
     this.statusEl.style.visibility = 'hidden';
+  }
+
+  /** Show or hide the whole overlay at once (review shots; `?hud=0` does the same from the URL). */
+  setVisible(visible: boolean) {
+    this.root.style.display = visible ? '' : 'none';
   }
 
   hideTitle() {

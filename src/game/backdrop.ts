@@ -190,6 +190,22 @@ export class BackgroundCity {
     this.waves.push({ origin: origin.clone(), start: this.time, strength, speed, dur });
   }
 
+  /** Back to time zero with every tower upright (review shots). */
+  reset() {
+    this.time = 0;
+    this.waves = [];
+    for (const set of this.sets) {
+      let dirty = false;
+      set.items.forEach((b, i) => {
+        if (b.angle === 0) return;
+        b.angle = 0;
+        this.writeMatrix(set.mesh, i, b);
+        dirty = true;
+      });
+      if (dirty) set.mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+
   update(dt: number) {
     this.time += dt;
     if (!this.waves.length) return;

@@ -5,8 +5,10 @@ import type { Input } from './input.ts';
 export interface CameraSettings { sensitivity: number; invertY: boolean; reduceMotion: boolean; distance: number }
 
 export class CameraRig {
+  /** The pitch the follow camera starts with. */
+  static readonly DEFAULT_PITCH = 0.32;
   yaw = Math.PI / 2;
-  pitch = 0.32;
+  pitch = CameraRig.DEFAULT_PITCH;
   private pos = new THREE.Vector3();
   private look = new THREE.Vector3();
   private frame: { center: THREE.Vector3; radius: number; from: THREE.Vector3; shot: THREE.Vector3 | null } | null = null;
@@ -50,6 +52,11 @@ export class CameraRig {
   snapBehind(facingYaw: number, smooth = false) {
     this.yaw = facingYaw;
     if (!smooth) this.initialised = false;
+  }
+
+  /** Jump to wherever the camera is heading on the next update, without easing (review shots). */
+  cut() {
+    this.initialised = false;
   }
 
   update(dt: number, input: Input, player: THREE.Vector3, s: CameraSettings, allowLook: boolean) {
