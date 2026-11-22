@@ -9,5 +9,46 @@
     "requireUVs": true,
     "requirePowerOfTwo": true
   },
-  "files": {}
+  "files": {
+    "floor.glb": {
+      "maxFileBytes": 2200000,
+      "maxTriangles": 2000,
+      "maxDrawCalls": 8,
+      "maxMaterials": 2,
+      "maxTextureSize": 1024,
+      "maxTextureBytes": 2000000
+    },
+    "parapet.glb": {
+      "maxFileBytes": 1500000,
+      "maxTriangles": 8000,
+      "maxDrawCalls": 20,
+      "maxMaterials": 1,
+      "maxTextureSize": 1024,
+      "maxTextureBytes": 1300000
+    },
+    "pier.glb": {
+      "maxFileBytes": 1500000,
+      "maxTriangles": 2000,
+      "maxDrawCalls": 6,
+      "maxMaterials": 1,
+      "maxTextureSize": 1024,
+      "maxTextureBytes": 1300000
+    },
+    "console.glb": {
+      "maxFileBytes": 300000,
+      "maxTriangles": 4000,
+      "maxDrawCalls": 6,
+      "maxMaterials": 3,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 100000
+    },
+    "lamp.glb": {
+      "maxFileBytes": 300000,
+      "maxTriangles": 3000,
+      "maxDrawCalls": 4,
+      "maxMaterials": 3,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 100000
+    }
+  }
 }

@@ -37,7 +37,8 @@ URL に `?shots=1` を付けると、美術レビュー用に8つの固定カメ
 | `tools/ai/` | 改善ループの集計・判定・提案の検証・適用 |
 | `tools/video/`、`video/` | デモ再生を1コマずつ書き出すツールと、その設定（`video/demo.yaml`） |
 | `ai/` | エージェントへの指示（`prompts/`）、出力形式（`schemas/`）、改善履歴（`history/log.json`） |
-| `art/blender/` | Blender の Python スクリプトで生成するアセット（`gen_gate.py` → `public/assets/gate.glb`） |
+| `art/blender/` | Blender（4.4.3）の Python スクリプトで生成するアセット（`gen_gate.py` → `public/assets/gate.glb`、`gen_floor.py` などの部材キット → `public/assets/kit/*.glb`、共通部分は `fc_kit.py`） |
+| `art/textures/` | Poly Haven（CC0）から取得したテクスチャの原本（`node art/fetch-textures.mjs` で再取得できる） |
 | `.github/workflows/` | `ci.yml`（テストとビルド）、`improve.yml`（毎日の改善ループ） |
 | `docs/` | 設計書（`design/`）と公開・運用の手順（`SETUP.md`） |
 
@@ -49,4 +50,4 @@ URL に `?shots=1` を付けると、美術レビュー用に8つの固定カメ
 
 ## ライセンス
 
-MIT License。第三者の素材は使っていません（建築・テクスチャ・音はコードとスクリプトで生成しています）。
+MIT License。石と敷石のテクスチャ、空の HDRI は Poly Haven（CC0）のものです。建築の形・音はコードとスクリプトで生成しています。すべての素材の出所とライセンスは `docs/asset-manifest.json` に記録しています。

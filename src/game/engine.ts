@@ -1,8 +1,10 @@
 // Renderer, post-processing and adaptive resolution.
 import * as THREE from 'three';
 import {
-  BloomEffect, EffectComposer, EffectPass, RenderPass, SMAAEffect, ToneMappingEffect, ToneMappingMode, VignetteEffect,
+  BloomEffect, EffectComposer, EffectPass, RenderPass, SMAAEffect, ToneMappingEffect, VignetteEffect,
 } from 'postprocessing';
+
+import { LOOK } from './look.ts';
 
 export type Quality = 'low' | 'medium' | 'high';
 
@@ -15,6 +17,8 @@ export class Engine {
   quality: Quality;
   /** Off in review shots: the render scale stays where the quality setting put it. */
   adaptive = true;
+  /** Runs right before each frame is drawn (the sun's shadow map follows the camera). */
+  beforeRender: (() => void) | null = null;
   private scale = 1;
   private readonly exactPixelRatio: boolean;
   private frameTimes: number[] = [];
@@ -31,8 +35,10 @@ export class Engine {
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.composer = new EffectComposer(this.renderer, { frameBufferType: THREE.HalfFloatType });
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloom = new BloomEffect({ intensity: 1.15, luminanceThreshold: 0.92, luminanceSmoothing: 0.18, mipmapBlur: true, radius: 0.72 });
-    const tone = new ToneMappingEffect({ mode: ToneMappingMode.AGX });
+    this.bloom = new BloomEffect({
+      intensity: LOOK.bloom.intensity, luminanceThreshold: LOOK.bloom.threshold, luminanceSmoothing: LOOK.bloom.smoothing, mipmapBlur: true, radius: 0.72,
+    });
+    const tone = new ToneMappingEffect({ mode: LOOK.toneMapping });
     const vignette = new VignetteEffect({ darkness: 0.45, offset: 0.32 });
     const effects = quality === 'low' ? [this.bloom, tone, vignette] : [this.bloom, tone, vignette, new SMAAEffect()];
     this.composer.addPass(new EffectPass(this.camera, ...effects));
@@ -54,6 +60,7 @@ export class Engine {
   }
 
   render(dt: number) {
+    this.beforeRender?.();
     this.composer.render(dt);
   }
 

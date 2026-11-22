@@ -13,6 +13,7 @@ import { DemoDirector, type DemoOptions } from './demo.ts';
 import { Engine } from './engine.ts';
 import { Hud, type Settings } from './hud.ts';
 import { Input } from './input.ts';
+import { Kit } from './kit.ts';
 import { createMaterials } from './materials.ts';
 import { Player, cloakAvatar } from './player.ts';
 import { Telemetry, clientInfo, defaultConsent } from './telemetry.ts';
@@ -100,7 +101,8 @@ export class Game {
     this.engine = new Engine(canvas, this.settings.quality, opts.capture);
     this.engine.adaptive = !this.shots;
     const M = createMaterials(stage.visualTheme.accent);
-    setupEnvironment(this.engine.scene, this.engine.renderer, stage.visualTheme);
+    const env = setupEnvironment(this.engine.scene, this.engine.renderer, this.settings.quality);
+    this.engine.beforeRender = () => env.sun.follow(this.engine.camera, this.player.pos.y);
     this.world = new World(this.cs, M);
     this.engine.scene.add(this.world.root);
     const bounds = new THREE.Box3(new THREE.Vector3(-70, -200, -55), new THREE.Vector3(80, 200, 40));
@@ -131,13 +133,20 @@ export class Game {
     loadVrmAvatar(vrmUrl)
       .then((a) => a && this.player.setAvatar(a))
       .catch((e) => console.warn('VRM avatar not loaded:', e));
-    this.world
+    const gate = this.world
       .loadGateModel('./assets/gate.glb')
-      .catch((e) => console.warn('gate model not loaded, keeping the procedural gate:', e))
-      .finally(() => {
-        this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
-        this.ready = true;
+      .catch((e) => console.warn('gate model not loaded, keeping the procedural gate:', e));
+    const sky = env.sky.catch((e) => console.warn('sky not loaded, keeping the haze colour:', e));
+    const kit = Kit.load(this.engine.renderer)
+      .then((k) => this.world.applyKit(k))
+      .catch((e) => {
+        console.error('kit not loaded, showing the plain slabs:', e);
+        this.world.showColliders();
       });
+    Promise.all([gate, sky, kit]).finally(() => {
+      this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
+      this.ready = true;
+    });
     if (opts.demo) this.director = new DemoDirector(this, opts.demo);
     if (!opts.capture) requestAnimationFrame((t) => this.frame(t));
   }

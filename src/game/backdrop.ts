@@ -2,6 +2,7 @@
 // mirrored city hanging from the sky. Fold events send a wave through the city that tilts each tower.
 import * as THREE from 'three';
 import type { VisualTheme } from '../core/types.ts';
+import { LOOK, createSun, hazeFloor, installHaze, loadSky } from './look.ts';
 import { facadeTextures } from './textures.ts';
 
 function rng(seed: number) {
@@ -12,74 +13,17 @@ function rng(seed: number) {
   };
 }
 
-export function setupEnvironment(scene: THREE.Scene, renderer: THREE.WebGLRenderer, theme: VisualTheme) {
-  const [zenith, horizon, ground] = theme.sky.map((c) => new THREE.Color(c));
-  const sunDir = new THREE.Vector3(-0.55, 0.32, -0.77).normalize();
-  const skyMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide,
-    depthWrite: false,
-    fog: false,
-    uniforms: {
-      uZenith: { value: zenith },
-      uHorizon: { value: horizon },
-      uGround: { value: ground },
-      uSun: { value: sunDir },
-    },
-    vertexShader: /* glsl */ `
-      varying vec3 vDir;
-      void main() {
-        vDir = normalize(position);
-        vec4 p = modelViewMatrix * vec4(position, 1.0);
-        gl_Position = projectionMatrix * p;
-        gl_Position.z = gl_Position.w; // keep the dome at the far plane
-      }`,
-    fragmentShader: /* glsl */ `
-      uniform vec3 uZenith; uniform vec3 uHorizon; uniform vec3 uGround; uniform vec3 uSun;
-      varying vec3 vDir;
-      void main() {
-        float y = vDir.y;
-        vec3 col = y > 0.0 ? mix(uHorizon, uZenith, pow(clamp(y, 0.0, 1.0), 0.55))
-                           : mix(uHorizon, uGround, pow(clamp(-y, 0.0, 1.0), 0.45));
-        float s = max(dot(vDir, uSun), 0.0);
-        col += vec3(1.0, 0.72, 0.45) * (pow(s, 600.0) * 6.0 + pow(s, 8.0) * 0.35);
-        // faint mirrored horizon band, the "seam" of the mirror dimension above
-        col += uHorizon * 0.25 * exp(-pow((y - 0.42) * 14.0, 2.0));
-        gl_FragColor = vec4(col, 1.0);
-      }`,
-  });
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(900, 48, 24), skyMat);
-  dome.frustumCulled = false;
-  dome.renderOrder = -1;
-  scene.add(dome);
-
-  // Environment lighting from the same sky
-  const envScene = new THREE.Scene();
-  envScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), skyMat));
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(envScene, 0.02).texture;
-  scene.environmentIntensity = 0.55;
-  pmrem.dispose();
-
-  scene.fog = new THREE.FogExp2(theme.fog.color, theme.fog.density);
-
-  const hemi = new THREE.HemisphereLight('#a9b6ff', '#5a3a3e', 0.7);
-  scene.add(hemi);
-  const sun = new THREE.DirectionalLight('#ffd6a8', 2.6);
-  sun.position.copy(sunDir).multiplyScalar(120).add(new THREE.Vector3(4, 0, -6));
-  sun.target.position.set(4, 0, -6);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  const sc = sun.shadow.camera;
-  sc.left = -75;
-  sc.right = 75;
-  sc.top = 60;
-  sc.bottom = -60;
-  sc.near = 10;
-  sc.far = 300;
-  sun.shadow.bias = -0.0004;
-  sun.shadow.normalBias = 0.04;
-  scene.add(sun, sun.target);
-  return { sun, hemi, dome };
+/**
+ * Lights, haze and the haze floor now; the HDRI sky arrives later through the returned promise (the scene shows the
+ * haze colour until then). The numbers are in look.ts.
+ */
+export function setupEnvironment(scene: THREE.Scene, renderer: THREE.WebGLRenderer, quality: 'low' | 'medium' | 'high') {
+  installHaze();
+  scene.background = LOOK.hazeColor.clone();
+  scene.fog = new THREE.FogExp2(LOOK.hazeColor, LOOK.hazeDistance);
+  scene.add(hazeFloor());
+  const sun = createSun(scene, quality);
+  return { sun, sky: loadSky(scene, renderer) };
 }
 
 /** Metres covered by one repeat of the facade texture (6 window columns by 14 floors). */
@@ -100,8 +44,16 @@ function tileFacade(mat: THREE.MeshStandardMaterial) {
         vec2 facadeUv = uv * faceSize / vec2(${FACADE_TILE[0].toFixed(1)}, ${FACADE_TILE[1].toFixed(1)});
         vMapUv = facadeUv;
         vEmissiveMapUv = facadeUv;
+        // windows: lit in few towers of the city below, and only far out, where they sit near the horizon
+        float cityHash = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);
+        vCityLit = step(0.9, cityHash) * step(0.0, instanceMatrix[1].y) * smoothstep(170.0, 250.0, length(instanceMatrix[3].xz - vec2(4.0, -6.0)));
       #endif`,
     );
+    shader.vertexShader = 'varying float vCityLit;\n' + shader.vertexShader;
+    shader.fragmentShader = ('varying float vCityLit;\n' + shader.fragmentShader)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance *= vCityLit * smoothstep(-50.0, -5.0, vFogWorld.y) * smoothstep(70.0, 25.0, vFogWorld.y);')
+      // the facade map paints coloured windows: keep them only as a faint grid on a grey silhouette
+      .replace('#include <map_fragment>', '#include <map_fragment>\n  diffuseColor.rgb = mix(vec3(0.5), vec3(dot(diffuseColor.rgb, vec3(0.3, 0.6, 0.1))), 0.12);');
   };
   mat.customProgramCacheKey = () => 'city-facade';
 }
@@ -158,15 +110,15 @@ export class BackgroundCity {
       const geo = new THREE.BoxGeometry(1, 1, 1);
       geo.translate(0, 0.5, 0);
       const mat = new THREE.MeshStandardMaterial({
-        map: tex.map, emissiveMap: tex.emissive, emissive: new THREE.Color(1, 1, 1), emissiveIntensity: 1.8,
-        roughness: 0.75, metalness: 0.25,
+        map: tex.map, emissiveMap: tex.emissive, emissive: new THREE.Color(1, 0.72, 0.42), emissiveIntensity: 1.6,
+        roughness: 0.9, metalness: 0,
       });
       tileFacade(mat);
       const items = perType[k];
       const mesh = new THREE.InstancedMesh(geo, mat, items.length);
       const tint = new THREE.Color();
       items.forEach((b, i) => {
-        tint.setHSL(0.62 + r() * 0.08, 0.12 + r() * 0.1, 0.55 + r() * 0.3);
+        tint.setHSL(0.62 + r() * 0.05, 0.05 + r() * 0.04, 0.3 + r() * 0.12); // cool grey; with the sun and the haze on it about #6E6A78 to #8A8494
         mesh.setColorAt(i, tint);
         this.writeMatrix(mesh, i, b);
       });
