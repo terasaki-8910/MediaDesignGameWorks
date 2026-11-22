@@ -24,7 +24,7 @@ npm run video:capture -- video/demo.yaml   # デモを1コマずつ書き出し�
 
 URL に `?debug=1` を付けるとテスト用のフック（`window.__fold`）が有効になり、`?q=low|medium|high` で画質を指定できます。
 
-URL に `?shots=1` を付けると、美術レビュー用に8つの固定カメラのショットを撮れるモードになり（仮想クロックで動き、デモもテレメトリーの送信もなく、画質は `q=` がなければ `high`）、`window.__shots` が `ready()`（準備ができたら true）、`list()`（`title`・`s1-overview`・`s2-overview`・`s3-overview`・`s1-play`・`s2-play`・`s3-play`・`gate` の `{ id, label }`）、`show(id)`（その場面を整えて描き終えたら解決する Promise で、未知の id は reject）を公開し、同じビルドなら同じショットは見せる順番によらず同じ絵になります。Windows のヘッドレス Chrome は、標準の描画設定だと描画倍率が1でないときに画面が真っ白になるため、テストと `video:capture` は `--use-angle=gl` で起動します。さらに `&ui=1` を付けると、8つのショットの後に UI の状態（`ui-fold`・`ui-fold-blocked`・`ui-hint`・`ui-pause`・`ui-controls`・`ui-clear`）が並びます。
+URL に `?shots=1` を付けると、美術レビュー用に8つの固定カメラのショットを撮れるモードになり（仮想クロックで動き、デモもテレメトリーの送信もなく、画質は `q=` がなければ `high`）、`window.__shots` が `ready()`（準備ができたら true）、`list()`（`title`・`s1-overview`・`s2-overview`・`s3-overview`・`s1-play`・`s2-play`・`s3-play`・`gate` の `{ id, label }`）、`show(id)`（その場面を整えて描き終えたら解決する Promise で、未知の id は reject）を公開し、同じビルドなら同じショットは見せる順番によらず同じ絵になります。Windows のヘッドレス Chrome は、標準の描画設定だと描画倍率が1でないときに画面が真っ白になるため、テストと `video:capture` は `--use-angle=gl` で起動します。さらに `&ui=1` を付けると、8つのショットの後に UI の状態（`ui-fold`・`ui-fold-blocked`・`ui-hint`・`ui-pause`・`ui-controls`・`ui-clear`）が並びます。`&char=1` を付けると、最後に人物を近くから見る2つ（`player-front`・`player-back`）が加わります。人物のモデルは `art/blender/gen_character.py` が作る `public/assets/character/wanderer.glb` で、別のモデルと比べるときは `src/game/wandererAvatar.ts` の `WANDERER.url` を変えます（大きさ・向き・足元の位置は読み込み時にそろえます）。
 
 ## 構成
 

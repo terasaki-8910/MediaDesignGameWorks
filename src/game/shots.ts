@@ -1,6 +1,7 @@
 // Review shots (?shots=1): eight fixed camera views of the game for art review, the same image every time.
 // `window.__shots` (installed by main.ts) lists them and shows one on demand; see README.md, "開発".
-// With `&ui=1` the list goes on with the HUD's own states (Fold Mode, a hint, the pause and clear dialogs, ...) for UI review.
+// With `&ui=1` the list goes on with the HUD's own states (Fold Mode, a hint, the pause and clear dialogs, ...) for UI review,
+// and with `&char=1` it ends with two close views of the player character.
 import * as THREE from 'three';
 import type { CompiledStage } from '../core/compile.ts';
 import { cellFloor, cellKey } from '../core/math.ts';
@@ -25,7 +26,7 @@ export interface ShotsApi {
 export const SETTLE_STEPS = 60;
 export const SETTLE_DT = 1 / 60;
 
-type View = 'title' | 'overview' | 'play' | 'gate' | 'fold';
+type View = 'title' | 'overview' | 'play' | 'gate' | 'fold' | 'char-front' | 'char-back';
 
 interface ShotDef extends ShotInfo {
   view: View;
@@ -56,6 +57,15 @@ const UI_SHOTS: readonly ShotDef[] = [
   { id: 'ui-controls', label: 'UI タイトルと操作方法', view: 'title', section: 0, ui: 'controls' },
   { id: 'ui-clear', label: 'UI 踏破・フィードバック', view: 'gate', section: 2, ui: 'clear' },
 ];
+
+/** The character up close (`?char=1`), after everything else: the first section's start, where s1-play stands. */
+const CHAR_SHOTS: readonly ShotDef[] = [
+  { id: 'player-front', label: '人物 斜め前', view: 'char-front', section: 0 },
+  { id: 'player-back', label: '人物 背後（追従カメラ）', view: 'char-back', section: 0 },
+];
+/** player-front: three-quarter front on the sunlit side, at eye level. player-back: the follow camera at half its distance. */
+const CHAR_FRONT = { distance: 3.5, angle: 0.62, eye: 1.8, look: 1.18 };
+const CHAR_BACK = { distance: 4.5, look: 1.25 };
 
 /**
  * The puzzle state each section starts from: what a player has after solving the earlier sections with their optimal
@@ -102,9 +112,9 @@ const nextFrames = (n: number) =>
  * `advance` steps the page's virtual clock and the game together by one fixed time step (rendering when asked),
  * as the capture hook does, so timers and CSS transitions follow the simulation.
  */
-export function createShots(game: Game, advance: (dt: number, render: boolean) => void, opts: { ui?: boolean } = {}): ShotsApi {
+export function createShots(game: Game, advance: (dt: number, render: boolean) => void, opts: { ui?: boolean; char?: boolean } = {}): ShotsApi {
   let starts: PuzzleState[] | null = null;
-  const defs = opts.ui ? [...SHOTS, ...UI_SHOTS] : SHOTS;
+  const defs = [...SHOTS, ...(opts.ui ? UI_SHOTS : []), ...(opts.char ? CHAR_SHOTS : [])];
 
   const place = (def: ShotDef) => {
     starts ??= sectionStartStates(game.cs);
@@ -126,6 +136,24 @@ export function createShots(game: Game, advance: (dt: number, render: boolean) =
     } else if (def.view === 'play') {
       rig.pitch = CameraRig.DEFAULT_PITCH;
       rig.snapBehind(game.player.root.rotation.y); // the follow camera at the tunables' distance, as a player first gets it
+    } else if (def.view === 'char-front' || def.view === 'char-back') {
+      const p = game.player.pos;
+      const yaw = game.player.root.rotation.y;
+      const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+      const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+      let pos: THREE.Vector3;
+      let look: THREE.Vector3;
+      if (def.view === 'char-front') {
+        const { distance, angle, eye } = CHAR_FRONT;
+        pos = p.clone().addScaledVector(fwd, Math.cos(angle) * distance).addScaledVector(right, Math.sin(angle) * distance).setY(p.y + eye);
+        look = p.clone().setY(p.y + CHAR_FRONT.look);
+      } else {
+        const pitch = CameraRig.DEFAULT_PITCH;
+        look = p.clone().setY(p.y + CHAR_BACK.look);
+        pos = look.clone().addScaledVector(fwd, -Math.cos(pitch) * CHAR_BACK.distance).setY(look.y + Math.sin(pitch) * CHAR_BACK.distance);
+      }
+      rig.setCinematic(pos, look);
+      rig.cut();
     } else if (def.view === 'gate') {
       const pose = gateOrbitPose(new THREE.Vector3(...cellFloor(game.cs.stage.goal.at)), 0);
       rig.setCinematic(pose.pos, pose.look);
