@@ -28,6 +28,9 @@ export interface GameData { stage: StageFile; tunables: Tunables; revision: Revi
  */
 export interface GameOptions { demo?: DemoOptions; capture?: boolean; shots?: boolean }
 
+/** The HUD states the review shots show with `?ui=1` (shots.ts). */
+export type UiShot = 'fold' | 'fold-blocked' | 'hint' | 'pause' | 'controls' | 'clear';
+
 /** `shot` is a still scene for the review shots: nothing walks, folds or reacts to input. */
 type Mode = 'title' | 'play' | 'fold' | 'anim' | 'pause' | 'finale' | 'clear' | 'shot';
 
@@ -165,10 +168,12 @@ export class Game {
     this.hud.title({
       revision: r.revision,
       updated: r.updated,
-      recent: r.recent.map((x) => `${x.date}　${x.summary}`),
+      recent: r.recent,
       consent: this.settings.telemetry,
       onConsent: (v) => this.applySettings({ ...this.settings, telemetry: v }),
-      onStart: () => this.begin(),
+      onStart: () => this.mode === 'title' && this.begin(),
+      onSettings: () =>
+        this.hud.pause(true, this.settings, (s) => this.applySettings(s), () => this.hud.pause(false), 'settings'),
     });
     // a slow establishing orbit behind the title
     this.rig.setCinematic(new THREE.Vector3(-58, 34, 46), new THREE.Vector3(2, 8, -4));
@@ -192,8 +197,7 @@ export class Game {
     this.state = state;
     this.world.resetForShot(state);
     this.city.reset();
-    this.hud.fold(null);
-    this.hud.prompt(null);
+    this.hud.resetForShot();
     this.hud.setVisible(title);
     this.rig.setFrame(null);
     this.rig.setCinematic(null);
@@ -202,6 +206,66 @@ export class Game {
     if (title) this.showTitle();
     else this.mode = 'shot';
     this.rig.cut();
+  }
+
+  /**
+   * Review shots with `?ui=1` (shots.ts): show one HUD state over the scene `stageShot` has just set up. It throws when
+   * the stage has no scene for the state, so a changed stage fails loudly instead of showing something else.
+   * `consoleId` is the console of `fold-blocked`.
+   */
+  uiShot(kind: UiShot, consoleId?: string) {
+    this.hud.setVisible(true);
+    const sec = this.section;
+    switch (kind) {
+      case 'fold':
+        this.foldShot(sec.consoles[0], false);
+        break;
+      case 'fold-blocked':
+        this.foldShot(consoleId ?? sec.consoles[0], true);
+        break;
+      case 'hint': {
+        // everything the play HUD can show at once: the section card, the hint and the prompt at a console
+        const next = nextAction(this.cs, sec.id, this.state, this.player.cell);
+        if (!next) throw new Error(`no next action in ${sec.id} to show a hint for`);
+        const c = this.cs.consoles.get(next.console)!;
+        this.player.place(c.at, 'E', this.cs.walkMap(this.state));
+        this.world.highlightConsole(next.console);
+        this.hud.toast(sec.name.ja, sec.name.en.toUpperCase(), 600000);
+        this.hud.hint(this.hintText(2, next));
+        this.hud.prompt(this.consolePrompt(next.console));
+        break;
+      }
+      case 'pause':
+        this.openPause();
+        break;
+      case 'controls':
+        this.hud.openControls();
+        break;
+      case 'clear':
+        this.clearShot();
+        break;
+    }
+  }
+
+  /** Fold Mode open at `consoleId` with its first free (or first blocked) option showing. */
+  private foldShot(consoleId: string, blocked: boolean) {
+    const options = this.cs.consoleActions(consoleId, this.state);
+    const index = options.findIndex((o) => (o.blockedBy.length > 0) === blocked);
+    if (index < 0) throw new Error(`console ${consoleId} has no ${blocked ? 'blocked' : 'free'} option to show`);
+    this.player.place(this.cs.consoles.get(consoleId)!.at, 'E', this.cs.walkMap(this.state));
+    if (blocked && !this.blockerFix(options[index].blockedBy)) throw new Error(`the blocked option of ${consoleId} has no fix hint to show`);
+    this.openFold(consoleId, index);
+    this.rig.cut();
+  }
+
+  /** The clear screen with made-up times (the shots never play the game): real section names and shortest move counts. */
+  private clearShot() {
+    this.mode = 'clear';
+    const sections = this.cs.stage.sections.map((s, i) => {
+      const optimal = solveSection(this.cs, s.id).optimal ?? 0;
+      return { name: s.name.ja, sec: 48 + i * 37, actions: optimal + (i === 1 ? 2 : 0), optimal };
+    });
+    this.hud.clear({ totalSec: sections.reduce((t, x) => t + x.sec, 0), sections }, () => {}, () => {});
   }
 
   private begin(keepCamera = false) {
@@ -329,8 +393,7 @@ export class Game {
     if (this.exitKeys.has(this.player.cell)) return this.clearSection();
     const here = this.consoleHere();
     if (here) {
-      const c = this.cs.consoles.get(here)!;
-      this.hud.prompt(`<kbd>E</kbd> ${c.label?.ja ?? 'コンソール'}を起動`);
+      this.hud.prompt(this.consolePrompt(here));
       if (this.input.hit('KeyE', 'Enter')) return this.openFold(here);
     } else this.hud.prompt(null);
     if (this.input.hit('KeyR')) this.resetSection('manual');
@@ -359,18 +422,24 @@ export class Game {
       this.telemetry.log({ type: 'hint', section: sec.id, tier: want === 2 ? 2 : 1 });
     }
     this.world.highlightConsole(next.console);
-    const c = this.cs.consoles.get(next.console)!;
-    this.hud.hint(
-      this.run.hintTier === 1
-        ? '光の柱が立っている操作盤を調べてみよう。'
-        : `「${c.label?.ja ?? '操作盤'}」で「${this.actionLabel(next)}」を試してみよう。`,
-    );
+    this.hud.hint(this.hintText(this.run.hintTier === 1 ? 1 : 2, next));
   }
 
-  private openFold(consoleId: string) {
+  /** Tier 1 only says where to look; tier 2 names the console and the move. */
+  private hintText(tier: 1 | 2, next: Action): string {
+    if (tier === 1) return '光の柱が立っている操作盤を調べてみよう。';
+    const c = this.cs.consoles.get(next.console)!;
+    return `「${c.label?.ja ?? '操作盤'}」で「${this.actionLabel(next)}」を試してみよう。`;
+  }
+
+  private consolePrompt(id: string): string {
+    return `<kbd>E</kbd> ${this.cs.consoles.get(id)!.label?.ja ?? 'コンソール'}を起動`;
+  }
+
+  private openFold(consoleId: string, index = 0) {
     const options = this.cs.consoleActions(consoleId, this.state);
     if (!options.length) return;
-    this.fold = { console: consoleId, options, index: 0, browsed: new Set([0]) };
+    this.fold = { console: consoleId, options, index, browsed: new Set([index]) };
     this.mode = 'fold';
     this.hud.prompt(null);
     this.world.setGuidanceHidden(true); // the guidance columns would stand in front of the preview
@@ -634,10 +703,14 @@ export class Game {
     if (this.mode === 'fold') this.closeFold(false);
     this.resumeMode = this.mode === 'anim' ? 'anim' : 'play';
     this.mode = 'pause';
+    document.exitPointerLock?.(); // the dialog is clicked with the mouse: it must not be captured by a lock that is still on
     this.hud.pause(true, this.settings, (s) => this.applySettings(s), () => {
       this.hud.pause(false);
       this.mode = this.resumeMode;
       this.input.requestLock();
+      // Escape is not a user gesture, so the browser may refuse the lock: take it on the next click instead
+      if (!this.automated)
+        window.addEventListener('pointerdown', () => (this.mode === 'play' || this.mode === 'fold') && this.input.requestLock(), { once: true });
     });
   }
 

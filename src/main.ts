@@ -19,7 +19,8 @@ const isTouchOnly = matchMedia('(pointer: coarse)').matches && !matchMedia('(poi
 
 // ?demo=1 plays by itself (timings: &title= &establish= &browse= &hold= &end= in seconds);
 // ?capture=1 additionally hands the clock to tools/video/capture.ts; ?hud=0 hides the on-screen UI.
-// ?shots=1 is the review mode (src/game/shots.ts): the virtual clock too, but no demo and no telemetry.
+// ?shots=1 is the review mode (src/game/shots.ts): the virtual clock too, but no demo and no telemetry;
+// with &ui=1 it also lists the HUD states for UI review.
 const shots = params.has('shots');
 const capture = params.has('capture') && !shots;
 const clock = capture || shots ? new VirtualClock() : null;
@@ -52,10 +53,14 @@ if (isTouchOnly && !demo && !shots) {
   if (params.get('hud') === '0') hudRoot.style.display = 'none';
   if (params.has('debug')) (window as unknown as { __fold: unknown }).__fold = game.debugApi();
   if (clock && shots)
-    (window as unknown as { __shots: unknown }).__shots = createShots(game, (dt, render) => {
-      clock.advance(dt);
-      game.advance(dt, render);
-    });
+    (window as unknown as { __shots: unknown }).__shots = createShots(
+      game,
+      (dt, render) => {
+        clock.advance(dt);
+        game.advance(dt, render);
+      },
+      { ui: params.has('ui') },
+    );
   else if (clock)
     (window as unknown as { __capture: unknown }).__capture = {
       ready: () => game.ready,
