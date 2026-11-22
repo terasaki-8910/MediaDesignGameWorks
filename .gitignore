@@ -7,3 +7,4 @@ ai/work/
 video/out/
 # your own footage (movie excerpts and the like): never committed
 video/local/
+artifacts/
