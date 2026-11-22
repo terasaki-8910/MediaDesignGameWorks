@@ -109,9 +109,9 @@
       "attribution": ""
     },
     {
-      "path": "public/assets/sky/kloppenheim_06_puresky_1k.hdr",
+      "path": "public/assets/sky/syferfontein_0d_clear_puresky_1k.hdr",
       "license": "CC0-1.0",
-      "source": "https://polyhaven.com/a/kloppenheim_06_puresky",
+      "source": "https://polyhaven.com/a/syferfontein_0d_clear_puresky",
       "author": "Greg Zaal (original), Jarod Guest (sky edits)",
       "tool": "Poly Haven 1K HDR, fetched by art/fetch-textures.mjs",
       "attribution": ""
@@ -137,7 +137,15 @@
       "license": "own",
       "source": "art/blender/gen_city.py",
       "author": "terasaki-8910",
-      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs); no textures, colours per face",
+      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs); colours per face and one grey courses texture generated in the script",
+      "attribution": ""
+    },
+    {
+      "path": "art/textures/floor_tiles_02/floor_tiles_02_ao_1k.jpg",
+      "license": "CC0-1.0",
+      "source": "https://polyhaven.com/a/floor_tiles_02",
+      "author": "Rob Tuytel",
+      "tool": "Poly Haven 1K AO (JPG), fetched by art/fetch-textures.mjs; used as the mask of the joints",
       "attribution": ""
     }
   ]

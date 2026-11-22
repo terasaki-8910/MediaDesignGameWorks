@@ -9,7 +9,12 @@ export const KIT_FILES = ['materials', 'floor', 'parapet', 'pier', 'pylon', 'con
 
 export interface KitPart { geometry: THREE.BufferGeometry; material: THREE.MeshStandardMaterial; matrix: THREE.Matrix4 }
 /** A piece at a place: `matrix` takes the piece's own frame (a 4 m cell, see the scripts) to the frame being built. */
-export interface Placement { piece: string; matrix: THREE.Matrix4 }
+export interface Placement {
+  piece: string;
+  matrix: THREE.Matrix4;
+  /** Quarter turns of the paving's texture in this cell (its edge is a joint, so any turn fits its neighbours). */
+  uvTurn?: number;
+}
 /** A lighter strip on the paving where people walk, from a to b in the frame being built (y is ignored). */
 export interface WalkLine { a: THREE.Vector3; b: THREE.Vector3 }
 
@@ -133,6 +138,7 @@ export class Kit {
     for (const p of placements)
       for (const part of this.parts(p.piece)) {
         const g = part.geometry.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(p.matrix, part.matrix));
+        if (p.uvTurn && part.material.name === 'M_paving') turnUv(g, p.uvTurn);
         const list = byMaterial.get(part.material);
         if (list) list.push(g);
         else byMaterial.set(part.material, [g]);
@@ -194,9 +200,20 @@ export class Kit {
   }
 }
 
+/** Turn UV0 by quarter turns about the middle of the 0..1 square. */
+function turnUv(g: THREE.BufferGeometry, turns: number) {
+  const uv = g.getAttribute('uv');
+  for (let i = 0; i < uv.count; i++) {
+    let u = uv.getX(i) - 0.5;
+    let v = uv.getY(i) - 0.5;
+    for (let k = 0; k < ((turns % 4) + 4) % 4; k++) [u, v] = [-v, u];
+    uv.setXY(i, u + 0.5, v + 0.5);
+  }
+}
+
 /**
- * Vertex colours for the paving: patches a few metres across, up to 14 % darker, a touch warmer where they are light,
- * and a walking line about 1.6 m wide that feet have worn 8 % lighter.
+ * Vertex colours for the paving: patches a few metres across, up to 13 % darker, a touch warmer where they are light,
+ * and a walking line about 1.6 m wide that feet have worn 8 % lighter (the brief: a little lighter where people walk).
  */
 function tintPaving(g: THREE.BufferGeometry, origin: THREE.Vector3, walk: WalkLine[]) {
   const pos = g.getAttribute('position');
@@ -218,7 +235,7 @@ function tintPaving(g: THREE.BufferGeometry, origin: THREE.Vector3, walk: WalkLi
       near = Math.min(near, p.distanceTo(a.addScaledVector(ab, t)));
     }
     const worn = 1 - THREE.MathUtils.smoothstep(near, 0.3, 1.1 + 0.4 * fine);
-    const v = (1 - 0.1 * broad - 0.05 * fine) * (0.98 + 0.08 * worn);
+    const v = (1 - 0.09 * broad - 0.04 * fine) * (1 + 0.08 * worn);
     col[i * 3] = v;
     col[i * 3 + 1] = v * (0.985 + 0.015 * (1 - broad));
     col[i * 3 + 2] = v * (0.965 + 0.035 * (1 - broad));

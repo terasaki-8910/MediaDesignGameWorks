@@ -99,7 +99,9 @@ baked = [body, balusters[2], walls[0], *posts]  # wall_b reuses wall_a's place i
 for ob in [body, *walls, *posts]:
     K.world_uv(ob)
 K.world_uv(walls[1], offset=(1.37, 0.0, 0.83))
-K.world_uv(balusters[2])
+# a baluster takes its colour from the patch of the stone map nearest to the map's mean (not an ochre or a grey one)
+u0, v0 = K.neutral_uv_offset(ashlar, 0.2, 0.7)
+K.world_uv(balusters[2], offset=(u0 * ashlar["size"], u0 * ashlar["size"], v0 * ashlar["size"]))
 
 # bake layout: every piece stands on its own patch of ground, the balustrade with its balusters and end posts in place
 ground = K.new_object("bake_ground", (lambda b: (K.box(b, (-60, -60, -0.5), (60, 60, 0.0)), b)[1])(bmesh.new()))
@@ -146,14 +148,14 @@ grime = K.new_object("grime", bm, GRIME)
 if grime.data.polygons[0].normal.z < 0:  # recalculating the normals of a flat sheet can turn it face down
     grime.data.flip_normals()
 attr = grime.data.color_attributes.new(name="Color", type="FLOAT_COLOR", domain="POINT")
-tint = K.srgb("#4A5140")
+tint = K.srgb("#525B45")
 for v in grime.data.vertices:
     t = (y_foot + 0.03 - v.co.y) / REACH  # 0 at the foot, 1 at the outer edge
     streak = 0.55 + 0.45 * noise.noise(Vector((v.co.x * 1.9 + 7.3, v.co.y * 0.6, 0.0)))
     patch = 0.5 + 0.5 * noise.noise(Vector((v.co.x * 0.45 + 2.1, 3.7, 0.0)))
     ends = min(1.0, (2.0 - abs(v.co.x)) / 0.05)
     a = 1.5 * (1.0 - t) ** (1.1 + 1.3 * patch) * (0.5 + 0.6 * streak) * max(ends, 0.0)
-    attr.data[v.index].color = (*tint, max(0.0, min(0.65, a)))
+    attr.data[v.index].color = (*tint, max(0.0, min(0.7, a)))
 grime.data.color_attributes.active_color = attr
 uv = grime.data.uv_layers.new(name="UV0")
 for loop in grime.data.loops:

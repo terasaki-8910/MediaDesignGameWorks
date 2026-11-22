@@ -14,9 +14,13 @@ export const RAIL_LINE = 1.84;
 const LAMP_BASE = 1.18;
 const PIER_DEPTH = 46.6;
 /** A pylon stands beside the slabs: its centre this far out from both edges of an inside corner, its top this high. */
-const PYLON_HALF = 0.87;
-const PYLON_OUT = 0.17 + PYLON_HALF + 0.02;
-const PYLON_TOP = 8;
+/** The pylon of the kit is 8.5 m tall; a little smaller its gilt finial stays inside the play camera's frame. */
+const PYLON_SCALE = 0.88;
+const PYLON_HALF = 1.05 * PYLON_SCALE;
+const PYLON_OUT = 0.17 + 0.87 * PYLON_SCALE + 0.02;
+const PYLON_TOP = 9 * PYLON_SCALE;
+/** It hangs on a corbel that ends this far below the deck. */
+const PYLON_DEPTH = 3.6;
 
 type EdgeKind = 'none' | 'flush' | 'cornice';
 interface Cell { gx: number; gz: number; y: number; x0: number; x1: number; z0: number; z1: number; module: ModuleInstance }
@@ -97,8 +101,13 @@ export function planSlabs(cs: CompiledStage): SlabPlan {
   };
 
   const flushEdges = new Set<string>();
+  const pylon = (x: number, y: number, z: number, turns: number): Placement => {
+    const p = place('pylon', x, y, z, turns);
+    p.matrix.multiply(new THREE.Matrix4().makeScale(PYLON_SCALE, PYLON_SCALE, PYLON_SCALE));
+    return p;
+  };
   const pylonFits = (x: number, y: number, z: number) =>
-    !blocked({ min: [x - PYLON_HALF, y - PIER_DEPTH, z - PYLON_HALF], max: [x + PYLON_HALF, y + PYLON_TOP, z + PYLON_HALF] }, null, new Set());
+    !blocked({ min: [x - PYLON_HALF, y - PYLON_DEPTH, z - PYLON_HALF], max: [x + PYLON_HALF, y + PYLON_TOP, z + PYLON_HALF] }, null, new Set());
 
   /** The pieces of one set of cells that form slabs together (all fixed modules, or one moving module). */
   const slabs = (cells: Cell[], frame: ModuleInstance | null, walk: WalkLine[]): Placement[] => {
@@ -141,7 +150,9 @@ export function planSlabs(cs: CompiledStage): SlabPlan {
       const sx = (c.x1 - c.x0) / CELL;
       const sz = (c.z1 - c.z0) / CELL;
       const put = (piece: string, turns = 0) => out.push(place(piece, cx, c.y, cz, turns, sx, sz));
-      put('slab_top');
+      // the paving's texture is turned from cell to cell (by the cell's place), so its stains do not repeat in rows
+      const turn = Math.abs(Math.round(Math.sin(c.gx * 12.9898 + c.gz * 78.233) * 43758.5453)) % 4;
+      out.push({ ...place('slab_top', cx, c.y, cz, 0, sx, sz), uvTurn: turn });
       put('slab_bottom');
       SIDES.forEach((s, k) => {
         if (kind[s] !== 'none') put(kind[s] === 'cornice' ? 'edge_cornice' : 'edge_flush', TURNS[s]);
@@ -167,7 +178,7 @@ export function planSlabs(cs: CompiledStage): SlabPlan {
             const px = c.gx + (DIRS[s][0] + DIRS[next][0]) * (H + PYLON_OUT);
             const pz = c.gz + (DIRS[s][2] + DIRS[next][2]) * (H + PYLON_OUT);
             // wings across the road it flanks
-            if (pylonFits(px, c.y, pz)) out.push(place('pylon', px, c.y, pz, road.gx !== c.gx ? 1 : 0));
+            if (pylonFits(px, c.y, pz)) out.push(pylon(px, c.y, pz, road.gx !== c.gx ? 1 : 0));
           }
         }
       });
@@ -213,7 +224,7 @@ export function planSlabs(cs: CompiledStage): SlabPlan {
     // wings along the side the two share, so the pair reads as a gateway from the approach
     const fits = corners.filter((c) => pylonFits(c.x, f[1], c.z)).slice(0, 2);
     const turn = fits.length === 2 && Math.abs(fits[0].x - fits[1].x) < 0.01 ? 1 : 0;
-    for (const c of fits) world.push(place('pylon', c.x, f[1], c.z, turn));
+    for (const c of fits) world.push(pylon(c.x, f[1], c.z, turn));
   }
 
   // piers: one thick pier under each fixed walkway, moved or left out where something folds through its place
@@ -260,7 +271,7 @@ export function planSlabs(cs: CompiledStage): SlabPlan {
     const bridge = members.find((m) => m.type === 'bridge');
     if (!bridge) continue;
     const y = cellFloor(bridge.at)[1];
-    const box: AABB = { min: [g.pivot[0] - 1.7, y - PIER_DEPTH, g.pivot[2] - 1.7], max: [g.pivot[0] + 1.7, y - SLAB, g.pivot[2] + 1.7] };
+    const box: AABB = { min: [g.pivot[0] - 1.95, y - PIER_DEPTH, g.pivot[2] - 1.95], max: [g.pivot[0] + 1.95, y - SLAB, g.pivot[2] + 1.95] };
     if (!blocked(box, null, new Set(members.map((m) => m.id))) && !taken.some((o) => overlaps(box, o))) world.push(place('pier_pivot', g.pivot[0], y, g.pivot[2]));
   }
   return { world, modules, flushEdges, walkWorld, walkModules };

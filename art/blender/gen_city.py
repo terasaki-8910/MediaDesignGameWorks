@@ -2,20 +2,25 @@
 
     node <game3d>/scripts/blender.mjs art/blender/gen_city.py -- --out public/assets/city.glb
 
-Seven buildings after the reference photos (A1: the Haussmann fronts and the dome of the Invalides beyond the bridge;
+Ten buildings after the reference photos (A1: the Haussmann fronts and the dome of the Invalides beyond the bridge;
 A2: the Art Deco mass of the Palais de Chaillot), each as <name>_lod0 (near ring, windows as single faces, dormers,
 chimneys) and <name>_lod1 (far: masses, roofs and one dark band per floor):
   haussmann_a       apartment block: ashlar front, six floors of regular windows, two balcony lines, cornice,
                     slate mansard with dormers, chimney walls with pots
   haussmann_corner  the same with a rotunda and a small dome on the corner
   haussmann_step    a taller block with a lower wing: stepped roofline
+  haussmann_low     four storeys, a shorter front, dormers far apart
+  haussmann_tall    seven storeys under a two-tier mansard with two rows of dormers
+  haussmann_court   a front block with two wings round a court
   deco_hall         long Art Deco hall: plinth, tall window slots between piers, stepped attic, taller pavilion
   deco_tower        Art Deco tower with three setbacks and a lantern
   dome              domed building: square base, portico, drum, ribbed dome, lantern and spire
   belfry            block with a tall clock tower under a slate pyramid
-No textures: the colours are per face in COLOR_0 (limestone, slate, zinc, dark glass, dull gilt), already darker and
-greyer than the play area. The game instances the buildings, tints and scales each one, and hangs the same ones
-upside down as the mirrored city. Origin: ground centre of the footprint; +X is the long side.
+The colours are per face in COLOR_0 (limestone, slate, zinc, dark glass, dull gilt), already darker and greyer than
+the play area, over one small grey tiling texture made here (courses of stone with their joints and rain streaks;
+on the roofs the same courses at half the size read as slates). Walls darken in a streak under the eaves.
+The game draws the buildings as one batch, tints and scales each one, and hangs the same ones upside down as the
+mirrored city. Origin: ground centre of the footprint; +X is the long side.
 """
 import math
 import os
@@ -23,6 +28,7 @@ import sys
 
 import bpy
 import bmesh
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fc_kit as K  # noqa: E402
@@ -36,11 +42,13 @@ WALL_B = K.srgb("#99907F")
 BASE = K.srgb("#857D71")
 TRIM = K.srgb("#B3AA9B")
 GLASS = K.srgb("#2E363D")
-SLATE = K.srgb("#4A535C")
+SLATE = K.srgb("#3C4650")
 ZINC = K.srgb("#778088")
 RAIL = K.srgb("#2F2D2A")
 BRICK = K.srgb("#75675F")
 LEAD = K.srgb("#73807A")
+STONE_TILE = 10.0  # metres one repeat of the courses map covers on walls: courses of 1.25 m, large enough to read far off
+SLATE_TILE = 5.0  # and on roofs
 GILT = K.srgb("#9A8850")
 DECO = K.srgb("#9D9383")
 DECO_B = K.srgb("#80786C")
@@ -55,12 +63,28 @@ class Shell:
     def __init__(self):
         self.bm = bmesh.new()
         self.col = self.bm.loops.layers.color.new("Color")
+        self.uv = self.bm.loops.layers.uv.new("UV0")
         self.o = (0.0, 0.0)
 
-    def face(self, pts, colour):
+    def face(self, pts, colour, colours=None):
+        """`colours` gives one colour per corner instead (the streak under the eaves)."""
         f = self.bm.faces.new([self.bm.verts.new((p[0] + self.o[0], p[1] + self.o[1], p[2])) for p in pts])
-        for loop in f.loops:
-            loop[self.col] = (*colour, 1.0)
+        f.normal_update()
+        n = f.normal
+        axis = max(range(3), key=lambda i: abs(n[i]))
+        flat = colour in (GLASS, RAIL, GILT) and colours is None  # no courses on glass and metal: one texel
+        size = SLATE_TILE if colour in (SLATE, LEAD) else STONE_TILE
+        for k, loop in enumerate(f.loops):
+            loop[self.col] = (*(colours[k] if colours else colour), 1.0)
+            p = loop.vert.co
+            if flat:
+                loop[self.uv].uv = (0.031, 0.031)
+            elif axis == 2:
+                loop[self.uv].uv = (p.x / size, p.y / size)
+            elif axis == 1:
+                loop[self.uv].uv = (p.x / size, p.z / size)
+            else:
+                loop[self.uv].uv = (p.y / size, p.z / size)
 
     def box(self, lo, hi, colour, top=None, bottom=False):
         (x0, y0, z0), (x1, y1, z1) = lo, hi
@@ -112,6 +136,16 @@ class Shell:
         p = lambda u, z: (nx * d + rx * u, ny * d + ry * u, z)  # noqa: E731
         self.face([p(u0, z0), p(u1, z0), p(u1, z1), p(u0, z1)], colour)
 
+    def streak(self, hx, hy, z_top, colour, depth=1.5, sides="SNEW"):
+        """Rain under the eaves: a strip that is darker at the top and the wall's own colour at its lower edge."""
+        dark = tuple(v * 0.5 for v in colour)
+        for side in sides:
+            (nx, ny), (rx, ry) = FACES[side]
+            d = (hx if nx else hy) + 0.05 + (0.3 if depth > 2.5 else 0.0)  # in front of the far model's window bands
+            half = (hx if side in "SN" else hy) - 0.3
+            p = lambda u, z: (nx * d + rx * u, ny * d + ry * u, z)  # noqa: E731
+            self.face([p(-half, z_top - depth), p(half, z_top - depth), p(half, z_top), p(-half, z_top)], colour, [colour, colour, dark, dark])
+
     def windows(self, hx, hy, z, bays_per_metre, win_w, win_h, colour=GLASS, sides="SNEW", proud=0.08, margin=1.2):
         for side in sides:
             length = 2 * (hx if side in "SN" else hy) - 2 * margin
@@ -137,7 +171,7 @@ class Shell:
         return ob
 
 
-def block(s, lod, hx, hy, floors, at=(0.0, 0.0), z0=0.0, chimneys=3, dormers=True):
+def block(s, lod, hx, hy, floors, at=(0.0, 0.0), z0=0.0, chimneys=3, dormers=True, dormer_step=4.2, tiers=1):
     """A Haussmann block: ground floor, upper floors, balcony lines, cornice, mansard; returns the roof height."""
     s.o = at
     gh, fh = 4.6, 3.1
@@ -149,6 +183,7 @@ def block(s, lod, hx, hy, floors, at=(0.0, 0.0), z0=0.0, chimneys=3, dormers=Tru
     for z in (z0 + gh + fh, top - fh):  # the two balcony lines: a slab and a dark rail
         s.box((-hx - 0.6, -hy - 0.6, z - 0.18), (hx + 0.6, hy + 0.6, z), WALL_B, bottom=True)
         s.band(hx, hy, z, z + 0.85, RAIL, 0.6, margin=0.0)
+    s.streak(hx, hy, top - 0.1, WALL, depth=2.2 if lod == 0 else 3.0)
     if lod == 0:
         s.windows(hx, hy, z0 + 0.5, 0.2, 3.2, 3.3)
         for f in range(1, floors):
@@ -161,8 +196,18 @@ def block(s, lod, hx, hy, floors, at=(0.0, 0.0), z0=0.0, chimneys=3, dormers=Tru
     mh = 4.2
     s.frustum(hx + 0.1, hy + 0.1, top + 0.4, hx - 1.7, hy - 1.7, top + 0.4 + mh, SLATE, ZINC)
     roof = top + 0.4 + mh
+    cx, cy = hx, hy  # half sizes of the roof the chimneys stand on
+    if tiers == 2:  # a second, flatter tier with its own small dormers
+        s.frustum(hx - 1.7, hy - 1.7, roof, hx - 4.2, hy - 4.2, roof + 2.6, SLATE, ZINC)
+        if lod == 0:
+            for i in range(max(2, int(hx * 2 / 7.0))):
+                x = -hx + 4.5 + (2 * hx - 9.0) * i / max(int(hx * 2 / 7.0) - 1, 1)
+                for sy in (-1, 1):
+                    s.box((x - 0.5, sy * (hy - 2.9) - 0.5, roof + 0.3), (x + 0.5, sy * (hy - 2.9) + 0.5, roof + 1.6), TRIM, ZINC)
+        roof += 2.6
+        cx, cy = hx - 2.5, hy - 2.5
     if lod == 0 and dormers:
-        n = max(2, int(hx * 2 / 4.2))
+        n = max(2, int(hx * 2 / dormer_step))
         for i in range(n):
             x = -hx + 2.2 + (2 * hx - 4.4) * i / max(n - 1, 1)
             for sy in (-1, 1):
@@ -171,11 +216,11 @@ def block(s, lod, hx, hy, floors, at=(0.0, 0.0), z0=0.0, chimneys=3, dormers=Tru
                 u0, u1 = sorted(((x - 0.45) * -sy, (x + 0.45) * -sy))  # along the wall as seen from outside
                 s.panel("S" if sy < 0 else "N", 0.0, 0.0, u0, u1, top + 1.2, top + 2.6, GLASS, hy + 0.1)
     for i in range(chimneys):
-        x = -hx + 2.5 + (2 * hx - 5.0) * (i + 0.5) / chimneys
-        s.box((x - 0.4, -hy + 2.6, roof - 0.3), (x + 0.4, hy - 2.6, roof + 1.5), BRICK)
+        x = -cx + 2.5 + (2 * cx - 5.0) * (i + 0.5) / chimneys
+        s.box((x - 0.4, -cy + 2.6, roof - 0.3), (x + 0.4, cy - 2.6, roof + 1.5), BRICK)
         if lod == 0:
             for k in range(4):
-                y = -hy + 3.2 + (2 * hy - 6.4) * k / 3
+                y = -cy + 3.2 + (2 * cy - 6.4) * k / 3
                 s.box((x - 0.2, y - 0.2, roof + 1.5), (x + 0.2, y + 0.2, roof + 2.2), BRICK)
     s.o = (0.0, 0.0)
     return roof
@@ -217,6 +262,26 @@ def haussmann_step(lod):
     s = Shell()
     block(s, lod, 12.0, 8.0, 8, at=(-9.0, 0.0), chimneys=2)
     block(s, lod, 9.0, 7.0, 5, at=(12.0, -1.0), chimneys=2)
+    return s
+
+
+def haussmann_low(lod):
+    s = Shell()
+    block(s, lod, 17.0, 7.5, 4, chimneys=2, dormer_step=6.6)
+    return s
+
+
+def haussmann_tall(lod):
+    s = Shell()
+    block(s, lod, 20.0, 9.0, 7, chimneys=4, tiers=2)
+    return s
+
+
+def haussmann_court(lod):
+    s = Shell()
+    block(s, lod, 21.0, 6.5, 6, at=(0.0, -9.0), chimneys=3)
+    block(s, lod, 6.0, 9.5, 5, at=(-15.0, 6.0), chimneys=1, dormer_step=5.0)
+    block(s, lod, 6.0, 9.5, 5, at=(15.0, 6.0), chimneys=1, dormer_step=5.0)
     return s
 
 
@@ -319,18 +384,56 @@ def belfry(lod):
     return s
 
 
+def courses_texture(size=512, rows=8):
+    """A grey tiling map: staggered blocks in courses, darker joints, a little grain and vertical rain streaks."""
+    rng = np.random.default_rng(1207)
+    img = np.ones((size, size))
+    rh = size // rows
+    bw = size // 4
+    for r in range(rows):
+        shift = (bw // 2) * (r % 2) + int(rng.integers(0, bw // 4))
+        for b in range(4):
+            x0 = (b * bw + shift) % size
+            tone = 0.88 + 0.12 * rng.random()
+            cols = np.arange(x0, x0 + bw) % size
+            img[r * rh:(r + 1) * rh, cols] = tone
+            img[r * rh:(r + 1) * rh, cols[:3]] = 0.55
+        img[r * rh:r * rh + 3, :] = 0.55
+    streaks = 0.86 + 0.14 * np.clip(np.convolve(np.tile(rng.random(size), 3), np.ones(9) / 9, mode="same")[size:2 * size] * 1.6, 0, 1)
+    img = img * streaks[None, :] * (0.98 + 0.04 * rng.random((size, size)))
+    rgba = np.stack([img, img, img, np.ones_like(img)], axis=2).astype(np.float32)
+    im = bpy.data.images.new("city_courses", size, size, alpha=False)
+    im.colorspace_settings.name = "sRGB"
+    im.pixels.foreach_set(rgba.ravel())
+    im.pack()
+    return im
+
+
 CITY = bpy.data.materials.new("M_city")
 CITY.use_nodes = True
 CITY.use_backface_culling = True
 bsdf = CITY.node_tree.nodes["Principled BSDF"]
 bsdf.inputs["Roughness"].default_value = 0.85
 bsdf.inputs["Metallic"].default_value = 0.0
+# base colour = COLOR_0 x the courses map (the exporter writes the texture and COLOR_0; glTF multiplies them)
+tex = CITY.node_tree.nodes.new("ShaderNodeTexImage")
+tex.image = courses_texture()
+uvn = CITY.node_tree.nodes.new("ShaderNodeUVMap")
+uvn.uv_map = "UV0"
+CITY.node_tree.links.new(uvn.outputs["UV"], tex.inputs["Vector"])
 attr = CITY.node_tree.nodes.new("ShaderNodeVertexColor")
 attr.layer_name = "Color"
-CITY.node_tree.links.new(attr.outputs["Color"], bsdf.inputs["Base Color"])
+mix = CITY.node_tree.nodes.new("ShaderNodeMix")
+mix.data_type = "RGBA"
+mix.blend_type = "MULTIPLY"
+mix.inputs["Factor"].default_value = 1.0
+CITY.node_tree.links.new(tex.outputs["Color"], mix.inputs["A"])
+CITY.node_tree.links.new(attr.outputs["Color"], mix.inputs["B"])
+CITY.node_tree.links.new(mix.outputs["Result"], bsdf.inputs["Base Color"])
 
 objects = []
-for make in (haussmann_a, haussmann_corner, haussmann_step, deco_hall, deco_tower, dome, belfry):
+for make in (haussmann_a, haussmann_corner, haussmann_step, haussmann_low, haussmann_tall, haussmann_court, deco_hall, deco_tower, dome,
+             belfry):
     for lod in (0, 1):
         ob = make(lod).object(f"{make.__name__}_lod{lod}", CITY)
         tris = K.triangles(ob)
@@ -342,7 +445,7 @@ for make in (haussmann_a, haussmann_corner, haussmann_step, deco_hall, deco_towe
         bm.free()
         if abs(low) > 1e-6:
             raise RuntimeError(f"{ob.name}: does not stand on the ground ({low:.3f})")
-        if tris > (2600 if lod == 0 else 420):
+        if tris > (2600 if lod == 0 else 560):
             raise RuntimeError(f"{ob.name}: {tris} triangles is over the limit for its level of detail")
         print(f"{ob.name}: {tris} triangles")
         objects.append(ob)

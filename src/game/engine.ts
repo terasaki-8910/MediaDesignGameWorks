@@ -39,7 +39,7 @@ export class Engine {
       intensity: LOOK.bloom.intensity, luminanceThreshold: LOOK.bloom.threshold, luminanceSmoothing: LOOK.bloom.smoothing, mipmapBlur: true, radius: 0.72,
     });
     const tone = new ToneMappingEffect({ mode: LOOK.toneMapping });
-    const vignette = new VignetteEffect({ darkness: 0.45, offset: 0.32 });
+    const vignette = new VignetteEffect({ darkness: 0.2, offset: 0.4 }) // light: the walkway in the lower corners must stay the brightest area;
     const effects = quality === 'low' ? [this.bloom, tone, vignette] : [this.bloom, tone, vignette, new SMAAEffect()];
     this.composer.addPass(new EffectPass(this.camera, ...effects));
     this.scale = quality === 'high' ? 1 : quality === 'medium' ? 0.9 : 0.7;

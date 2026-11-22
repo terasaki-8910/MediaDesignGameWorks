@@ -8,9 +8,9 @@ import path from 'node:path';
 
 const UA = { 'User-Agent': 'asset-fetch/1.0' };
 const DEFAULTS = [
-  'floor_tiles_02:1k:Diffuse,nor_gl,Rough',
+  'floor_tiles_02:1k:Diffuse,nor_gl,Rough,AO',
   'sandstone_blocks_04:1k:Diffuse,nor_gl,Rough',
-  'kloppenheim_06_puresky:1k:hdri',
+  'syferfontein_0d_clear_puresky:1k:hdri',
 ];
 
 const args = process.argv.slice(2);

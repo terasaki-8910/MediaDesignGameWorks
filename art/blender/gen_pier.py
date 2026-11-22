@@ -3,7 +3,7 @@
     node <game3d>/scripts/blender.mjs art/blender/gen_pier.py -- --out public/assets/kit/pier.glb
 
 Pieces (nodes): pier_a (2.2 m shaft, for walkways one cell wide), pier_b (4.4 m shaft, for plazas) and pier_pivot (a round
-pier with a bronze bearing ring, which stands under the middle of a turning bridge). Each is an empty with two
+pier as thick as the others, 2.7 m, with a bronze bearing ring, which stands under the middle of a turning bridge). Each is an empty with two
 meshes, <name>_detail (capital and base mouldings) and <name>_shaft. The origin is the floor centre of the
 cell above; the capital meets the underside of the slab at -0.6 m and the pier goes down 46 m into the haze.
 """
@@ -60,14 +60,14 @@ def pivot_pier(name):
     """Round pier for a turning bridge: bearing ring under the slab, a flaring capital, a shaft and a base ring."""
     top = -K.SLAB
     bm = bmesh.new()
-    K.lathe(bm, [(1.42, top), (1.42, top - 0.16), (1.3, top - 0.16)], 24, 1)
-    K.lathe(bm, [(1.62, top - 0.16), (1.62, top - 0.42), (1.5, top - 0.5), (1.45, top - 0.52), (1.25, top - 0.85), (1.12, top - 1.3),
-                 (1.06, top - 1.9), (1.06, top - 2.0), (1.12, top - 2.03), (1.12, top - 2.2), (1.0, top - 2.24), (1.0, top - 2.8)], 24, 0)
-    K.lathe(bm, [(1.0, -15.0), (1.1, -15.04), (1.1, -15.3), (1.22, -15.5), (1.3, -15.9), (1.3, -16.6)], 24, 0)
+    K.lathe(bm, [(1.75, top), (1.75, top - 0.16), (1.6, top - 0.16)], 24, 1)
+    K.lathe(bm, [(1.95, top - 0.16), (1.95, top - 0.46), (1.82, top - 0.55), (1.76, top - 0.57), (1.6, top - 0.95), (1.46, top - 1.45),
+                 (1.4, top - 2.1), (1.4, top - 2.2), (1.47, top - 2.24), (1.47, top - 2.44), (1.35, top - 2.48), (1.35, top - 2.8)], 24, 0)
+    K.lathe(bm, [(1.35, -15.0), (1.47, -15.04), (1.47, -15.35), (1.6, -15.6), (1.7, -16.0), (1.7, -16.6)], 24, 0)
     detail = K.finish(K.new_object(f"{name}_detail", bm, materials=[STONE, BRONZE]), smooth_angle=40)
     bm = bmesh.new()
-    K.lathe(bm, [(1.0, top - 2.8), (1.0, -15.0)], 24, 0)
-    K.lathe(bm, [(1.3, -16.6), (1.3, -DEPTH)], 24, 0)
+    K.lathe(bm, [(1.35, top - 2.8), (1.35, -15.0)], 24, 0)
+    K.lathe(bm, [(1.7, -16.6), (1.7, -DEPTH)], 24, 0)
     shaft = K.finish(K.new_object(f"{name}_shaft", bm, materials=[STONE, BRONZE]), smooth_angle=40)
     root = bpy.data.objects.new(name, None)
     bpy.context.collection.objects.link(root)

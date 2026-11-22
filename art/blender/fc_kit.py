@@ -26,9 +26,10 @@ TEXTURES = os.path.join(ROOT, "art", "textures")
 # (Poly Haven's "dimensions"); `target` is the mean base colour the brief asks for (sRGB hex).
 # The paving is 1K too: at the play camera its nearest texels are about one screen pixel, and 2K maps would put the
 # game over the brief's 96 MB texture budget (measured: 2K base + normal cost 43 MB against 11 MB).
-PAVING = {"id": "floor_tiles_02", "res": "1k", "size": 4.0, "target": "#D8D0C2", "rough": (0.55, 0.75), "nor_res": "1k"}
+PAVING = {"id": "floor_tiles_02", "res": "1k", "size": 4.0, "target": "#D8D1BD", "rough": (0.55, 0.75), "nor_res": "1k",
+          "joints": True, "normal_strength": 0.55}
 ASHLAR = {"id": "sandstone_blocks_04", "res": "1k", "size": 3.0, "target": "#B9AF9F", "rough": (0.7, 0.9), "nor_res": "1k"}
-STONE_SATURATION = 0.7  # the photo is yellower than the brief's warm grey limestone
+STONE_SATURATION = 0.55  # the photo is yellower than the brief's warm grey limestone
 PAVING_SATURATION = 0.8
 
 
@@ -100,6 +101,26 @@ def tinted_base_colour(spec, name, saturation=1.0):
     rgb = grey[:, None] + (rgb - grey[:, None]) * saturation
     target = np.array(srgb(spec["target"]))
     rgb = rgb * (target / mean)
+    if spec.get("joints"):
+        # Joints: the photo's grout is lighter than the slabs; reference A3 has dark joints with grey-green dirt in
+        # them. The AO map marks the joints. A joint is also drawn along the edge of the tile, so the game can turn
+        # the texture from cell to cell without slabs running into each other.
+        ao_img = bpy.data.images.load(texture_path(spec, "ao", "1k"))
+        ao_img.colorspace_settings.name = "Non-Color"
+        w, h = src.size
+        ao = _pixels(ao_img)[:, 0].astype(np.float64).reshape(ao_img.size[1], ao_img.size[0])
+        if ao.shape != (h, w):
+            raise RuntimeError("the AO map and the diffuse map differ in size")
+        mask = np.clip((np.median(ao) - 0.06 - ao) / 0.1, 0.0, 1.0)
+        edge = 3
+        mask[:edge, :] = mask[-edge:, :] = 1.0
+        mask[:, :edge] = mask[:, -edge:] = 1.0
+        # soften by one pixel so the joint does not alias
+        mask = (mask + np.roll(mask, 1, 0) + np.roll(mask, -1, 0) + np.roll(mask, 1, 1) + np.roll(mask, -1, 1)) / 5.0
+        m = mask.reshape(-1, 1)
+        dirt = np.array(srgb("#5C6650"))
+        rgb = rgb * (1.0 - 0.55 * m) + dirt[None, :] * 0.5 * m
+        bpy.data.images.remove(ao_img)
     out = np.concatenate([_to_srgb(rgb), np.ones((len(rgb), 1))], axis=1)
     img = _new_image(name, src.size, out, "sRGB")
     bpy.data.images.remove(src)
@@ -169,6 +190,7 @@ def stone_material_full(name, spec, saturation=1.0):
     nt.links.new(uv.outputs["UV"], nor.inputs["Vector"])
     nm = nt.nodes.new("ShaderNodeNormalMap")
     nm.uv_map = "UV0"
+    nm.inputs["Strength"].default_value = spec.get("normal_strength", 1.0)
     nt.links.new(nor.outputs["Color"], nm.inputs["Color"])
     nt.links.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
     bsdf.inputs["Metallic"].default_value = 0.0
@@ -241,11 +263,11 @@ def ring(half, z, chamfer, centre=(0.0, 0.0)):
     return [(centre[0] + x, centre[1] + y, z) for x, y in pts]
 
 
-def loft(bm, sections, material_index=0, cap_bottom=True, cap_top=True):
+def loft(bm, sections, material_index=0, cap_bottom=True, cap_top=True, centre=(0.0, 0.0)):
     """Skin a list of (half, z, chamfer) square sections from bottom to top; all rings have the same vertex count."""
     rings = []
     for half, z, chamfer in sections:
-        rings.append([bm.verts.new(p) for p in ring(half, z, max(chamfer, 1e-4))])
+        rings.append([bm.verts.new(p) for p in ring(half, z, max(chamfer, 1e-4), centre)])
     n = len(rings[0])
     faces = []
     for k in range(len(rings) - 1):
@@ -506,6 +528,49 @@ def grime_vertex_colours(objects, ao_img, layer="UV1", tint="#7F8672", amount=0.
         attr.data.foreach_set("color", rgba.ravel())
         me.color_attributes.active_color = attr
         me.color_attributes.render_color_index = 0
+
+
+def neutral_uv_offset(spec, width, height, step=0.07):
+    """Where on the stone texture a small part (a baluster) should take its colour from: the offset (u, v) of the
+    width x height metre window whose mean is nearest to the mean of the whole map, so that small parts are not all
+    one ochre or one grey patch of it."""
+    src = bpy.data.images.load(texture_path(spec, "diff"))
+    w, h = src.size
+    rgb = _to_linear(_pixels(src)[:, :3].astype(np.float64)).reshape(h, w, 3)
+    bpy.data.images.remove(src)
+    mean = rgb.reshape(-1, 3).mean(axis=0)
+    pw, ph = max(2, int(w * width / spec["size"])), max(2, int(h * height / spec["size"]))
+    best, best_d = (0.0, 0.0), 1e9
+    u = 0.0
+    while u < 1.0:
+        v = 0.0
+        while v < 1.0:
+            x0, y0 = int(u * w), int(v * h)
+            patch = rgb[np.arange(y0, y0 + ph) % h][:, np.arange(x0, x0 + pw) % w].reshape(-1, 3).mean(axis=0)
+            d = float(np.abs(patch / mean - 1.0).sum())
+            if d < best_d:
+                best, best_d = (u, v), d
+            v += step
+        u += step
+    return best
+
+
+def course_tint(objects, height=0.6, amount=0.07, skip=()):
+    """Multiply COLOR_0 per course of stone: faces whose middle lies in the same `height` band get the same tone,
+    up to `amount` lighter or darker, in a fixed sequence (stone from different beds of the quarry)."""
+    for ob in objects:
+        me = ob.data
+        attr = me.color_attributes["Color"]
+        col = np.empty(len(me.loops) * 4, dtype=np.float32)
+        attr.data.foreach_get("color", col)
+        col = col.reshape(-1, 4)
+        for poly in me.polygons:
+            if me.materials and me.materials[poly.material_index].name in skip:
+                continue
+            band = int(math.floor((ob.matrix_world @ poly.center).z / height))
+            tone = 1.0 + amount * math.sin(band * 12.9898 + 1.7) * math.cos(band * 4.1414)
+            col[poly.loop_start:poly.loop_start + poly.loop_total, :3] *= tone
+        attr.data.foreach_set("color", np.clip(col, 0, 1).ravel())
 
 
 def depth_weathering(objects, z0, z1, tint="#9A9C96"):
