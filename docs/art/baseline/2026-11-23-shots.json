@@ -1,0 +1,112 @@
+{
+  "url": "http://localhost:4182/?shots=1",
+  "size": [
+    1600,
+    900
+  ],
+  "dpr": 1,
+  "backend": "auto",
+  "headed": false,
+  "renderer": "ANGLE (ATI Technologies Inc., AMD Radeon RX 6400, OpenGL 4.5.14800)",
+  "chromeVersion": "Chrome/158.0.8127.36",
+  "date": "2026-11-22T17:10:31.008Z",
+  "shots": [
+    {
+      "id": "title",
+      "label": "タイトル",
+      "file": "01-title.png",
+      "stats": {
+        "mean": 0.23320065694119574,
+        "std": 0.10851827856686809,
+        "white": 0,
+        "black": 0
+      },
+      "blank": null
+    },
+    {
+      "id": "s1-overview",
+      "label": "第1区画 俯瞰",
+      "file": "02-s1-overview.png",
+      "stats": {
+        "mean": 0.4371162299695292,
+        "std": 0.10758409177209333,
+        "white": 0,
+        "black": 0
+      },
+      "blank": null
+    },
+    {
+      "id": "s2-overview",
+      "label": "第2区画 俯瞰",
+      "file": "03-s2-overview.png",
+      "stats": {
+        "mean": 0.4359888352069683,
+        "std": 0.11054635885285806,
+        "white": 0,
+        "black": 0
+      },
+      "blank": null
+    },
+    {
+      "id": "s3-overview",
+      "label": "第3区画 俯瞰",
+      "file": "04-s3-overview.png",
+      "stats": {
+        "mean": 0.43727684009585993,
+        "std": 0.11684799784503248,
+        "white": 0,
+        "black": 0
+      },
+      "blank": null
+    },
+    {
+      "id": "s1-play",
+      "label": "第1区画 プレイ視点",
+      "file": "05-s1-play.png",
+      "stats": {
+        "mean": 0.48057069179951156,
+        "std": 0.10324605904257014,
+        "white": 0,
+        "black": 0
+      },
+      "blank": null
+    },
+    {
+      "id": "s2-play",
+      "label": "第2区画 プレイ視点",
+      "file": "06-s2-play.png",
+      "stats": {
+        "mean": 0.44914894116776743,
+        "std": 0.12612289953865,
+        "white": 0,
+        "black": 0
+      },
+      "blank": null
+    },
+    {
+      "id": "s3-play",
+      "label": "第3区画 プレイ視点",
+      "file": "07-s3-play.png",
+      "stats": {
+        "mean": 0.45157558439216766,
+        "std": 0.13272557830687035,
+        "white": 0,
+        "black": 0
+      },
+      "blank": null
+    },
+    {
+      "id": "gate",
+      "label": "ゲート",
+      "file": "08-gate.png",
+      "stats": {
+        "mean": 0.4800816440436169,
+        "std": 0.12126549337974692,
+        "white": 0,
+        "black": 0
+      },
+      "blank": null
+    }
+  ],
+  "errors": []
+}

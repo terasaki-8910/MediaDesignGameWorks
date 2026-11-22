@@ -1,0 +1,13 @@
+{
+  "default": {
+    "maxFileBytes": 4000000,
+    "maxTriangles": 100000,
+    "maxDrawCalls": 40,
+    "maxMaterials": 8,
+    "maxTextureSize": 2048,
+    "maxTextureBytes": 6000000,
+    "requireUVs": true,
+    "requirePowerOfTwo": true
+  },
+  "files": {}
+}
