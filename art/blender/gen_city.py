@@ -28,155 +28,20 @@ import sys
 
 import bpy
 import bmesh
-import numpy as np
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fc_kit as K  # noqa: E402
+from city_kit import *  # noqa: E402,F401,F403  (the palette, Shell, slots, city_material, finished)
 
 opts = K.script_args()
 OUT = opts.get("out", "public/assets/city.glb")
 K.reset()
-
-WALL = K.srgb("#A39A8B")
-WALL_B = K.srgb("#99907F")
-BASE = K.srgb("#857D71")
-TRIM = K.srgb("#B3AA9B")
-GLASS = K.srgb("#2E363D")
-SLATE = K.srgb("#3C4650")
-ZINC = K.srgb("#778088")
-RAIL = K.srgb("#2F2D2A")
-BRICK = K.srgb("#75675F")
-LEAD = K.srgb("#73807A")
-STONE_TILE = 10.0  # metres one repeat of the courses map covers on walls: courses of 1.25 m, large enough to read far off
-SLATE_TILE = 5.0  # and on roofs
-GILT = K.srgb("#9A8850")
-DECO = K.srgb("#9D9383")
-DECO_B = K.srgb("#80786C")
-
-# outward normal and the direction that runs to the right when the wall is seen from outside
-FACES = {"S": ((0, -1), (1, 0)), "N": ((0, 1), (-1, 0)), "E": ((1, 0), (0, 1)), "W": ((-1, 0), (0, -1))}
-
-
-class Shell:
-    """Faces with a colour each, wound counter-clockwise seen from outside. Nothing is merged or smoothed."""
-
-    def __init__(self):
-        self.bm = bmesh.new()
-        self.col = self.bm.loops.layers.color.new("Color")
-        self.uv = self.bm.loops.layers.uv.new("UV0")
-        self.o = (0.0, 0.0)
-
-    def face(self, pts, colour, colours=None):
-        """`colours` gives one colour per corner instead (the streak under the eaves)."""
-        f = self.bm.faces.new([self.bm.verts.new((p[0] + self.o[0], p[1] + self.o[1], p[2])) for p in pts])
-        f.normal_update()
-        n = f.normal
-        axis = max(range(3), key=lambda i: abs(n[i]))
-        flat = colour in (GLASS, RAIL, GILT) and colours is None  # no courses on glass and metal: one texel
-        size = SLATE_TILE if colour in (SLATE, LEAD) else STONE_TILE
-        for k, loop in enumerate(f.loops):
-            loop[self.col] = (*(colours[k] if colours else colour), 1.0)
-            p = loop.vert.co
-            if flat:
-                loop[self.uv].uv = (0.031, 0.031)
-            elif axis == 2:
-                loop[self.uv].uv = (p.x / size, p.y / size)
-            elif axis == 1:
-                loop[self.uv].uv = (p.x / size, p.z / size)
-            else:
-                loop[self.uv].uv = (p.y / size, p.z / size)
-
-    def box(self, lo, hi, colour, top=None, bottom=False):
-        (x0, y0, z0), (x1, y1, z1) = lo, hi
-        self.face([(x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1)], colour)
-        self.face([(x1, y1, z0), (x0, y1, z0), (x0, y1, z1), (x1, y1, z1)], colour)
-        self.face([(x1, y0, z0), (x1, y1, z0), (x1, y1, z1), (x1, y0, z1)], colour)
-        self.face([(x0, y1, z0), (x0, y0, z0), (x0, y0, z1), (x0, y1, z1)], colour)
-        self.face([(x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)], top or colour)
-        if bottom:
-            self.face([(x0, y1, z0), (x1, y1, z0), (x1, y0, z0), (x0, y0, z0)], colour)
-
-    def frustum(self, hx0, hy0, z0, hx1, hy1, z1, colour, top=None, c=(0.0, 0.0)):
-        a = [(c[0] + sx * hx0, c[1] + sy * hy0, z0) for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
-        b = [(c[0] + sx * hx1, c[1] + sy * hy1, z1) for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
-        for i in range(4):
-            j = (i + 1) % 4
-            if hx1 < 1e-6 and hy1 < 1e-6:
-                self.face([a[i], a[j], b[i]], colour)
-            else:
-                self.face([a[i], a[j], b[j], b[i]], colour)
-        if hx1 > 1e-6 or hy1 > 1e-6:
-            self.face(b, top or colour)
-
-    def cylinder(self, c, r, z0, z1, colour, seg=12, top=None, r1=None, alt=None):
-        r1 = r if r1 is None else r1
-        for i in range(seg):
-            a0, a1 = 2 * math.pi * i / seg, 2 * math.pi * (i + 1) / seg
-            p0 = (c[0] + r * math.cos(a0), c[1] + r * math.sin(a0), z0)
-            p1 = (c[0] + r * math.cos(a1), c[1] + r * math.sin(a1), z0)
-            q0 = (c[0] + r1 * math.cos(a0), c[1] + r1 * math.sin(a0), z1)
-            q1 = (c[0] + r1 * math.cos(a1), c[1] + r1 * math.sin(a1), z1)
-            shade = alt if (alt and i % 2) else colour
-            if r1 < 1e-6:
-                self.face([p0, p1, q0], shade)
-            else:
-                self.face([p0, p1, q1, q0], shade)
-        if r1 > 1e-6:
-            self.face([(c[0] + r1 * math.cos(2 * math.pi * i / seg), c[1] + r1 * math.sin(2 * math.pi * i / seg), z1) for i in range(seg)], top or colour)
-
-    def dome(self, c, r, z0, h, colour, seg=14, rings=5, alt=None):
-        for k in range(rings):
-            t0, t1 = (math.pi / 2) * k / rings, (math.pi / 2) * (k + 1) / rings
-            self.cylinder(c, r * math.cos(t0), z0 + h * math.sin(t0), z0 + h * math.sin(t1), colour, seg, r1=r * math.cos(t1) if k < rings - 1 else 0.0, alt=alt)
-
-    def panel(self, side, hx, hy, u0, u1, z0, z1, colour, proud=0.08):
-        """A flat face on a wall of a box with half-sizes hx, hy: from u0 to u1 along the wall (0 = its middle)."""
-        (nx, ny), (rx, ry) = FACES[side]
-        d = (hx if nx else hy) + proud
-        p = lambda u, z: (nx * d + rx * u, ny * d + ry * u, z)  # noqa: E731
-        self.face([p(u0, z0), p(u1, z0), p(u1, z1), p(u0, z1)], colour)
-
-    def streak(self, hx, hy, z_top, colour, depth=1.5, sides="SNEW"):
-        """Rain under the eaves: a strip that is darker at the top and the wall's own colour at its lower edge."""
-        dark = tuple(v * 0.5 for v in colour)
-        for side in sides:
-            (nx, ny), (rx, ry) = FACES[side]
-            d = (hx if nx else hy) + 0.05 + (0.3 if depth > 2.5 else 0.0)  # in front of the far model's window bands
-            half = (hx if side in "SN" else hy) - 0.3
-            p = lambda u, z: (nx * d + rx * u, ny * d + ry * u, z)  # noqa: E731
-            self.face([p(-half, z_top - depth), p(half, z_top - depth), p(half, z_top), p(-half, z_top)], colour, [colour, colour, dark, dark])
-
-    def windows(self, hx, hy, z, bays_per_metre, win_w, win_h, colour=GLASS, sides="SNEW", proud=0.08, margin=1.2):
-        for side in sides:
-            length = 2 * (hx if side in "SN" else hy) - 2 * margin
-            n = max(1, int(length * bays_per_metre))
-            step = length / n
-            for i in range(n):
-                u = -length / 2 + step * (i + 0.5)
-                self.panel(side, hx, hy, u - win_w / 2, u + win_w / 2, z, z + win_h, colour, proud)
-
-    def band(self, hx, hy, z0, z1, colour, proud, sides="SNEW", margin=0.8):
-        for side in sides:
-            half = (hx if side in "SN" else hy) - margin
-            self.panel(side, hx, hy, -half, half, z0, z1, colour, proud)
-
-    def object(self, name, material):
-        me = bpy.data.meshes.new(name)
-        self.bm.to_mesh(me)
-        self.bm.free()
-        ob = bpy.data.objects.new(name, me)
-        bpy.context.collection.objects.link(ob)
-        me.materials.append(material)
-        me.color_attributes.active_color = me.color_attributes["Color"]
-        return ob
-
 
 def block(s, lod, hx, hy, floors, at=(0.0, 0.0), z0=0.0, chimneys=3, dormers=True, dormer_step=4.2, tiers=1):
     """A Haussmann block: ground floor, upper floors, balcony lines, cornice, mansard; returns the roof height."""
     s.o = at
     gh, fh = 4.6, 3.1
     top = z0 + gh + (floors - 1) * fh
-    s.box((-hx, -hy, z0), (hx, hy, z0 + gh), BASE)
+    s.box((-hx, -hy, z0), (hx, hy, z0 + gh), BASE, foot=0.62 if z0 == 0.0 else None)
     s.box((-hx, -hy, z0 + gh), (hx, hy, top), WALL)
     s.box((-hx - 0.25, -hy - 0.25, z0 + gh - 0.15), (hx + 0.25, hy + 0.25, z0 + gh + 0.2), TRIM, bottom=True)
     s.box((-hx - 0.55, -hy - 0.55, top - 0.1), (hx + 0.55, hy + 0.55, top + 0.4), TRIM, bottom=True)
@@ -193,12 +58,18 @@ def block(s, lod, hx, hy, floors, at=(0.0, 0.0), z0=0.0, chimneys=3, dormers=Tru
             z = z0 + gh + (f - 1) * fh + 0.9
             s.band(hx, hy, z, z + 1.7, GLASS, 0.3, margin=1.6)
         s.band(hx, hy, z0 + 0.6, z0 + 3.6, GLASS, 0.3, margin=2.0)
+    # the mansard: a steep slate slope, then a low zinc roof hipped up to a ridge (never a flat lid: from above, and that is
+    # how the folded city shows most of its roofs, a ridge and four planes catch the light differently)
     mh = 4.2
     s.frustum(hx + 0.1, hy + 0.1, top + 0.4, hx - 1.7, hy - 1.7, top + 0.4 + mh, SLATE, ZINC)
     roof = top + 0.4 + mh
     cx, cy = hx, hy  # half sizes of the roof the chimneys stand on
+    ridge = 0.34 * (min(hx, hy) - (4.2 if tiers == 2 else 1.7))
+    if tiers == 1:
+        s.hip(hx - 1.7, hy - 1.7, roof, roof + ridge, ZINC)
     if tiers == 2:  # a second, flatter tier with its own small dormers
         s.frustum(hx - 1.7, hy - 1.7, roof, hx - 4.2, hy - 4.2, roof + 2.6, SLATE, ZINC)
+        s.hip(hx - 4.2, hy - 4.2, roof + 2.6, roof + 2.6 + ridge, ZINC)
         if lod == 0:
             for i in range(max(2, int(hx * 2 / 7.0))):
                 x = -hx + 4.5 + (2 * hx - 9.0) * i / max(int(hx * 2 / 7.0) - 1, 1)
@@ -217,11 +88,12 @@ def block(s, lod, hx, hy, floors, at=(0.0, 0.0), z0=0.0, chimneys=3, dormers=Tru
                 s.panel("S" if sy < 0 else "N", 0.0, 0.0, u0, u1, top + 1.2, top + 2.6, GLASS, hy + 0.1)
     for i in range(chimneys):
         x = -cx + 2.5 + (2 * cx - 5.0) * (i + 0.5) / chimneys
-        s.box((x - 0.4, -cy + 2.6, roof - 0.3), (x + 0.4, cy - 2.6, roof + 1.5), BRICK)
+        # the chimney wall runs across the roof and stands clear of the ridge
+        s.box((x - 0.45, -cy + 2.6, roof - 0.3), (x + 0.45, cy - 2.6, roof + ridge + 1.3), BRICK)
         if lod == 0:
             for k in range(4):
                 y = -cy + 3.2 + (2 * cy - 6.4) * k / 3
-                s.box((x - 0.2, y - 0.2, roof + 1.5), (x + 0.2, y + 0.2, roof + 2.2), BRICK)
+                s.box((x - 0.22, y - 0.22, roof + ridge + 1.3), (x + 0.22, y + 0.22, roof + ridge + 2.1), TANK)
     s.o = (0.0, 0.0)
     return roof
 
@@ -285,16 +157,6 @@ def haussmann_court(lod):
     return s
 
 
-def slots(s, hx, hy, z0, z1, pitch, width, sides="SN", proud=0.1, margin=2.0, colour=GLASS):
-    for side in sides:
-        length = 2 * (hx if side in "SN" else hy) - 2 * margin
-        n = max(1, int(length / pitch))
-        step = length / n
-        for i in range(n):
-            u = -length / 2 + step * (i + 0.5)
-            s.panel(side, hx, hy, u - width / 2, u + width / 2, z0, z1, colour, proud)
-
-
 def deco_hall(lod):
     s = Shell()
     hx, hy = 32.0, 10.0
@@ -302,6 +164,11 @@ def deco_hall(lod):
     s.box((-hx, -hy, 3.2), (hx, hy, 21.0), DECO)
     s.box((-hx - 0.5, -hy - 0.5, 21.0), (hx + 0.5, hy + 0.5, 21.9), TRIM, bottom=True)
     s.box((-hx + 2.0, -hy + 2.0, 21.9), (hx - 2.0, hy - 2.0, 25.2), DECO, ZINC)
+    for sx in (-1, 1):  # each wing's roof: a glazed gallery roof, a garden terrace at its end, a water tank
+        s.hip(8.0, 3.2, 25.2, 27.6, SKYLIGHT, c=(sx * 20.0, 0.0))
+        if lod == 0:
+            s.garden((sx * 29.4 - 0.2 * sx - 2.4, -hy + 2.6), (sx * 29.4 - 0.2 * sx + 2.4, hy - 2.6), 25.2)
+            s.water_tower((sx * 14.5, sx * 5.2), 25.2)
     slots(s, hx, hy, 5.0, 19.2, 3.6 if lod == 0 else 7.2, 1.7 if lod == 0 else 3.4, proud=0.1 if lod == 0 else 0.3)
     slots(s, hx, hy, 5.0, 19.2, 4.5, 1.9, sides="EW", proud=0.1 if lod == 0 else 0.3)
     # the taller pavilion in the middle, stepped twice
@@ -309,6 +176,7 @@ def deco_hall(lod):
     s.box((-10.5, -12.5, 28.0), (10.5, 12.5, 29.0), TRIM, bottom=True)
     s.box((-8.0, -10.0, 29.0), (8.0, 10.0, 33.5), DECO)
     s.box((-5.5, -7.5, 33.5), (5.5, 7.5, 36.5), DECO_B, ZINC)
+    s.hip(4.6, 6.6, 36.5, 38.3, SKYLIGHT)
     s.o = (0.0, 0.0)
     slots(s, 10.0, 12.0, 4.0, 26.0, 3.3, 1.5, sides="SN", proud=0.1 if lod == 0 else 0.3, margin=1.4)
     if lod == 0:
@@ -326,6 +194,14 @@ def deco_tower(lod):
         s.box((-h - 0.4, -h - 0.4, z1 - 0.9), (h + 0.4, h + 0.4, z1), TRIM, bottom=True)
         slots(s, h, h, z0 + 2.5, z1 - 2.0, 3.0 if lod == 0 else 6.0, 1.3 if lod == 0 else 2.6, sides="SNEW",
               proud=0.1 if lod == 0 else 0.3, margin=1.2)
+        if z1 < 60:  # the terrace of each setback: pylons at its corners, on the near model a parapet garden on two sides
+            for sx in (-1, 1):
+                for sy in (-1, 1):
+                    s.box((sx * (h - 1.0) - 0.9, sy * (h - 1.0) - 0.9, z1), (sx * (h - 1.0) + 0.9, sy * (h - 1.0) + 0.9, z1 + 3.4), TRIM, ZINC)
+            if lod == 0 and z1 < 30:
+                s.garden((-h + 2.4, -h + 0.5), (h - 2.4, -h + 3.0), z1)
+                s.garden((-h + 2.4, h - 3.0), (h - 2.4, h - 0.5), z1)
+                s.water_tower((h - 2.6, 0.0), z1, r=1.5, h=2.8)
     s.cylinder((0.0, 0.0), 2.6, 61.0, 66.0, TRIM, 8, alt=GLASS)
     s.cylinder((0.0, 0.0), 2.9, 66.0, 71.0, GILT, 8, r1=0.0)
     return s
@@ -384,70 +260,11 @@ def belfry(lod):
     return s
 
 
-def courses_texture(size=512, rows=8):
-    """A grey tiling map: staggered blocks in courses, darker joints, a little grain and vertical rain streaks."""
-    rng = np.random.default_rng(1207)
-    img = np.ones((size, size))
-    rh = size // rows
-    bw = size // 4
-    for r in range(rows):
-        shift = (bw // 2) * (r % 2) + int(rng.integers(0, bw // 4))
-        for b in range(4):
-            x0 = (b * bw + shift) % size
-            tone = 0.88 + 0.12 * rng.random()
-            cols = np.arange(x0, x0 + bw) % size
-            img[r * rh:(r + 1) * rh, cols] = tone
-            img[r * rh:(r + 1) * rh, cols[:3]] = 0.55
-        img[r * rh:r * rh + 3, :] = 0.55
-    streaks = 0.86 + 0.14 * np.clip(np.convolve(np.tile(rng.random(size), 3), np.ones(9) / 9, mode="same")[size:2 * size] * 1.6, 0, 1)
-    img = img * streaks[None, :] * (0.98 + 0.04 * rng.random((size, size)))
-    rgba = np.stack([img, img, img, np.ones_like(img)], axis=2).astype(np.float32)
-    im = bpy.data.images.new("city_courses", size, size, alpha=False)
-    im.colorspace_settings.name = "sRGB"
-    im.pixels.foreach_set(rgba.ravel())
-    im.pack()
-    return im
-
-
-CITY = bpy.data.materials.new("M_city")
-CITY.use_nodes = True
-CITY.use_backface_culling = True
-bsdf = CITY.node_tree.nodes["Principled BSDF"]
-bsdf.inputs["Roughness"].default_value = 0.85
-bsdf.inputs["Metallic"].default_value = 0.0
-# base colour = COLOR_0 x the courses map (the exporter writes the texture and COLOR_0; glTF multiplies them)
-tex = CITY.node_tree.nodes.new("ShaderNodeTexImage")
-tex.image = courses_texture()
-uvn = CITY.node_tree.nodes.new("ShaderNodeUVMap")
-uvn.uv_map = "UV0"
-CITY.node_tree.links.new(uvn.outputs["UV"], tex.inputs["Vector"])
-attr = CITY.node_tree.nodes.new("ShaderNodeVertexColor")
-attr.layer_name = "Color"
-mix = CITY.node_tree.nodes.new("ShaderNodeMix")
-mix.data_type = "RGBA"
-mix.blend_type = "MULTIPLY"
-mix.inputs["Factor"].default_value = 1.0
-CITY.node_tree.links.new(tex.outputs["Color"], mix.inputs["A"])
-CITY.node_tree.links.new(attr.outputs["Color"], mix.inputs["B"])
-CITY.node_tree.links.new(mix.outputs["Result"], bsdf.inputs["Base Color"])
-
+CITY = city_material()
 objects = []
 for make in (haussmann_a, haussmann_corner, haussmann_step, haussmann_low, haussmann_tall, haussmann_court, deco_hall, deco_tower, dome,
              belfry):
     for lod in (0, 1):
-        ob = make(lod).object(f"{make.__name__}_lod{lod}", CITY)
-        tris = K.triangles(ob)
-        bm = bmesh.new()
-        bm.from_mesh(ob.data)
-        if any(f.calc_area() < 1e-9 for f in bm.faces):
-            raise RuntimeError(f"{ob.name}: zero-area faces")
-        low = min(v.co.z for v in bm.verts)
-        bm.free()
-        if abs(low) > 1e-6:
-            raise RuntimeError(f"{ob.name}: does not stand on the ground ({low:.3f})")
-        if tris > (2600 if lod == 0 else 560):
-            raise RuntimeError(f"{ob.name}: {tris} triangles is over the limit for its level of detail")
-        print(f"{ob.name}: {tris} triangles")
-        objects.append(ob)
+        objects.append(finished(make(lod), f"{make.__name__}_lod{lod}", CITY, 2600 if lod == 0 else 560))
 bpy.context.view_layer.update()
 K.export(OUT, objects)

@@ -5,7 +5,9 @@
 Pieces (nodes): pier_a (2.2 m shaft, for walkways one cell wide), pier_b (4.4 m shaft, for plazas) and pier_pivot (a round
 pier as thick as the others, 2.7 m, with a bronze bearing ring, which stands under the middle of a turning bridge). Each is an empty with two
 meshes, <name>_detail (capital and base mouldings) and <name>_shaft. The origin is the floor centre of the
-cell above; the capital meets the underside of the slab at -0.6 m and the pier goes down 46 m into the haze.
+cell above; the capital meets the underside of the slab at -0.6 m and the pier goes down 132 m, through the haze and into the
+ground of the city below (which lies 108 to 130 m under the walkways, whatever way it is folded); the game stands a
+masonry foot (cityprops.glb, pier_foot) round it there.
 """
 import os
 import sys
@@ -16,7 +18,7 @@ import bmesh
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fc_kit as K  # noqa: E402
 
-DEPTH = 46.6
+DEPTH = 132.0
 SQUASH = 0.04
 
 opts = K.script_args()

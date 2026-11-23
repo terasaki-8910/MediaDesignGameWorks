@@ -2,8 +2,9 @@
 // drawn in the fragment shader from the street lattice (two tiny data textures), so the pattern is crisp at any scale
 // and costs no texture memory worth counting. Streets cross creases because the pattern lives in sheet coordinates.
 import * as THREE from 'three';
-import { patchShader, type AtmosphereUniforms } from './atmosphere.ts';
+import { KEY_ALONG, patchShader, type AtmosphereUniforms } from './atmosphere.ts';
 import { BLOCK_LANDMARK, SIDEWALK, type Lattice } from './layout.ts';
+import { A0, A1, B1, BEND, GROUND_Y, PROFILE_SAMPLES, PROFILE_STEP, SEAM, sheetGrid, TWIST_FADE, W0, Z0, type SheetState } from './sheet.ts';
 import { breaks, frameAt, makeFrame, type Surface } from './surfaces.ts';
 
 const GLSL_DECL = /* glsl */ `
@@ -19,8 +20,14 @@ uniform vec3 uPark;
 uniform vec3 uPath;
 uniform vec3 uMark;
 uniform vec3 uUnder;
+uniform vec4 uSheetBox;
+uniform vec3 uSheetShow;
+uniform vec2 uKeyAlong;
+varying float vTwist;
 varying vec2 vSheet;
 float bgRough = 0.92;
+// how much of the key light reaches this point of the ground (the buildings' shadows)
+float bgSun = 1.0;
 
 float h21( vec2 p ) { p = fract( p * vec2( 123.34, 456.21 ) ); p += dot( p, p + 45.32 ); return fract( p.x * p.y ); }
 float vn( vec2 p ) {
@@ -44,6 +51,48 @@ float joints( vec2 s, float tile, float w, float aa ) {
 	vec2 q = abs( fract( s / tile + 0.5 ) - 0.5 ) * tile;
 	float j = 1.0 - min( smoothstep( w - aa, w + aa, q.x ), smoothstep( w - aa, w + aa, q.y ) );
 	return j * ( 1.0 - smoothstep( 0.25, 0.8, aa / tile ) );
+}
+
+// the ends of the shared sheet: far ends dissolve into the haze, the ring's tail is not drawn
+void bgEnds( vec2 s ) {
+	if ( uSheetShow.z < 0.5 ) return;
+	if ( uSheetShow.y > 0.5 && s.x < uSheetBox.w ) discard;
+	float v = max( 1.0 - smoothstep( 20.0, 240.0, s.x - uSheetBox.x ), 1.0 - smoothstep( 20.0, 240.0, uSheetBox.z - abs( s.y ) ) );
+	v = max( v, smoothstep( ${TWIST_FADE[0].toFixed(2)}, ${TWIST_FADE[1].toFixed(2)}, vTwist ) );
+	bgVeil = max( v, uSheetShow.x * ( 1.0 - smoothstep( 20.0, 280.0, uSheetBox.y - s.x ) ) );
+}
+// the back of the sheet: the city's foundations, a grid of deep vaults between ribs of stone under the streets
+vec3 bgUnder( vec2 s ) {
+	vec2 aw = fwidth( s );
+	float aa = max( max( aw.x, aw.y ), 1e-3 );
+	vec2 q = abs( fract( s / 24.0 ) - 0.5 ) * 24.0;
+	float rib = 1.0 - smoothstep( 9.0 - aa, 9.6 + aa, max( q.x, q.y ) );
+	float depth = smoothstep( 0.0, 9.0, max( q.x, q.y ) );
+	float n = 0.5 * vn( s * 0.9 ) + 0.5 * vn( s * 0.11 );
+	vec3 vault = uUnder * mix( 0.42, 0.95, depth * depth ) * ( 0.85 + 0.3 * n );
+	return mix( uUnder * 1.35 * ( 0.9 + 0.2 * n ), vault, rib * ( 1.0 - smoothstep( 0.3, 1.2, aa / 12.0 ) ) );
+}
+
+// 1 when the way from p towards the key light is blocked, within reach, by the buildings of the block lo..hi
+float bgCast( vec2 p, vec2 lo, vec2 hi, float reach ) {
+	vec2 t0 = ( lo - p ) / uKeyAlong;
+	vec2 t1 = ( hi - p ) / uKeyAlong;
+	vec2 tn = min( t0, t1 );
+	vec2 tf = max( t0, t1 );
+	float a = max( max( tn.x, tn.y ), 0.0 );
+	float b = min( tf.x, tf.y );
+	if ( b <= a ) return 0.0;
+	return 1.0 - smoothstep( reach * 0.7, reach, a );
+}
+bool bgBuilt( int i, int j ) {
+	if ( i < 0 || j < 0 || i > int( uCount.x ) - 2 || j > int( uCount.y ) - 2 ) return false;
+	float t = floor( texelFetch( uCells, ivec2( i, j ), 0 ).r * 255.0 + 0.5 );
+	return t < 0.5 || t > 2.5;
+}
+// the built part of the block between lines a..b and c..d: inside its pavement
+float bgBlockCast( vec2 p, vec4 a, vec4 b, vec4 c, vec4 d ) {
+	const float inset = ${(SIDEWALK + 0.6).toFixed(1)};
+	return bgCast( p, vec2( a.x + a.y + inset, c.x + c.y + inset ), vec2( b.x - b.y - inset, d.x - d.y - inset ), 30.0 );
 }
 
 vec3 bgGround( vec2 s ) {
@@ -75,6 +124,7 @@ vec3 bgGround( vec2 s ) {
 	bool inU = eu < 0.0;
 	bool inV = ev < 0.0;
 	float mark = 0.0;
+	float median = 0.0;
 	if ( inU != inV ) {
 		bool alongV = inU; // a street between two u lines runs along v
 		vec4 L = alongV ? ( e0 < e1 ? la : lb ) : ( e2 < e3 ? lc : ld );
@@ -83,26 +133,31 @@ vec3 bgGround( vec2 s ) {
 		float edge = alongV ? ev : eu; // distance from the junction
 		float dash = step( fract( along / 8.0 ), 0.55 );
 		if ( L.z > 0.5 ) {
-			mark += ( 1.0 - smoothstep( 0.1 - aa, 0.1 + aa, abs( lat - 0.4 ) ) ) * 0.9; // double line
-			mark += ( 1.0 - smoothstep( 0.1 - aa, 0.1 + aa, abs( lat - L.y * 0.55 ) ) ) * dash * 0.8; // lane dashes
+			mark += ( 1.0 - smoothstep( 0.1 - aa, 0.1 + aa, abs( lat - L.y * 0.5 ) ) ) * dash * 0.5; // lane dashes
 			float z = step( 0.5, fract( ( alongV ? s.x : s.y ) / 1.7 ) ) * inside( edge - 0.6, aa ) * ( 1.0 - inside( edge - 4.2, aa ) );
-			mark += z * 0.85;
-		} else {
-			mark += ( 1.0 - smoothstep( 0.09 - aa, 0.09 + aa, lat ) ) * dash * 0.7;
+			mark += z * 0.55;
+			// a boulevard (the wide avenue on a crease) has a planted strip down its middle, between two kerbs
+			if ( L.y > 15.0 ) median = 1.0 - inside( lat - 3.2, aa );
 		}
 		mark *= 1.0 - smoothstep( 0.2, 0.7, aa );
 	}
-	street = mix( street, uMark, clamp( mark, 0.0, 1.0 ) * 0.8 );
+	// setts: courses across the street, only seen close
+	street *= 1.0 - 0.12 * joints( s, 0.9, 0.05, aa );
+	street = mix( street, uMark, clamp( mark, 0.0, 1.0 ) * 0.5 );
+	vec3 bed = mix( uPark * 0.8, uPath * 0.8, smoothstep( 0.45, 0.65, vn( s * 0.35 ) ) ) * ( 0.85 + 0.3 * fine );
+	street = mix( street, bed, median );
+	// the gutter along the kerb
+	street *= 1.0 - 0.3 * ( 1.0 - smoothstep( 0.0, 0.7, - e ) );
 
 	// the pavement along the block edge, with its kerb and joints
 	vec3 walk = uWalk * ( 0.92 + 0.16 * fine ) * ( 0.92 + 0.16 * big );
-	walk *= 1.0 - 0.28 * joints( s, 1.8, 0.05, aa );
-	walk *= 1.0 - 0.45 * ( 1.0 - smoothstep( 0.0, 0.3, e ) ); // the kerb's shadow line
+	walk *= 1.0 - 0.12 * joints( s, 1.8, 0.05, aa );
+	walk *= 1.0 + 0.14 * ( 1.0 - smoothstep( 0.25, 0.4 + aa, e ) ); // the kerb: a band of pale stone at the street's edge
 	bgRough = 0.85;
 
 	// the block
 	vec3 yard = uYard * tone * ( 0.85 + 0.2 * fine );
-	yard *= 1.0 - 0.22 * joints( s, 5.5, 0.07, aa );
+	yard *= 1.0 - 0.07 * joints( s, 5.5, 0.07, aa );
 	vec3 inner = yard;
 	if ( type > 0.5 && type < 1.5 ) {
 		// plaza: paving all the way to the street, bands of light and dark stone, a ring of stone round the middle
@@ -110,12 +165,16 @@ vec3 bgGround( vec2 s ) {
 		vec2 p = s - c;
 		vec2 hs = vec2( 0.5 * ( lb.x - lb.y - la.x - la.y ), 0.5 * ( ld.x - ld.y - lc.x - lc.y ) );
 		float rr = length( p );
-		float diag = step( 0.5, fract( ( p.x + p.y ) / 14.0 ) );
-		float rim = min( min( hs.x, hs.y ) - abs( p.x ), min( hs.x, hs.y ) - abs( p.y ) );
-		float ring = ( 1.0 - smoothstep( 0.6 - aa, 0.6 + aa, abs( rr - min( hs.x, hs.y ) * 0.6 ) / 4.0 ) );
-		inner = mix( uPlaza, uPlazaB, diag * 0.4 + ring * 0.35 ) * ( 0.9 + 0.16 * fine ) * ( 0.94 + 0.1 * rnd );
-		inner *= 1.0 - 0.26 * joints( s, 2.6, 0.06, aa );
-		inner *= 1.0 - 0.14 * ( 1.0 - inside( rim - 1.2, aa ) );
+		float m = min( hs.x, hs.y );
+		// paving laid in rings round the fountain or the monument, a dark band at two radii, rays between them
+		float band = ( 1.0 - smoothstep( 0.5 - aa, 0.5 + aa, abs( rr - 13.0 ) ) ) + ( 1.0 - smoothstep( 0.7 - aa, 0.7 + aa, abs( rr - m * 0.78 ) ) );
+		float ang = atan( p.y, p.x );
+		float ray = ( 1.0 - smoothstep( 0.35, 0.35 + aa, abs( fract( ang * 2.546479 ) - 0.5 ) * rr * 0.39 ) ) * step( 13.0, rr ) * step( rr, m * 0.78 );
+		float rings = 0.5 + 0.5 * sin( rr * 2.4 );
+		inner = mix( uPlaza, uPlazaB, clamp( band + ray * 0.8, 0.0, 1.0 ) * 0.55 + 0.1 * rings * ( 1.0 - smoothstep( 0.3, 0.9, aa ) ) );
+		inner *= ( 0.9 + 0.16 * fine ) * ( 0.94 + 0.1 * rnd );
+		float rim = min( hs.x - abs( p.x ), hs.y - abs( p.y ) );
+		inner *= 1.0 + 0.1 * ( 1.0 - smoothstep( 0.25, 0.4 + aa, rim ) );
 	} else if ( type > 1.5 && type < 2.5 ) {
 		// park: lawn with a winding path and a darker rim of hedge
 		vec2 c = vec2( 0.5 * ( la.x + la.y + lb.x - lb.y ), 0.5 * ( lc.x + lc.y + ld.x - ld.y ) );
@@ -135,7 +194,49 @@ vec3 bgGround( vec2 s ) {
 	float yardM = inside( e - ${SIDEWALK.toFixed(1)}, aa ); // 1 beyond the pavement (a plaza has none)
 	vec3 blockCol = mix( walk, inner, plaza ? 1.0 : yardM );
 	bgRough = mix( 0.95, 0.85, inBlock );
+	// shadows: this block's buildings and those of the three blocks towards the key light
+	int du = uKeyAlong.x > 0.0 ? 1 : -1;
+	int dv = uKeyAlong.y > 0.0 ? 1 : -1;
+	vec4 ua = du > 0 ? lb : texelFetch( uLines, ivec2( max( iu - 1, 0 ), 0 ), 0 );
+	vec4 ub = du > 0 ? texelFetch( uLines, ivec2( min( iu + 2, int( uCount.x ) - 1 ), 0 ), 0 ) : la;
+	vec4 va = dv > 0 ? ld : texelFetch( uLines, ivec2( max( iv - 1, 0 ), 1 ), 0 );
+	vec4 vb = dv > 0 ? texelFetch( uLines, ivec2( min( iv + 2, int( uCount.y ) - 1 ), 1 ), 0 ) : lc;
+	float shade = 0.0;
+	if ( bgBuilt( iu, iv ) ) shade = max( shade, max( bgBlockCast( s, la, lb, lc, ld ), yardM * 0.9 ) );
+	if ( bgBuilt( iu + du, iv ) ) shade = max( shade, bgBlockCast( s, ua, ub, lc, ld ) );
+	if ( bgBuilt( iu, iv + dv ) ) shade = max( shade, bgBlockCast( s, la, lb, va, vb ) );
+	if ( bgBuilt( iu + du, iv + dv ) ) shade = max( shade, bgBlockCast( s, ua, ub, va, vb ) );
+	bgSun = 1.0 - 0.85 * shade;
 	return mix( street, blockCol, inBlock );
+}
+`;
+
+/** The shared sheet's vertices: sheet.ts's `sheetAt` in the vertex shader, reading the state's profile from a one-row texture. */
+const GLSL_BEND = /* glsl */ `
+uniform highp sampler2D uProfile;
+uniform vec3 uProfileInfo;
+vec3 bgSheet( vec2 s ) {
+	float u = clamp( ( s.x - uProfileInfo.x ) / uProfileInfo.y, 0.0, uProfileInfo.z - 0.001 );
+	int i = int( floor( u ) );
+	vec4 p0 = texelFetch( uProfile, ivec2( i, 0 ), 0 );
+	vec4 p1 = texelFetch( uProfile, ivec2( i + 1, 0 ), 0 );
+	vec4 p = mix( p0, p1, u - float( i ) );
+	// the twist of the canyon wall here (sheet.ts, twistVeil)
+	vTwist = max( 0.0, abs( s.y ) - ${(W0 + BEND / 2).toFixed(1)} ) * abs( p1.w - p0.w ) / uProfileInfo.y;
+	float d = abs( s.y ) - ${W0.toFixed(1)};
+	float g = abs( s.y );
+	float h = 0.0;
+	if ( d > 0.0 && p.w > 1e-5 ) {
+		float k = p.w / ${BEND.toFixed(1)};
+		float t = min( d, ${BEND.toFixed(1)} );
+		g = ${W0.toFixed(1)} + sin( k * t ) / k;
+		h = ( 1.0 - cos( k * t ) ) / k;
+		if ( d > ${BEND.toFixed(1)} ) {
+			g += ( d - ${BEND.toFixed(1)} ) * cos( p.w );
+			h += ( d - ${BEND.toFixed(1)} ) * sin( p.w );
+		}
+	}
+	return vec3( p.x - sin( p.z ) * h, p.y + cos( p.z ) * h, ${Z0.toFixed(1)} + sign( s.y ) * g );
 }
 `;
 
@@ -222,36 +323,117 @@ export function buildGround(opts: GroundOptions): THREE.Mesh {
   g.setIndex(new THREE.BufferAttribute(index, 1));
   g.computeBoundingSphere();
 
-  const tex = latticeTextures(lattice);
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.92, metalness: 0, fog: false, side: opts.doubleSide ? THREE.DoubleSide : THREE.FrontSide });
-  const extra = {
-    vertexDecl: 'attribute vec2 aSheet;\nvarying vec2 vSheet;',
-    vertexMain: 'vSheet = aSheet;',
-    fragmentDecl: GLSL_DECL,
-    fragmentColor: 'diffuseColor.rgb = bgGround( vSheet );\n#ifdef DOUBLE_SIDED\nif ( ! gl_FrontFacing ) { diffuseColor.rgb = uUnder; bgRough = 0.95; }\n#endif',
-    fragmentRough: 'roughnessFactor = bgRough;',
-    uniforms: {
-      uLines: { value: tex.lines },
-      uCells: { value: tex.cells },
-      uCount: { value: tex.count },
-      uStreet: { value: srgb('#5c564e') },
-      uWalk: { value: srgb('#9a9183') },
-      uYard: { value: srgb('#7b7468') },
-      uPlaza: { value: srgb('#b0a68f') },
-      uPlazaB: { value: srgb('#8e8570') },
-      uPark: { value: srgb('#666c57') },
-      uPath: { value: srgb('#a59a83') },
-      uMark: { value: srgb('#cfc8b6') },
-      uUnder: { value: srgb('#5d564d') },
-    },
-  };
-  mat.onBeforeCompile = (shader) => patchShader(shader, opts.uniforms, extra);
-  mat.customProgramCacheKey = () => 'foldcity-ground';
-  const mesh = new THREE.Mesh(g, mat);
+  const mesh = new THREE.Mesh(g, groundMaterial(lattice, opts.uniforms, !!opts.doubleSide).material);
   mesh.name = 'foldcity-ground';
   mesh.frustumCulled = false;
   mesh.userData.triangles = index.length / 3;
   return mesh;
+}
+
+/** Where the sheet ends and how its ends are shown (the shared sheet of sheet.ts; the old variants leave it off). */
+export interface SheetEnds {
+  /** (a0, a1, |b| max, seam). */
+  uSheetBox: { value: THREE.Vector4 };
+  /** (endFade, tailCut, 1 = on). */
+  uSheetShow: { value: THREE.Vector3 };
+}
+
+/** The ground's material: the street pattern from the lattice, lit as flat sheet, under the background's haze. */
+export function groundMaterial(
+  lattice: Lattice, uniforms: AtmosphereUniforms, doubleSide: boolean, bend?: Record<string, THREE.IUniform>,
+): { material: THREE.MeshStandardMaterial; ends: SheetEnds } {
+  const tex = latticeTextures(lattice);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.92, metalness: 0, fog: false, side: doubleSide ? THREE.DoubleSide : THREE.FrontSide });
+  const ends: SheetEnds = { uSheetBox: { value: new THREE.Vector4(0, 0, 0, 0) }, uSheetShow: { value: new THREE.Vector3(0, 0, 0) } };
+  const extra = {
+    vertexDecl: `attribute vec2 aSheet;\nvarying vec2 vSheet;\nvarying float vTwist;${bend ? GLSL_BEND : ''}`,
+    vertexMain: 'vSheet = aSheet;',
+    vertexBegin: bend ? 'transformed = bgSheet( aSheet );' : 'vTwist = 0.0;',
+    fragmentDecl: GLSL_DECL,
+    fragmentColor:
+      'bgEnds( vSheet );\ndiffuseColor.rgb = bgGround( vSheet );\n#ifdef DOUBLE_SIDED\nif ( ! gl_FrontFacing ) { diffuseColor.rgb = bgUnder( vSheet ); bgRough = 0.95; bgSun = 0.0; }\n#endif',
+    fragmentRough: 'roughnessFactor = bgRough;',
+    light: 'bgLight( vec3( 0.0, 1.0, 0.0 ), 0.0, bgSun )',
+    uniforms: {
+      ...ends,
+      ...bend,
+      uKeyAlong: { value: new THREE.Vector2(KEY_ALONG[0], KEY_ALONG[1]) },
+      uLines: { value: tex.lines },
+      uCells: { value: tex.cells },
+      uCount: { value: tex.count },
+      uStreet: { value: srgb('#4d4a45') },
+      uWalk: { value: srgb('#7d776d') },
+      uYard: { value: srgb('#5e5952') },
+      uPlaza: { value: srgb('#857d6d') },
+      uPlazaB: { value: srgb('#70695a') },
+      uPark: { value: srgb('#5d6650') },
+      uPath: { value: srgb('#8f8672') },
+      uMark: { value: srgb('#a8a294') },
+      uUnder: { value: srgb('#5d564d') },
+    },
+  };
+  mat.onBeforeCompile = (shader) => patchShader(shader, uniforms, extra);
+  mat.customProgramCacheKey = () => 'foldcity-ground';
+  return { material: mat, ends };
+}
+
+/** The ground of the shared sheet: a fixed grid of sheet lines whose vertices follow whatever state the sheet is in. */
+export interface SheetGround {
+  mesh: THREE.Mesh;
+  triangles: number;
+  /** Move every vertex to its place in `state`. */
+  update(state: SheetState): void;
+}
+
+export function buildSheetGround(lattice: Lattice, uniforms: AtmosphereUniforms): SheetGround {
+  const { a, b } = sheetGrid();
+  const na = a.length;
+  const nb = b.length;
+  const pos = new Float32Array(na * nb * 3);
+  const sheet = new Float32Array(na * nb * 2);
+  for (let j = 0; j < nb; j++) for (let i = 0; i < na; i++) sheet.set([a[i], b[j]], (j * na + i) * 2);
+  const index = new Uint32Array((na - 1) * (nb - 1) * 6);
+  let q = 0;
+  for (let j = 0; j < nb - 1; j++)
+    for (let i = 0; i < na - 1; i++) {
+      const p = j * na + i;
+      // a runs along +X and b along +Z on the flat sheet: this winding faces up, towards the play area
+      index.set([p, p + na, p + 1, p + 1, p + na, p + na + 1], q);
+      q += 6;
+    }
+  const g = new THREE.BufferGeometry();
+  // the vertices are bent in the vertex shader, from the state's profile in a small texture; these are the flat sheet's
+  for (let j = 0; j < nb; j++) for (let i = 0; i < na; i++) pos.set([a[i], GROUND_Y, Z0 + b[j]], (j * na + i) * 3);
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  // the ground is lit as flat sheet (the same on a floor, a wall and a ceiling): its normals are never read
+  g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(na * nb * 3), 3));
+  g.setAttribute('aSheet', new THREE.BufferAttribute(sheet, 2));
+  g.setIndex(new THREE.BufferAttribute(index, 1));
+  const table = new Float32Array((PROFILE_SAMPLES + 1) * 4);
+  const profile = new THREE.DataTexture(table, PROFILE_SAMPLES + 1, 1, THREE.RGBAFormat, THREE.FloatType);
+  profile.minFilter = profile.magFilter = THREE.NearestFilter;
+  const { material, ends } = groundMaterial(lattice, uniforms, true, {
+    uProfile: { value: profile },
+    uProfileInfo: { value: new THREE.Vector3(A0, PROFILE_STEP, PROFILE_SAMPLES) },
+  });
+  ends.uSheetBox.value.set(A0, A1, B1, SEAM);
+  const mesh = new THREE.Mesh(g, material);
+  mesh.name = 'foldcity-ground';
+  mesh.frustumCulled = false;
+  return {
+    mesh,
+    triangles: index.length / 3,
+    update(state) {
+      for (let i = 0, k = 0; i <= PROFILE_SAMPLES; i++) {
+        table[k++] = state.px[i];
+        table[k++] = state.py[i];
+        table[k++] = state.th[i];
+        table[k++] = state.psi[i];
+      }
+      profile.needsUpdate = true;
+      ends.uSheetShow.value.set(state.endFade, state.tailCut, 1);
+    },
+  };
 }
 
 /** Exposed so tests can see that landmarks exist in the lattice texture's range. */

@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { CompiledStage } from '../src/core/compile.ts';
 import { cellFloor } from '../src/core/math.ts';
 import type { StageFile } from '../src/core/types.ts';
-import { edgeKey, planSlabs } from '../src/game/kitLayout.ts';
+import { edgeKey, PIER_DEPTH, planSlabs } from '../src/game/kitLayout.ts';
 
 const cs = new CompiledStage(JSON.parse(readFileSync('src/stages/area1.json', 'utf8')) as StageFile);
 const plan = planSlabs(cs);
@@ -55,7 +55,7 @@ test('piers stand under fixed walkways and clear every box in every combination 
     for (const s of states)
       for (const b of cs.worldBoxes(s)) {
         const apart = b.min[0] >= c.x + half || b.max[0] <= c.x - half || b.min[2] >= c.z + half || b.max[2] <= c.z - half ||
-          b.min[1] >= c.y - 0.6 - 1e-6 || b.max[1] <= c.y - 46.6;
+          b.min[1] >= c.y - 0.6 - 1e-6 || b.max[1] <= c.y - PIER_DEPTH;
         assert.ok(apart, `${p.piece} at ${c.x},${c.z} meets ${b.module}`);
       }
   }

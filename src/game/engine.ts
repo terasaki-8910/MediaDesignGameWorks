@@ -33,6 +33,7 @@ export class Engine {
     this.renderer.toneMapping = THREE.NoToneMapping; // done in post
     this.renderer.shadowMap.enabled = quality !== 'low';
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.info.autoReset = false; // counted per frame over all passes: see render()
     this.composer = new EffectComposer(this.renderer, { frameBufferType: THREE.HalfFloatType });
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.bloom = new BloomEffect({
@@ -61,7 +62,14 @@ export class Engine {
 
   render(dt: number) {
     this.beforeRender?.();
+    this.renderer.info.reset();
     this.composer.render(dt);
+  }
+
+  /** Draw calls and triangles of the last frame, summed over every pass (shadow map, scene, post), and what the GPU holds. */
+  frameInfo() {
+    const { render, memory } = this.renderer.info;
+    return { calls: render.calls, triangles: render.triangles, geometries: memory.geometries, textures: memory.textures };
   }
 
   /** Record a frame time and nudge the render scale to hold ~60 fps (adaptive resolution). */

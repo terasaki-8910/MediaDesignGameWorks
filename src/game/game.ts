@@ -8,6 +8,8 @@ import type { Tunables } from '../core/tunables.ts';
 import type { Action, PuzzleSection, PuzzleState, StageFile } from '../core/types.ts';
 import { Sound } from './audio.ts';
 import { createBackground, setupEnvironment } from './backdrop.ts';
+import { pierKeepOut } from './foldcity/keepout.ts';
+import { pierFeet, planSlabs } from './kitLayout.ts';
 import type { Background } from './foldcity/foldcity.ts';
 import { CameraRig } from './camera.ts';
 import { DemoDirector, type DemoOptions } from './demo.ts';
@@ -113,8 +115,8 @@ export class Game {
     this.engine.beforeRender = () => env.sun.follow(this.engine.camera, this.player.pos.y);
     this.world = new World(this.cs, M);
     this.engine.scene.add(this.world.root);
-    const bounds = new THREE.Box3(new THREE.Vector3(-70, -200, -55), new THREE.Vector3(80, 200, 40));
-    this.city = createBackground(stage.visualTheme, new THREE.Vector3(4, 0, -6), bounds, new URLSearchParams(location.search).get('city'));
+    const query = new URLSearchParams(location.search);
+    this.city = createBackground(stage.visualTheme, { variant: query.get('city'), morph: query.get('morph'), keepOut: pierKeepOut(pierFeet(planSlabs(this.cs))) });
     this.engine.scene.add(this.city.group);
     this.player = new Player({ object: new THREE.Group(), animate: () => {} }); // nothing until the character has loaded
     this.engine.scene.add(this.player.root);
@@ -318,6 +320,8 @@ export class Game {
     if (i === 0 || !announce) this.player.place(cp.at, cp.facing, this.cs.walkMap(this.state));
     this.world.highlightConsole(null);
     this.world.setGuidance(sec.consoles, this.data.tunables.sections[sec.id]?.beacon ?? 0);
+    // the city shows this section's structure; walking on from the section before, it folds there
+    this.city.setSection?.(i, announce && i > 0, this.settings.reduceMotion);
     this.hud.hint(null);
     // a previous section's intro timer must not hide this section's text
     clearTimeout(this.introTimer);

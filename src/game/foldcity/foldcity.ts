@@ -1,17 +1,18 @@
 // The folded city: the street sheet on its surface (ground.ts), the buildings of city.glb standing on it as one
-// BatchedMesh (plan.ts decides where), under the background's own haze (atmosphere.ts). Same interface as the old
-// BackgroundCity, so the game swaps one for the other with ?city=<name>.
+// BatchedMesh (plan.ts decides where), under the background's own haze (atmosphere.ts). This class shows one of the
+// studies of variants.ts, fixed (?city=corner, ringx, warp); the game's own city, which folds from section to section, is
+// MorphCity (morphcity.ts).
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { VisualTheme } from '../../core/types.ts';
-import { atmosphereUniforms, bindSky, patchShader, type AtmosphereParams, type AtmosphereUniforms } from './atmosphere.ts';
+import { atmosphereUniforms, bindSky, keyTurn, patchShader, type AtmosphereParams, type AtmosphereUniforms } from './atmosphere.ts';
 import { buildGround } from './ground.ts';
 import { MODELS } from './models.ts';
 import { planCity, type Building, type CityPlan } from './plan.ts';
 import { rng } from './rng.ts';
 import type { VariantDef } from './variants.ts';
 
-/** What the game needs of a background city; BackgroundCity and FoldCity both have it. */
+/** What the game needs of a background city. */
 export interface Background {
   readonly group: THREE.Group;
   load(url: string): Promise<void>;
@@ -19,10 +20,13 @@ export interface Background {
   wave(origin: THREE.Vector3, strength?: number, speed?: number, dur?: number): void;
   /** Back to time zero with every building upright (review shots). */
   reset(): void;
+  /** The game entered section `index`; `fold` asks for the fold from the section before (a short fade with `reduceMotion`). */
+  setSection?(index: number, fold?: boolean, reduceMotion?: boolean): void;
   update(dt: number): void;
 }
 
-export const ATMOSPHERE: AtmosphereParams = { density: 0.0021, strength: 1, gain: 0.74, saturation: 0.78, lift: 0.1, sink: 0.42 };
+/** `sink` is slight: the city's ground is meant to be seen, and a haze that follows world height would differ between a floor, a wall and a ceiling of the same sheet. */
+export const ATMOSPHERE: AtmosphereParams = { density: 0.0021, strength: 1, gain: 0.7, saturation: 0.78, lift: 0.08, sink: 0.12, base: 0.24 };
 
 interface Item {
   b: Building;
@@ -109,7 +113,7 @@ export class FoldCity implements Background {
     const ids = new Map<string, number>();
     for (const [key, src] of sources) ids.set(key, mesh.addGeometry(src.geometry));
     const rTint = rng(this.theme.city.seed * 13 + 5);
-    const tint = new THREE.Color();
+    const tint = new THREE.Vector4();
     let tris = 0;
     for (const b of plan.buildings) {
       const key = `${MODELS[b.model].name}_lod${b.lod}`;
@@ -117,7 +121,7 @@ export class FoldCity implements Background {
       tris += sources.get(key)!.geometry.index!.count / 3;
       const v = 0.78 * (0.94 + rTint() * 0.12);
       const warm = (rTint() - 0.5) * 0.06;
-      mesh.setColorAt(id, tint.setRGB(v * (1 + warm), v, v * (1 - warm)));
+      mesh.setColorAt(id, tint.set(v * (1 + warm), v, v * (1 - warm), keyTurn(b.lot.swap, b.lot.flip)));
       this.items.push({ b, id, angle: 0, axis: new THREE.Vector3() });
     }
     this.stats.instances = plan.buildings.length;

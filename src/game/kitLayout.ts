@@ -12,7 +12,8 @@ const H = CELL / 2;
 export const RAIL_LINE = 1.84;
 /** Top of the pier that carries a lamp (parapet.glb, post_lamp). */
 const LAMP_BASE = 1.18;
-const PIER_DEPTH = 46.6;
+/** The piers go down this far below the floor they carry: into the ground of the city below (see foldcity/sheet.ts). */
+export const PIER_DEPTH = 132;
 /** A pylon stands beside the slabs: its centre this far out from both edges of an inside corner, its top this high. */
 /** The pylon of the kit is 8.5 m tall; a little smaller its gilt finial stays inside the play camera's frame. */
 const PYLON_SCALE = 0.88;
@@ -275,6 +276,11 @@ export function planSlabs(cs: CompiledStage): SlabPlan {
     if (!blocked(box, null, new Set(members.map((m) => m.id))) && !taken.some((o) => overlaps(box, o))) world.push(place('pier_pivot', g.pivot[0], y, g.pivot[2]));
   }
   return { world, modules, flushEdges, walkWorld, walkModules };
+}
+
+/** Where the piers of a slab plan stand, and which piece each is (the background keeps their feet free and builds a foot round each). */
+export function pierFeet(plan: SlabPlan): { piece: string; x: number; z: number }[] {
+  return plan.world.filter((p) => p.piece.startsWith('pier_')).map((p) => ({ piece: p.piece, x: p.matrix.elements[12], z: p.matrix.elements[14] }));
 }
 
 /** Where a piece that turns with a side stands: the rotation that takes the kit's north edge to side `s`. */

@@ -16,9 +16,9 @@ export const PLAY_MARGIN = 8;
 export const GAP = 1.2;
 
 /** The ground may rise into a building's footprint by at most this much at its corners, and fall away by at most `MAX_GAP`. */
-const MAX_BURY = 7;
-const MAX_GAP = 5;
-const MAX_TILT = (17 * Math.PI) / 180;
+export const MAX_BURY = 7;
+export const MAX_GAP = 5;
+export const MAX_TILT = (17 * Math.PI) / 180;
 /** Buildings nearer than this to the play area get the detailed model. */
 export const NEAR_LOD = 250;
 
@@ -64,7 +64,7 @@ export interface CityPlan {
 
 const AX = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)] as const;
 
-const boxObb = (b: THREE.Box3): Obb => ({
+export const boxObb = (b: THREE.Box3): Obb => ({
   c: b.getCenter(new THREE.Vector3()),
   a: [AX[0].clone(), AX[1].clone(), AX[2].clone()],
   h: [(b.max.x - b.min.x) / 2, (b.max.y - b.min.y) / 2, (b.max.z - b.min.z) / 2],
@@ -94,7 +94,7 @@ export function overlaps(p: Obb, q: Obb, margin = 0): boolean {
   return true;
 }
 
-function bounds(o: Obb, out: THREE.Box3) {
+export function bounds(o: Obb, out: THREE.Box3) {
   const e = new THREE.Vector3();
   for (let i = 0; i < 3; i++) e.setComponent(i, o.h[0] * Math.abs(o.a[0].getComponent(i)) + o.h[1] * Math.abs(o.a[1].getComponent(i)) + o.h[2] * Math.abs(o.a[2].getComponent(i)));
   out.min.copy(o.c).sub(e);
@@ -103,7 +103,7 @@ function bounds(o: Obb, out: THREE.Box3) {
 }
 
 const CELL = 64;
-class Hash {
+export class Hash {
   private map = new Map<number, Obb[]>();
   private box = new THREE.Box3();
   private key(i: number, j: number, k: number) {

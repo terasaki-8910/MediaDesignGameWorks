@@ -143,8 +143,67 @@ export interface Lot {
 }
 
 const rowModels = MODELS.map((m, i) => (m.kind === 'row' ? i : -1)).filter((i) => i >= 0);
-const landmarkModels = MODELS.map((m, i) => (m.kind === 'landmark' ? i : -1)).filter((i) => i >= 0);
+const landmarkAll = MODELS.map((m, i) => (m.kind === 'landmark' ? i : -1)).filter((i) => i >= 0);
+/** The studies of variants.ts load city.glb only: they leave out the landmark of cityprops.glb. */
+const landmarkCity = landmarkAll.filter((i) => !MODELS[i].props);
 const courtModel = MODELS.findIndex((m) => m.kind === 'court');
+
+const propModel = (name: string) => MODELS.findIndex((m) => m.name === name);
+
+/**
+ * What stands in the streets and the open blocks: a row of trees with its lamps along every block side that faces an
+ * avenue, a row down the middle of each boulevard (a crease's wide avenue), a fountain or a monument in the middle of a
+ * plaza and two groves in a park. Each is a `Lot` like a building's (its model is a prop of models.ts); `cell` is the
+ * block it belongs to.
+ */
+export function layoutProps(lat: Lattice, seed: number): Lot[] {
+  const r = rng(seed * 59 + 23);
+  const row = propModel('tree_row');
+  const rowLen = MODELS[row].w;
+  const out: Lot[] = [];
+  const nu = lat.u.length - 1;
+  const nv = lat.v.length - 1;
+  const rows = (alongU: boolean, lo: number, hi: number, across: number, cell: number) => {
+    const len = hi - lo;
+    if (len < 34) return;
+    const n = Math.max(1, Math.round(len / 54));
+    for (let k = 0; k < n; k++) {
+      const scale = Math.min(1.12, Math.max(0.7, (len / n - 3) / rowLen));
+      const along = lo + ((k + 0.5) * len) / n;
+      out.push({ model: row, swap: !alongU, flip: r() < 0.5, scale, sy: 0.9 + r() * 0.25, u: alongU ? along : across, v: alongU ? across : along, cell });
+    }
+  };
+  for (let j = 0; j < nv; j++)
+    for (let i = 0; i < nu; i++) {
+      const cell = i + j * nu;
+      const type = lat.cells[cell].type;
+      const [la, lb, lc, ld] = [lat.u[i], lat.u[i + 1], lat.v[j], lat.v[j + 1]];
+      const [ua, ub, va, vb] = [la.c + la.hw, lb.c - lb.hw, lc.c + lc.hw, ld.c - ld.hw];
+      if (ub - ua < 20 || vb - va < 20) continue;
+      // along the kerb of each side that faces an avenue (the row runs along the other coordinate)
+      if (la.avenue) rows(false, va, vb, ua + 0.6, cell);
+      if (lb.avenue) rows(false, va, vb, ub - 0.6, cell);
+      if (lc.avenue) rows(true, ua, ub, va + 0.6, cell);
+      if (ld.avenue) rows(true, ua, ub, vb - 0.6, cell);
+      // the boulevard's middle belongs to the block on its far side
+      if (la.hw >= CREASE_HW) rows(false, va, vb, la.c, cell);
+      if (lc.hw >= CREASE_HW) rows(true, ua, ub, lc.c, cell);
+      const cu = (ua + ub) / 2;
+      const cv = (va + vb) / 2;
+      if (type === BLOCK_PLAZA) {
+        const model = propModel(lat.cells[cell].r < 0.5 ? 'fountain' : 'monument');
+        out.push({ model, swap: false, flip: false, scale: 1 + r() * 0.25, sy: 1, u: cu, v: cv, cell });
+      } else if (type === BLOCK_PARK) {
+        const model = propModel('grove');
+        const wide = ub - ua >= vb - va;
+        for (const side of [-1, 1]) {
+          const off = side * (wide ? ub - ua : vb - va) * 0.22;
+          out.push({ model, swap: !wide, flip: side > 0, scale: 0.95 + r() * 0.3, sy: 0.9 + r() * 0.3, u: cu + (wide ? off : 0), v: cv + (wide ? 0 : off), cell });
+        }
+      }
+    }
+  return out;
+}
 
 /** Footprint of a model after scaling, along the sheet's u and v for the given orientation. */
 export function footprint(m: ModelInfo, scale: number, swap: boolean): [number, number] {
@@ -152,11 +211,13 @@ export function footprint(m: ModelInfo, scale: number, swap: boolean): [number, 
 }
 
 /**
+ * `acrossAt(u0, u1)` says where the sheet bends too tightly along u for a long house to follow it.
  * Fill the blocks. A plain block holds a row building against each long side (a courtyard between), or one court
  * building; a landmark block holds one tall building in the middle; plazas and parks stay open. Buildings are kept
  * apart from the street by the pavement; whether they also fit the surface is decided later, in 3D.
  */
-export function layoutLots(lat: Lattice, seed: number, scaleBase = 1): Lot[] {
+export function layoutLots(lat: Lattice, seed: number, scaleBase = 1, withProps = false, acrossAt?: (u0: number, u1: number) => boolean): Lot[] {
+  const landmarkModels = withProps ? landmarkAll : landmarkCity;
   const r = rng(seed * 101 + 11);
   const lots: Lot[] = [];
   const nu = lat.u.length - 1;
@@ -174,65 +235,76 @@ export function layoutLots(lat: Lattice, seed: number, scaleBase = 1): Lot[] {
       const W = ub - ua;
       const H = vb - va;
       if (W < 16 || H < 16) continue;
-      // buildings run along the longer side most of the time
-      const alongU = W >= H ? r() < 0.88 : r() < 0.12;
+      // A block is built up like a Paris block: a row of houses against each long side with a narrow court between
+      // them (or one house with wings round its court where the block is shallow), each scaled to fill its share of
+      // the depth, and where the block is long a shorter house across one end. Little of the ground is left to see.
+      // houses run along the block's longer side, unless the sheet bends along u here: then they stand across the bend
+      const alongU = acrossAt?.(ua, ub) ? false : W >= H;
       const L = alongU ? W : H;
       const D = alongU ? H : W;
-      const put = (model: number, scale: number, sy: number, along: number, across: number) => {
-        const flip = r() < 0.5;
+      const put = (model: number, scale: number, sy: number, along: number, across: number, turned = false) => {
         lots.push({
-          model, swap: !alongU, flip, scale, sy,
+          model, swap: alongU ? turned : !turned, flip: r() < 0.5, scale, sy,
           u: alongU ? ua + along : ua + across,
           v: alongU ? va + across : va + along,
           cell: idx,
         });
       };
-      const fit = (mi: number, maxScale: number, slackAlong = 2, slackAcross = 2) => {
-        const m = MODELS[mi];
-        return Math.min(maxScale, (L - slackAlong) / m.w, (D - slackAcross) / m.d);
+      const low = rowModels[3];
+      /** A house across the block's depth, its side at `along`; returns the length of block it takes. */
+      const cap = (along: number, dir: 1 | -1, room: number): number => {
+        const m = MODELS[low];
+        const s = Math.min(1.12 * scaleBase, (D - 1) / m.w, (room - 0.5) / m.d);
+        if (s < 0.62 * scaleBase) return 0;
+        put(low, s, 0.8 + r() * 0.45, along + (dir * m.d * s) / 2, D / 2, true);
+        return m.d * s + 5;
       };
       if (cell.type === BLOCK_LANDMARK) {
         const k = pickWeighted(landmarkModels.map((mi) => MODELS[mi].weight), r());
         let mi = landmarkModels[k];
         if (mi === lastRow) mi = landmarkModels[(k + 1) % landmarkModels.length];
-        const s = fit(mi, 1.12 * scaleBase);
+        const m = MODELS[mi];
+        const s = Math.min(1.12 * scaleBase, (L - 2) / m.w, (D - 2) / m.d);
         if (s >= 0.7 * scaleBase) {
           put(mi, s * (0.96 + r() * 0.08), 1, L / 2, D / 2);
           lastRow = mi;
+          // houses beside it where the block runs on
+          const room = (L - m.w * s * 1.04) / 2 - 4;
+          if (room > 13) {
+            cap(0.25, 1, room);
+            cap(L - 0.25, -1, room);
+          }
           continue;
         }
       }
-      const m0 = pickWeighted(rowModels.map((mi) => MODELS[mi].weight), r());
-      const wantCourt = D >= MODELS[courtModel].d * 0.95 && L >= MODELS[courtModel].w * 0.9 && r() < 0.4;
-      if (wantCourt) {
-        const s = fit(courtModel, 1.1 * scaleBase);
-        put(courtModel, s * (0.95 + r() * 0.07), 0.9 + r() * 0.25, L / 2 + (r() - 0.5) * 2, D / 2);
-        continue;
+      // the end house first, then the rows share what is left of the length
+      let from = 0;
+      let to = L;
+      if (L > 66 * scaleBase * 0.8) {
+        if (r() < 0.5) from = cap(0.25, 1, L - 40);
+        else to = L - cap(L - 0.25, -1, L - 40);
       }
-      let mi = rowModels[m0];
-      let s1 = fit(mi, (1 + r() * 0.2) * scaleBase);
-      if (s1 < 0.72 * scaleBase) {
-        mi = rowModels[3]; // the short one
-        s1 = fit(mi, scaleBase);
-      }
-      if (s1 < 0.6 * scaleBase) continue;
-      const m1 = MODELS[mi];
-      const d1 = m1.d * s1;
-      const slack = Math.max(0, L - m1.w * s1);
-      put(mi, s1, 0.85 + r() * 0.3, m1.w * s1 * 0.5 + slack * r() * 0.5, d1 / 2 + 0.5);
-      // the second row against the other long side, when it fits
-      const left = D - d1 - 8;
-      if (left > 14) {
-        const cand = rowModels.filter((c) => MODELS[c].d * 0.8 <= left);
-        if (cand.length) {
-          const mj = cand[Math.floor(r() * cand.length)];
-          const s2 = Math.min(fit(mj, (0.95 + r() * 0.2) * scaleBase), (left - 0.5) / MODELS[mj].d);
-          if (s2 > 0.62 * scaleBase) {
-            const sl = Math.max(0, L - MODELS[mj].w * s2);
-            put(mj, s2, 0.85 + r() * 0.3, MODELS[mj].w * s2 * 0.5 + sl * r() * 0.5, D - MODELS[mj].d * s2 * 0.5 - 0.5);
-          }
-        }
-      }
+      const span = to - from;
+      const mid = (from + to) / 2;
+      const height = () => (r() < 0.12 ? 1.3 + r() * 0.2 : 0.8 + r() * 0.42);
+      const row = (across0: number, side: 1 | -1, depth: number) => {
+        const mi = rowModels[pickWeighted(rowModels.map((c) => MODELS[c].weight), r())];
+        const m = MODELS[mi];
+        const s = Math.min(1.24 * scaleBase, (span - 1) / m.w, depth / m.d);
+        if (s < 0.6 * scaleBase) return;
+        const slack = Math.max(0, span - m.w * s);
+        put(mi, s, height(), mid + (r() - 0.5) * slack * 0.8, across0 + (side * m.d * s) / 2);
+      };
+      if (span < 20) continue;
+      if (D >= 43) {
+        const depth = (D - 6.5 - 0.6) / 2;
+        row(0.3, 1, depth);
+        row(D - 0.3, -1, depth);
+      } else if (D >= 29 && span >= 34) {
+        const m = MODELS[courtModel];
+        const s = Math.min(1.3 * scaleBase, (span - 1) / m.w, (D - 0.6) / m.d);
+        if (s >= 0.6 * scaleBase) put(courtModel, s, height(), mid, D / 2);
+      } else row(0.3, 1, D - 0.6);
     }
   return lots;
 }

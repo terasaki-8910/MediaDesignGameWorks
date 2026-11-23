@@ -81,6 +81,14 @@
       "maxMaterials": 1,
       "maxTextureSize": 512,
       "maxTextureBytes": 400000
+    },
+    "cityprops.glb": {
+      "maxFileBytes": 400000,
+      "maxTriangles": 3000,
+      "maxDrawCalls": 10,
+      "maxMaterials": 1,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 1000
     }
   }
 }
