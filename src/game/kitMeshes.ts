@@ -230,8 +230,48 @@ function fadingColumn(radius: number, height: number, sides: number): THREE.Buff
   return g;
 }
 
+/**
+ * The guidance column: a lit tube that is brightest in the middle of its width and dies away at both edges (the glow of a
+ * beam of light, not a slab: the brief keeps it a faint cue), and fades out smoothly well short of its top so it never runs
+ * up into the sky. The edges fall off with the angle between the surface and the eye (see `softEdge`); the fade with
+ * height is in the vertex colours, a slow start at the foot and an ease to nothing at the top.
+ */
+function guideColumn(radius: number, height: number): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(radius, radius, height, 16, 14, true);
+  const pos = g.getAttribute('position');
+  const col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const t = pos.getY(i) / height + 0.5;
+    const v = (1 - THREE.MathUtils.smoothstep(t, 0.0, 1.0)) ** 1.5 * THREE.MathUtils.smoothstep(t, 0, 0.08);
+    col.set([v, v, v], i * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
+
+/**
+ * A copy of the column material whose opacity falls to nothing where the tube turns away from the eye: across the width the
+ * brightness is 1 - (x / r)^2 (a smooth bell), so the beam has soft edges at any distance and from any side.
+ */
+function softEdge(base: THREE.Material): THREE.MeshBasicMaterial {
+  const m = base.clone() as THREE.MeshBasicMaterial;
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vEdgeN;\nvarying vec3 vEdgeV;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvEdgeN = normalize( normalMatrix * normal );\nvEdgeV = ( modelViewMatrix * vec4( position, 1.0 ) ).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vEdgeN;\nvarying vec3 vEdgeV;')
+      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.a *= pow( abs( dot( normalize( vEdgeN ), normalize( - vEdgeV ) ) ), 2.0 );');
+  };
+  m.customProgramCacheKey = () => 'guide-soft-edge';
+  return m;
+}
+
 /** Where a console stands in its cell: against the side it is named after. */
 export const CONSOLE_OFFSET = 1.35;
+/** The guidance column stands from 1.5 m over the cell floor and is 4.4 m tall: from the play camera it ends about a tenth of the frame below its top edge. */
+const GUIDE_FOOT = 1.5;
+const GUIDE_HEIGHT = 4.4;
 
 /**
  * The cues of a console (floor ring, beacon, guidance column). Its body comes from the kit and is added under the
@@ -253,8 +293,8 @@ export function consoleMesh(c: Interactable, M: Materials): THREE.Group {
   beacon.visible = false;
   beacon.name = 'beacon';
   // faint guidance column, brightness set by the section's `beacon` tunable
-  const guide = mesh(fadingColumn(0.45, 11, 12), M.column.clone(), false, false);
-  guide.position.set(d[0] * CONSOLE_OFFSET, 7.4, d[2] * CONSOLE_OFFSET);
+  const guide = mesh(guideColumn(0.55, GUIDE_HEIGHT), softEdge(M.column), false, false);
+  guide.position.set(d[0] * CONSOLE_OFFSET, GUIDE_FOOT + GUIDE_HEIGHT / 2, d[2] * CONSOLE_OFFSET);
   guide.name = 'guide';
   guide.visible = false;
   g.add(body, ring, beacon, guide);

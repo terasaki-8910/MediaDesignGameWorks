@@ -32,6 +32,7 @@ POST_HALF = 0.21
 
 opts = K.script_args()
 OUT = opts.get("out", "public/assets/kit/parapet.glb")
+UPRIGHT_TONE = float(opts.get("upright", "0.6"))  # colour factor of upright faces (the tops keep 1.0); see K.face_weathering
 K.reset()
 ashlar = dict(K.ASHLAR)
 if "ashlar" in opts:  # comparison builds: --ashlar <id> --ashlar-size <m> --textures <dir>
@@ -119,6 +120,7 @@ K.unwrap_atlas(baked, "UV1")
 K.copy_uv(walls[0], walls[1], "UV1")
 ao = K.bake_ao(baked, "parapet_ao", 1024, occluders=[ground, *ends, *balusters], distance=0.9, strength=1.25)
 K.grime_vertex_colours(unique, ao, amount=0.6)
+K.face_weathering(unique, vertical=UPRIGHT_TONE)  # upright faces darker, so sunlit balusters do not outshine the paving
 for ob in spots:
     ob.location = (0, 0, 0)
 for ob in [ground, *ends]:

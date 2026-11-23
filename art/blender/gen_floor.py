@@ -28,6 +28,7 @@ BEVEL = 0.025
 
 opts = K.script_args()
 OUT = opts.get("out", "public/assets/kit/floor.glb")
+UPRIGHT_TONE = float(opts.get("upright", "0.6"))  # colour factor of upright faces (the tops keep 1.0); see K.face_weathering
 K.reset()
 paving, ashlar = dict(K.PAVING), dict(K.ASHLAR)
 if "paving" in opts:  # comparison builds: --paving <id> --paving-size <m> --paving-res 1k --textures <dir>
@@ -103,6 +104,7 @@ K.unwrap_atlas(stone, "UV1", margin=0.01)
 ao = K.bake_ao(stone, "floor_ao", 512, occluders=slabs, distance=0.6, strength=1.2)
 K.grime_vertex_colours(stone, ao)
 K.depth_weathering([bottom], 1.0, 0.0, tint="#7C7E78")  # the underside: damp, never in the sun
+K.face_weathering([cornice, flush, outer, inner], vertical=UPRIGHT_TONE)  # the same stone as the parapets: sunlit upright faces stay under the paving
 for ob in stone:
     ob.location = (0, 0, 0)
 for s in slabs:

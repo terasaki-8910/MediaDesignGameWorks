@@ -24,17 +24,27 @@ export const LOOK = {
   ambientIntensity: 1.2,
   /**
    * The light from the upper sky (over about 9 degrees) is cut to this fraction: the paving is lit by that half of the
-   * sky almost alone, the shaded uprights mostly by the bright horizon band and the bounce (reference A3: lit to shade
-   * about 2:1 on the paving, in display values).
+   * sky almost alone, the shaded uprights mostly by the bright horizon band and the bounce. Raised from 0.17 (lit to shade
+   * on the paving 4.6:1 in linear luminance) to 0.5 (about 2.8:1; at least 2:1 is required): the neutral fill now has to
+   * thin the sun's orange on the lit paving, and it lifts the paving more than the uprights.
    */
-  skyFill: 0.17,
-  /** The light from the sky is this much greyer than the sky itself, and tinted by `fillTint`. */
-  fillGrey: 0.8,
-  fillTint: new THREE.Color(1.12, 1.0, 0.84),
-  /** What the sky's lower half shows to the lighting: sunlit paving and stone, the bounce that fills the shaded faces. */
-  bounceColor: new THREE.Color(0.6, 0.47, 0.36),
+  skyFill: 0.5,
+  /**
+   * The light from the sky is this much greyer than the sky itself (1 = grey), and tinted by `fillTint`. The fill is neutral:
+   * the shade of references A1 and A3 is neutral (C* about 2), and only the sun is warm, where it hits.
+   */
+  fillGrey: 1,
+  fillTint: new THREE.Color(1, 1, 1),
+  /** What the sky's lower half shows to the lighting: the bounce that fills the shaded faces, neutral like the fill (same luminance as the old warm one). */
+  bounceColor: new THREE.Color(0.49, 0.49, 0.49),
+  /**
+   * How strongly the gilt takes the light of the sky (1 = like any other material). The gilt is the brightest thing in the
+   * brief, but the brightest pixels of the first area sat on sunlit stone (L* 88-90) above the finials (L* 82): at 2.4 the
+   * finials reach L* 87.
+   */
+  giltEnv: 2.4,
   sunColor: '#ffd2a0', // about 3700 K
-  sunIntensity: 15,
+  sunIntensity: 13.5,
   /** Towards the sun. The play axis runs +X, so the light crosses it from the right and a little from behind. */
   sunDir: new THREE.Vector3(Math.cos(sunAzimuth) * Math.cos(sunElevation), Math.sin(sunElevation), Math.sin(sunAzimuth) * Math.cos(sunElevation)),
   /** Half the side of the square the shadow map covers around the view's focus, in metres. */
@@ -210,6 +220,20 @@ export async function loadSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
   scene.backgroundBlurriness = 0;
   scene.backgroundIntensity = 1;
   pmrem.dispose();
+}
+
+/**
+ * Make the gilt reflect the sky `LOOK.giltEnv` times as strongly as the rest. three.js only reads a material's own
+ * `envMapIntensity` when the material has an `envMap` of its own (otherwise it uses the scene's `environmentIntensity`),
+ * so the gilt is given the scene's environment as its own. Call once the sky and the kit are both loaded.
+ */
+export function giltTakesSky(scene: THREE.Scene, gilt: THREE.MeshStandardMaterial[]) {
+  if (!scene.environment) return;
+  for (const m of gilt) {
+    m.envMap = scene.environment;
+    m.envMapIntensity = scene.environmentIntensity * LOOK.giltEnv;
+    m.needsUpdate = true;
+  }
 }
 
 export interface Sun {

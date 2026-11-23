@@ -24,6 +24,7 @@ import fc_kit as K  # noqa: E402
 
 opts = K.script_args()
 OUT = opts.get("out", "public/assets/kit/pylon.glb")
+UPRIGHT_TONE = float(opts.get("upright", "0.6"))  # colour factor of upright faces (the tops keep 1.0); see K.face_weathering
 K.reset()
 STONE = K.stone_material("M_stone", dict(K.ASHLAR))
 GILT = K.plain_material("M_gilt", "#E3C16F", metallic=1.0, roughness=0.26)
@@ -187,6 +188,7 @@ K.grime_vertex_colours(parts, ao, amount=0.6, skip=("M_gilt",))
 K.depth_weathering([stone], -0.6, -3.0, tint="#7C7E78")  # the corbel under the deck
 K.depth_weathering([stone], 30.0, 29.0, tint="#D6D4CD")  # all of the stone, a shade under the parapets
 K.course_tint([stone], COURSE, 0.08)
+K.face_weathering([stone], vertical=UPRIGHT_TONE)  # upright faces darker, so the sunlit shafts do not outshine the paving
 bpy.data.objects.remove(deck)
 for ob in parts:
     K.check_mesh(ob, closed=True)

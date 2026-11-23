@@ -256,6 +256,11 @@ export class World {
     this.setState(this.state, false);
   }
 
+  /** The gilt materials of the kit (none until it has loaded). */
+  giltMaterials(): THREE.MeshStandardMaterial[] {
+    return this.kit?.giltMaterials() ?? [];
+  }
+
   /** The kit could not be loaded: show the plain collider slabs so the game can still be played. */
   showColliders() {
     for (const c of this.colliders) c.visible = true;
@@ -366,7 +371,7 @@ export class World {
     for (const [id, p] of this.consoleParts) {
       const on = !hidden && ids.has(id) && level > 0.01;
       p.guide.visible = on;
-      if (on) (p.guide.material as THREE.MeshBasicMaterial).opacity = 0.07 + 0.16 * level; // of a column that is faint and fades upwards
+      if (on) (p.guide.material as THREE.MeshBasicMaterial).opacity = 0.09 + 0.2 * level; // of a soft-edged column that is brightest at its foot and fades out upwards
     }
   }
 

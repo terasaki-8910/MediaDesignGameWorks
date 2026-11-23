@@ -23,10 +23,13 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 TEXTURES = os.path.join(ROOT, "art", "textures")
 
 # Poly Haven sources (CC0), fetched by art/fetch-textures.mjs. `size` is the side one repeat covers, in metres
-# (Poly Haven's "dimensions"); `target` is the mean base colour the brief asks for (sRGB hex).
+# (Poly Haven's "dimensions"); `target` is the mean base colour the brief asks for (sRGB hex), except for the paving.
 # The paving is 1K too: at the play camera its nearest texels are about one screen pixel, and 2K maps would put the
 # game over the brief's 96 MB texture budget (measured: 2K base + normal cost 43 MB against 11 MB).
-PAVING = {"id": "floor_tiles_02", "res": "1k", "size": 4.0, "target": "#D8D1BD", "rough": (0.55, 0.75), "nor_res": "1k",
+# The paving's base is a near-neutral light grey (#CED1D2, a shade cooler than the brief's #C9C1B3-#D8D0C2): the 3700 K sun
+# supplies the warmth, so it renders as reference A3's limestone (lit C* about 15, L* 80) and its shade stays neutral
+# (C* 2-5) like A3's and A1's. With the brief's warm base the lit paving rendered at C* 29 and the shade at C* 8.
+PAVING = {"id": "floor_tiles_02", "res": "1k", "size": 4.0, "target": "#CED1D2", "rough": (0.55, 0.75), "nor_res": "1k",
           "joints": True, "normal_strength": 0.55}
 ASHLAR = {"id": "sandstone_blocks_04", "res": "1k", "size": 3.0, "target": "#B9AF9F", "rough": (0.7, 0.9), "nor_res": "1k"}
 STONE_SATURATION = 0.55  # the photo is yellower than the brief's warm grey limestone
@@ -571,6 +574,28 @@ def course_tint(objects, height=0.6, amount=0.07, skip=()):
             tone = 1.0 + amount * math.sin(band * 12.9898 + 1.7) * math.cos(band * 4.1414)
             col[poly.loop_start:poly.loop_start + poly.loop_total, :3] *= tone
         attr.data.foreach_set("color", np.clip(col, 0, 1).ravel())
+
+
+def face_weathering(objects, vertical=0.55, top=1.0, low=0.3, high=0.8, skip=()):
+    """Multiply COLOR_0 by a tone that depends on which way a face looks (in the piece's own frame, +Z up): faces that
+    look up keep `top`, upright and downward faces get `vertical`, with a smooth step between normal.z = `low` and `high`.
+    The brief's stone: rain leaves upright faces darker and stained, sun bleaches the tops. It also keeps the stone from
+    outshining the paving: a sun 12 degrees up gives an upright face about 4.7 times the light of a flat one."""
+    for ob in objects:
+        me = ob.data
+        attr = me.color_attributes["Color"]
+        col = np.empty(len(me.loops) * 4, dtype=np.float32)
+        attr.data.foreach_get("color", col)
+        col = col.reshape(-1, 4)
+        nrm = np.empty(len(me.loops) * 3, dtype=np.float32)
+        me.corner_normals.foreach_get("vector", nrm)
+        t = np.clip((nrm.reshape(-1, 3)[:, 2] - low) / (high - low), 0.0, 1.0)
+        tone = vertical + (top - vertical) * (t * t * (3.0 - 2.0 * t))
+        for poly in me.polygons:
+            if me.materials and me.materials[poly.material_index].name in skip:
+                tone[poly.loop_start:poly.loop_start + poly.loop_total] = 1.0
+        col[:, :3] *= tone[:, None]
+        attr.data.foreach_set("color", col.ravel())
 
 
 def depth_weathering(objects, z0, z1, tint="#9A9C96"):

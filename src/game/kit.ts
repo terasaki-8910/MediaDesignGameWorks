@@ -87,8 +87,6 @@ export class Kit {
               mat.roughness = lib.roughness;
               mat.metalness = lib.metalness;
             }
-            // gilt is the brightest thing in the brief: let it throw back more of the sky and the sun than plain metal
-            if (mat.name === 'M_gilt') mat.envMapIntensity = 1.9;
             if (mat.name === 'M_grime') {
               mat.depthWrite = false;
               mat.polygonOffset = true;
@@ -191,6 +189,11 @@ export class Kit {
       .filter((c) => c.name.startsWith(prefix))
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((c) => new THREE.Matrix4().multiplyMatrices(inv, c.matrixWorld));
+  }
+
+  /** Every gilt material (one per file that has gilt): `giltTakesSky` in look.ts gives them the sky's reflection. */
+  giltMaterials(): THREE.MeshStandardMaterial[] {
+    return [...this.canonical].filter(([key]) => key.startsWith('M_gilt:')).map(([, mat]) => mat);
   }
 
   /** A kit material by name (the first one of that name, whichever file it came from). */

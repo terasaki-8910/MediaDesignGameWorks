@@ -14,6 +14,7 @@ import { Engine } from './engine.ts';
 import { Hud, type Settings } from './hud.ts';
 import { Input } from './input.ts';
 import { Kit } from './kit.ts';
+import { giltTakesSky } from './look.ts';
 import { createMaterials } from './materials.ts';
 import { Player, cloakAvatar } from './player.ts';
 import { Telemetry, clientInfo, defaultConsent } from './telemetry.ts';
@@ -164,6 +165,7 @@ export class Game {
       });
     const city = this.city.load('./assets/city.glb').catch((e) => console.warn('background city not loaded:', e));
     Promise.all([gate, sky, kit, city, character]).finally(() => {
+      giltTakesSky(this.engine.scene, this.world.giltMaterials()); // before warmUp, so the gilt's shader is compiled once
       this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
       this.ready = true;
     });
