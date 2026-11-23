@@ -7,7 +7,8 @@ import { nextAction, remainingActions, solveSection } from '../core/solver.ts';
 import type { Tunables } from '../core/tunables.ts';
 import type { Action, PuzzleSection, PuzzleState, StageFile } from '../core/types.ts';
 import { Sound } from './audio.ts';
-import { BackgroundCity, setupEnvironment } from './backdrop.ts';
+import { createBackground, setupEnvironment } from './backdrop.ts';
+import type { Background } from './foldcity/foldcity.ts';
 import { CameraRig } from './camera.ts';
 import { DemoDirector, type DemoOptions } from './demo.ts';
 import { Engine } from './engine.ts';
@@ -68,7 +69,7 @@ export class Game {
   readonly hud: Hud;
   readonly sound = new Sound();
   readonly telemetry: Telemetry;
-  readonly city: BackgroundCity;
+  readonly city: Background;
   readonly rig: CameraRig;
   readonly director: DemoDirector | null = null;
   mode: Mode = 'title';
@@ -112,7 +113,7 @@ export class Game {
     this.world = new World(this.cs, M);
     this.engine.scene.add(this.world.root);
     const bounds = new THREE.Box3(new THREE.Vector3(-70, -200, -55), new THREE.Vector3(80, 200, 40));
-    this.city = new BackgroundCity(stage.visualTheme, new THREE.Vector3(4, 0, -6), bounds);
+    this.city = createBackground(stage.visualTheme, new THREE.Vector3(4, 0, -6), bounds, new URLSearchParams(location.search).get('city'));
     this.engine.scene.add(this.city.group);
     this.player = new Player({ object: new THREE.Group(), animate: () => {} }); // nothing until the character has loaded
     this.engine.scene.add(this.player.root);

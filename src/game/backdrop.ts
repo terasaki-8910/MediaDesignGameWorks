@@ -5,6 +5,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { VisualTheme } from '../core/types.ts';
 import { Crust } from './crust.ts';
+import { FoldCity, type Background } from './foldcity/foldcity.ts';
+import { VARIANTS as FOLD_VARIANTS } from './foldcity/variants.ts';
 import { LOOK, createSun, hazeFloor, installHaze, loadSky } from './look.ts';
 
 function rng(seed: number) {
@@ -399,4 +401,14 @@ export class BackgroundCity {
       }
     }
   }
+}
+
+/**
+ * The background the page asked for: `?city=<name>` picks one of the folded-city variants (foldcity/variants.ts); with
+ * none (or `default`) it is the original city with its crust of rock.
+ */
+export function createBackground(theme: VisualTheme, center: THREE.Vector3, exclude: THREE.Box3, variant: string | null): Background {
+  const def = variant ? FOLD_VARIANTS[variant] : undefined;
+  if (variant && variant !== 'default' && !def) console.warn(`unknown ?city=${variant} (known: default, ${Object.keys(FOLD_VARIANTS).join(', ')})`);
+  return def ? new FoldCity(def, theme) : new BackgroundCity(theme, center, exclude);
 }
