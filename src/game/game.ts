@@ -336,7 +336,9 @@ export class Game {
     this.world.highlightConsole(null);
     this.world.setGuidance(sec.consoles, this.data.tunables.sections[sec.id]?.beacon ?? 0);
     // the city shows this section's structure; walking on from the section before, it folds there
-    this.city.setSection?.(i, announce && i > 0, this.settings.reduceMotion);
+    const fold = announce && i > 0;
+    this.city.setSection?.(i, fold, this.settings.reduceMotion);
+    if (fold) this.engine.hold(5); // no resize hitch inside the 4 s fold of the background
     this.hud.hint(null);
     // a previous section's intro timer must not hide this section's text
     clearTimeout(this.introTimer);
