@@ -4,20 +4,25 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { VisualTheme } from '../../core/types.ts';
-import { atmosphereUniforms, bindSky, keyTurn, patchShader, type AtmosphereUniforms } from './atmosphere.ts';
+import { atmosphereUniforms, bindSky, KEY_ELEVATION, keyTurn, patchShader, rowTone, type AtmosphereUniforms } from './atmosphere.ts';
+import { LOOK } from '../look.ts';
 import { ATMOSPHERE, type Background } from './foldcity.ts';
 import { buildSheetGround, type SheetGround } from './ground.ts';
 import { footprint } from './layout.ts';
 import { meshName, MODELS } from './models.ts';
 import { heightAt, planSteps, type KeepOut, type MorphBuilding, type MorphPlan } from './morphplan.ts';
+import { PLAY_CENTER } from './plan.ts';
 import { SECTION_STRUCTURE, type Freeze } from './progression.ts';
 import { rng } from './rng.ts';
-import { blendState, copyState, makeState, restState, sheetFrame, STRUCTURES, type SheetState, type StructureName } from './sheet.ts';
+import { bakeHeights, castShadows, MAP_HEIGHT, MAP_WIDTH, modelHeights, shadowTexture, type ModelHeights } from './shadow.ts';
+import { A0, A1, blendState, BEND, CEILING_Y, headingAt, SLOT, copyState, GROUND_Y, makeState, restState, sheetFrame, STRUCTURES, Z0, type SheetState, type StructureName } from './sheet.ts';
 import { makeFrame } from './surfaces.ts';
 
 /** A fold from one structure into the next takes this long; with reduced motion the city fades out and back in instead. */
 export const MORPH_SECONDS = 4;
 const FADE_SECONDS = 0.35;
+/** Cast shadows are worked out this far along the sheet from the play area (and 150 m further across it): beyond, the haze has them. */
+const SHADOW_REACH = 700;
 
 /** Let the page draw a frame's worth of other work. Not a timer: the capture's virtual clock holds timers back. */
 const breathe = () =>
@@ -58,7 +63,7 @@ export interface MorphCityOptions {
   /** Fold on and on through every structure and back (`?morph=loop`), to measure the frame time of a fold. */
   loop?: boolean;
   /** `?bgdebug=facing`: paint the background by class instead of lighting it (atmosphere.ts, bgFacing). */
-  debug?: boolean;
+  debug?: 0 | 1 | 2;
 }
 
 export class MorphCity implements Background {
@@ -73,6 +78,23 @@ export class MorphCity implements Background {
   private mesh: THREE.BatchedMesh | null = null;
   private ground: SheetGround | null = null;
   private atm: AtmosphereUniforms | null = null;
+  /**
+   * The cast shadows (shadow.ts): a map per structure, worked out a few rows a frame after loading and kept; the ground
+   * reads two textures (each holding the map of the structure in `shadowSlot`) and blends them through a fold.
+   */
+  private readonly modelH = new Map<number, ModelHeights>();
+  private readonly shadowMaps: (Uint8Array | null)[] = STRUCTURES.map(() => null);
+  private shadowJob: { si: number; out: Uint8Array; steps: Generator<void, void> } | null = null;
+  private readonly shadowTex = [shadowTexture(), shadowTexture()];
+  private readonly shadowSlot = [-1, -1];
+  private readonly shadows = { uShadowA: { value: this.shadowTex[0] as THREE.Texture | null }, uShadowB: { value: this.shadowTex[1] as THREE.Texture | null }, uShadowMix: { value: 0 } };
+  private heightScratch: Uint8Array | null = null;
+  private warming = false;
+  private sinceLoad = 0;
+  private nextShadowAt = 2;
+  private slot: THREE.Mesh | null = null;
+  private readonly caps: THREE.Mesh[] = [];
+  private readonly slotOn = { value: new THREE.Vector2(1, 0) };
   private waves: Wave[] = [];
   private time = 0;
   /** What is shown: structure `from` at rest, or a fraction `f` of the way to `to`. */
@@ -108,24 +130,79 @@ export class MorphCity implements Background {
     // the buildings, and beside them the props (trees, fountains, the piers' feet): one batch, the buildings' material
     const loader = new GLTFLoader();
     const [gltf, props] = await Promise.all([loader.loadAsync(url), loader.loadAsync(url.replace(/city\.glb$/, 'cityprops.glb'))]);
-    // planned a step at a time, so the page keeps drawing while it loads
+    // planned in slices of about 50 ms, so the page keeps drawing while it loads (a few longer frames rather than one for
+    // each of the plan's forty-odd steps)
     const steps = planSteps(this.theme.city.seed, this.opts.keepOut);
     let step = steps.next();
+    let slice = performance.now();
     while (!step.done) {
-      await breathe();
+      if (performance.now() - slice > 50) {
+        await breathe();
+        slice = performance.now();
+      }
       step = steps.next();
     }
     const plan = step.value;
     this.plan = plan;
     const atm = atmosphereUniforms(ATMOSPHERE);
     this.atm = atm;
-    if (this.opts.debug) atm.uBgDebug.value = 1;
+    if (this.opts.debug) atm.uBgDebug.value = this.opts.debug;
 
-    const ground = buildSheetGround(plan.lattice, atm);
+    const modelH = this.modelH;
+    const ground = buildSheetGround(plan.lattice, atm, this.shadows);
     ground.mesh.onBeforeRender = (_r, scene) => bindSky(atm, scene);
     this.ground = ground;
     this.stats.groundTriangles = ground.triangles;
     this.group.add(ground.mesh);
+
+    // the two far ends of the sheet: a plane of plain haze across each, so the end of the channel and of the tube is haze and
+    // not a window of sky in the shape of their cross-section. It follows the same rule as everything far (atmosphere.ts,
+    // bgFar): in the open canyon, and above the channel's ceiling, it is the sky itself and cannot be seen.
+    // (the caps and the slot's haze below share one program: uVeil = (1 for the slot's haze, how much of it: up to 1 as much
+    // as the distance gives, from 1 to 2 the rest as well, so the last slit of a closing slot is haze before its edges meet))
+    const veilMaterial = (uVeil: THREE.IUniform, depthWrite: boolean) => {
+      const m = new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 1, metalness: 0, fog: false, side: THREE.DoubleSide, transparent: true, depthWrite });
+      m.onBeforeCompile = (shader) =>
+        patchShader(shader, atm, {
+          light: 'vec3( 0.0 )', uniforms: { uVeil }, fragmentDecl: 'uniform vec2 uVeil;',
+          // (the slot's haze fades with the city in the reduced-motion fade; in the debug views it counts as city where it hides the sky)
+          fragmentEnd: 'float slotA = mix( bgFog * min( uVeil.y, 1.0 ), 1.0, clamp( uVeil.y - 1.0, 0.0, 1.0 ) ) * ( 1.0 - uBgVeil ); gl_FragColor = uVeil.x < 0.5 ? vec4( gl_FragColor.rgb, 1.0 ) : uBgDebug > 0.5 ? vec4( 0.0, 0.6, 0.0, step( 0.5, slotA ) ) : vec4( bgHazeCol, slotA );',
+        });
+      m.customProgramCacheKey = () => 'foldcity-veil';
+      return m;
+    };
+    const capMaterial = veilMaterial({ value: new THREE.Vector2(0, 1) }, true);
+    // (one small piece of it far below everything is always drawn, so the program is compiled while the page loads and not
+    // in the first frame of the first fold)
+    const seed = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), capMaterial);
+    seed.position.set(0, GROUND_Y - 300, Z0);
+    seed.frustumCulled = false;
+    this.group.add(seed);
+    for (const a of [A0 + 2, A1 - 2]) {
+      // (no higher than a little over the ceiling: above that it would be sky, and drawing it costs the whole sky's pixels)
+      const top = CEILING_Y + 60;
+      const cap = new THREE.Mesh(new THREE.PlaneGeometry(3200, top - (GROUND_Y - 40)), capMaterial);
+      cap.rotation.y = Math.PI / 2;
+      cap.position.set(a, (top + GROUND_Y - 40) / 2, Z0);
+      cap.name = 'foldcity-cap';
+      cap.frustumCulled = false;
+      cap.renderOrder = 3;
+      this.caps.push(cap);
+      this.group.add(cap);
+    }
+
+    // the haze in the channel's slot: the sky seen through the slot lies behind as much haze as the ceiling beside it, so
+    // far along the channel the slot closes into the haze instead of standing blue between two ruled edges. A strip just
+    // above the ceiling, drawn over the sky with the haze's colour and as much of it as its distance gives.
+    const slotMaterial = veilMaterial(this.slotOn, false);
+    const slot = new THREE.Mesh(new THREE.PlaneGeometry(A1 - A0, 2 * (SLOT + BEND)), slotMaterial);
+    slot.rotation.x = Math.PI / 2;
+    slot.position.set((A0 + A1) / 2, CEILING_Y + 2, Z0);
+    slot.name = 'foldcity-slot';
+    slot.frustumCulled = false;
+    slot.renderOrder = 4; // after the ground: over the sky and the slot's far walls
+    this.slot = slot;
+    this.group.add(slot);
 
     const list = plan.buildings.filter((b) => b.alive.some(Boolean));
     const sources = new Map<string, THREE.Mesh>();
@@ -142,7 +219,9 @@ export class MorphCity implements Background {
         vertices += src.geometry.getAttribute('position').count;
         indices += src.geometry.index!.count;
       }
-    for (const m of MODELS) {
+    for (const [i, m] of MODELS.entries()) {
+      const far = sources.get(meshName(m, 1));
+      if (far) modelH.set(i, modelHeights(far.geometry));
       const src = sources.get(meshName(m, 0));
       if (!src) continue;
       src.geometry.computeBoundingBox();
@@ -154,6 +233,11 @@ export class MorphCity implements Background {
     const material = (gltf.scene.getObjectByName(meshName(MODELS[0], 0)) as THREE.Mesh).material as THREE.MeshStandardMaterial;
     material.fog = false;
     if (material.map) material.map.anisotropy = 4;
+    const tone = material.map ? rowTone(material.map) : null;
+    if (tone) {
+      atm.uBgRowTone.value = tone;
+      atm.uBgRowOn.value = 1;
+    }
     material.onBeforeCompile = (shader) => patchShader(shader, atm);
     material.customProgramCacheKey = () => 'foldcity-buildings';
 
@@ -170,8 +254,13 @@ export class MorphCity implements Background {
       const geometry: [number, number] = [ids.get(meshName(MODELS[b.model], 0))!, ids.get(meshName(MODELS[b.model], 1))!];
       const id = mesh.addInstance(geometry[1]);
       mesh.setVisibleAt(id, false); // until the first pose puts it on the sheet
-      const v = 0.94 * (0.94 + rTint() * 0.12);
-      const warm = (rTint() - 0.5) * 0.06;
+      // a tone and a warmth per block (about 6 % either way: the brief's stone by stone), a little more per house
+      const cell = b.lot.cell >= 0 ? plan.lattice.cells[b.lot.cell].r : 0.5;
+      const h1 = Math.sin(cell * 91.7 + 3.1) * 43758.5453;
+      const h2 = Math.sin(cell * 57.3 + 1.7) * 24634.6345;
+      const prop = MODELS[b.model].kind === 'prop';
+      const v = 0.94 * (prop ? 0.96 + rTint() * 0.08 : 0.94 + (h1 - Math.floor(h1)) * 0.12) * (0.98 + rTint() * 0.04);
+      const warm = prop ? (rTint() - 0.5) * 0.05 : (h2 - Math.floor(h2) - 0.5) * 0.1 + (rTint() - 0.5) * 0.02;
       // the alpha carries where the key light stands for this building (atmosphere.ts)
       mesh.setColorAt(id, tint.set(v * (1 + warm), v, v * (1 - warm), keyTurn(b.lot.swap, b.lot.flip)));
       this.items.push({
@@ -182,6 +271,7 @@ export class MorphCity implements Background {
     this.stats.instances = list.length;
     this.mesh = mesh;
     this.group.add(mesh);
+    // (the shadow map of the structure shown is made by the first pose; those of the others a little later: shadowWork)
     this.warm();
     this.pose();
   }
@@ -192,6 +282,7 @@ export class MorphCity implements Background {
    */
   private warm() {
     const t0 = performance.now();
+    this.warming = true;
     const shown = { from: this.from, to: this.to, f: this.f };
     for (let k = 0; k < 3; k++)
       for (let i = 0; i + 1 < STRUCTURES.length; i++)
@@ -201,6 +292,7 @@ export class MorphCity implements Background {
             this.pose();
           }
     Object.assign(this, shown);
+    this.warming = false;
     this.warmMs = performance.now() - t0;
   }
 
@@ -256,6 +348,19 @@ export class MorphCity implements Background {
     else blendState({ from: STRUCTURES[this.from], to: STRUCTURES[this.to] }, this.f, this.state);
     this.ground.update(this.state);
     const still = resting || arrived;
+    // the canyon is open to the sky; the channel and the tube are closed (atmosphere.ts, bgFar)
+    // the slot's haze comes with the channel's ceiling (the last third of the fold into it) and leaves when the tube has closed
+    this.slotOn.value.y = still ? (at === 1 ? 1 : 0) : ti === 0 ? Math.min(1, Math.max(0, (fwd - 0.6) / 0.4)) : 1 + Math.min(1, Math.max(0, (fwd - 0.4) / 0.4));
+    if (this.slot) this.slot.visible = this.slotOn.value.y > 0;
+    const open = still ? (at === 0 ? 1 : 0) : ti === 0 ? 1 - fwd : 0;
+    if (this.atm) (this.atm.uBgFarSky.value as THREE.Vector2).set(open, CEILING_Y);
+    // (in the open canyon the caps are all sky: not drawn)
+    for (const cap of this.caps) cap.visible = open < 1;
+    // the cast shadows: those of the structure the city rests in, or the two of a fold blended as it goes
+    if (this.warming) {
+      // (the warm-up's poses are never drawn: no shadow map is made for them)
+    } else if (still) this.showShadows(at, at, 0);
+    else this.showShadows(this.from, this.to, this.f * this.f * (3 - 2 * this.f));
     for (const it of this.items) {
       const { b } = it;
       const h = still ? (b.alive[at] ? b.sy[at] : 0) : heightAt(b, ti, fwd);
@@ -282,6 +387,56 @@ export class MorphCity implements Background {
       else it.sink = b.alive[ti] ? b.sink[ti] : b.sink[ti + 1];
       this.write(it);
     }
+  }
+
+  /** The shadow map of structure `si`, worked out now if it has not been yet (some 0.1 to 0.2 s). */
+  private shadowMap(si: number): Uint8Array | null {
+    if (!this.plan || !this.modelH.size) return null;
+    const done = this.shadowMaps[si];
+    if (done) return done;
+    const job = this.shadowJob?.si === si ? this.shadowJob : this.startShadowJob(si);
+    for (;;) if (job.steps.next().done) break;
+    if (this.shadowJob === job) this.shadowJob = null;
+    return (this.shadowMaps[si] = job.out);
+  }
+
+  private startShadowJob(si: number) {
+    const state = restState(STRUCTURES[si]);
+    this.heightScratch ??= new Uint8Array(MAP_WIDTH * MAP_HEIGHT);
+    bakeHeights(this.heightScratch, this.modelH, this.plan!.buildings, si, EXTRA_SINK);
+    const out = new Uint8Array(MAP_WIDTH * MAP_HEIGHT);
+    // (the heights are copied: the next structure's job draws over the scratch)
+    const steps = castShadows(this.heightScratch.slice(), out, (a, d) => headingAt(state, a, d), { slope: Math.tan(KEY_ELEVATION), sun: LOOK.sunDir }, [PLAY_CENTER.x - SHADOW_REACH, PLAY_CENTER.x + SHADOW_REACH], Math.min(state.cut, SHADOW_REACH + 150), 4);
+    return { si, out, steps };
+  }
+
+  /** Make one shadow map that is still missing, whole (about 0.1 s: one long frame instead of many slowed ones). */
+  private shadowWorkWhole() {
+    if (!this.plan || !this.modelH.size) return;
+    const si = this.shadowMaps.findIndex((m) => !m);
+    if (si >= 0) this.shadowMap(si);
+  }
+
+  /** Show the shadows of structure `from`, a share `w` of the way to those of `to`. */
+  private showShadows(from: number, to: number, w: number) {
+    const put = (slot: number, si: number) => {
+      const map = this.shadowMap(si);
+      if (!map) return;
+      (this.shadowTex[slot].image.data as Uint8Array).set(map);
+      this.shadowTex[slot].needsUpdate = true;
+      this.shadowSlot[slot] = si;
+    };
+    if (from === to || w <= 0 || w >= 1) {
+      const si = w >= 1 ? to : from;
+      let slot = this.shadowSlot.indexOf(si);
+      if (slot < 0) put((slot = this.shadows.uShadowMix.value < 0.5 ? 1 : 0), si); // into the texture not being shown
+      if (this.shadowSlot[slot] === si) this.shadows.uShadowMix.value = slot;
+      return;
+    }
+    let a = this.shadowSlot.indexOf(from);
+    if (a < 0) put((a = this.shadowSlot[0] === to ? 1 : 0), from);
+    if (this.shadowSlot[1 - a] !== to) put(1 - a, to);
+    this.shadows.uShadowMix.value = a === 0 ? w : 1 - w;
   }
 
   /** Compose a building's matrix: its frame on the sheet, sunk, at its height, tilted by its wave angle about its base. */
@@ -326,6 +481,12 @@ export class MorphCity implements Background {
     this.time += dt;
     if (this.atm && this.group.parent) bindSky(this.atm, this.group.parent as THREE.Scene);
     if (!this.mesh) return;
+    // the shadow maps of the other structures: one about every second and a half from two seconds after the city appears
+    this.sinceLoad += dt;
+    if (this.sinceLoad > this.nextShadowAt && !this.morph) {
+      this.shadowWorkWhole();
+      this.nextShadowAt = this.sinceLoad + 1.5;
+    }
     let posed = false;
     if (this.opts.loop && !this.morph) {
       if (this.to + this.loopStep < 0 || this.to + this.loopStep >= STRUCTURES.length) this.loopStep = -this.loopStep;

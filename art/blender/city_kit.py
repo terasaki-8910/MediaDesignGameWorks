@@ -39,6 +39,7 @@ BARK = K.srgb("#6B6457")
 WATER = K.srgb("#6E8A90")
 TANK = K.srgb("#6B5A4B")
 SKYLIGHT = K.srgb("#56696F")
+PAVED = (0.36, 0.41, 0.48)  # a terrace: the ashlar strip as dark slabs of zinc and gravel, never a blank pale lid
 
 SIZE = 512
 BAY = 2.9  # metres one window bay takes
@@ -68,15 +69,19 @@ class Shell:
         self.bm = bmesh.new()
         self.col = self.bm.loops.layers.color.new("Color")
         self.uv = self.bm.loops.layers.uv.new("UV0")
+        # a normal per corner where a face is part of a rounded mass (a tree's canopy); zero = the face's own
+        self.nrm = self.bm.loops.layers.float_vector.new("corner_normal")
         self.o = (0.0, 0.0)
 
-    def face(self, pts, colour, colours=None, uvs=None):
-        """`colours` gives one colour per corner instead (the streak under the eaves); without `uvs` the face is a plain colour."""
+    def face(self, pts, colour, colours=None, uvs=None, normals=None):
+        """`colours` gives one colour per corner instead (the streak under the eaves); without `uvs` the face is a plain
+        colour; `normals` gives a normal per corner (a rounded mass shades smoothly)."""
         f = self.bm.faces.new([self.bm.verts.new((p[0] + self.o[0], p[1] + self.o[1], p[2])) for p in pts])
         f.normal_update()
         for k, loop in enumerate(f.loops):
             loop[self.col] = (*(colours[k] if colours else colour), 1.0)
             loop[self.uv].uv = uvs[k] if uvs else FLAT_UV
+            loop[self.nrm] = normals[k] if normals else (0.0, 0.0, 0.0)
 
     def wall(self, p0, p1, z0, z1, strip, tint=WALL, bays=None, foot=None, u0=0.0):
         """An upright quad from p0 to p1 (left to right seen from outside) showing one strip: `bays` window bays, or the
@@ -101,9 +106,10 @@ class Shell:
             z += h
         return z
 
-    def box(self, lo, hi, colour, top=None, bottom=False, foot=None, strip=None):
+    def box(self, lo, hi, colour, top=None, bottom=False, foot=None, strip=None, paved=False):
         """`strip` shows that strip on the walls in bands (ashlar courses on a tower); `foot` darkens the walls towards their
-        lower edge (the street's shade at the foot of a building)."""
+        lower edge (the street's shade at the foot of a building); `paved` lays the ashlar strip on the top as slabs (a
+        terrace is never a blank lid)."""
         (x0, y0, z0), (x1, y1, z1) = lo, hi
         if strip:
             n = max(1, round((z1 - z0) / STOREY))
@@ -120,7 +126,11 @@ class Shell:
             self.face([(x1, y1, z0), (x0, y1, z0), (x0, y1, z1), (x1, y1, z1)], colour, cs)
             self.face([(x1, y0, z0), (x1, y1, z0), (x1, y1, z1), (x1, y0, z1)], colour, cs)
             self.face([(x0, y1, z0), (x0, y0, z0), (x0, y0, z1), (x0, y1, z1)], colour, cs)
-        self.face([(x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)], top or (TRIM if strip else colour))
+        uvs = None
+        if paved:
+            v0, v1 = strip_v("ashlar")  # its five courses across the depth, its blocks along the length
+            uvs = [(x0 / TILE, v0), (x1 / TILE, v0), (x1 / TILE, v1), (x0 / TILE, v1)]
+        self.face([(x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)], top or (TRIM if strip else colour), None, uvs)
         if bottom:
             self.face([(x0, y1, z0), (x1, y1, z0), (x1, y0, z0), (x0, y0, z0)], colour)
 
@@ -184,14 +194,46 @@ class Shell:
             self.slope([a[2], a[3], r1], colour, strip)
             self.slope([a[3], a[0], r0, r1], colour, strip)
 
-    def crown(self, c, r, z0, h, colour, under, seg=6, lean=(0.0, 0.0)):
-        """One mass of a tree's canopy: a squat faceted lump, lighter above than below."""
-        zs = [(0.0, 0.5), (0.34, 1.0), (0.72, 0.8), (1.0, 0.0)]
-        for k in range(3):
-            (t0, s0), (t1, s1) = zs[k], zs[k + 1]
-            c0 = (c[0] + lean[0] * t0, c[1] + lean[1] * t0)
-            c1 = (c[0] + lean[0] * t1, c[1] + lean[1] * t1)
-            self.cylinder(c0, r * s0, z0 + h * t0, z0 + h * t1, under if k == 0 else colour, seg, r1=r * s1, c1=c1)
+    def crown(self, c, r, z0, h, colour, under, seg=7, lean=(0.0, 0.0), turn=0.0, lump=0.0):
+        """One mass of a tree's canopy: a rounded lump, shaded smoothly (a normal per corner, leaning upwards so the mass
+        takes the light as one soft form), dark underneath and lighter towards its top. `lump` pushes every other rib in
+        and out, `turn` turns the mass, so no two masses show the same outline."""
+        zs = [(0.0, 0.42), (0.3, 0.98), (0.66, 0.86), (1.0, 0.0)]
+        mid = z0 + h * 0.42
+
+        def ring(t, s):
+            pts = []
+            for i in range(seg):
+                a = turn + 2 * math.pi * i / seg
+                rr = r * s * (1.0 + lump * (1 if i % 2 else -1))
+                pts.append((c[0] + lean[0] * t + rr * math.cos(a), c[1] + lean[1] * t + rr * math.sin(a), z0 + h * t))
+            return pts
+
+        def normal(p):
+            n = (p[0] - c[0], p[1] - c[1], (p[2] - mid) * (r / (h * 0.6)) + 0.45 * r)
+            l = math.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2) or 1.0
+            return (n[0] / l, n[1] / l, n[2] / l)
+
+        def shade(p):
+            t = min(1.0, max(0.0, (p[2] - z0) / h))
+            k = 0.62 + 0.5 * t
+            base = under if t < 0.05 else colour
+            return tuple(min(1.0, v * k) for v in base)
+
+        rings = [ring(t, s) for t, s in zs[:3]]
+        apex = (c[0] + lean[0], c[1] + lean[1], z0 + h)
+        for k in range(2):
+            a, b = rings[k], rings[k + 1]
+            for i in range(seg):
+                j = (i + 1) % seg
+                q = [a[i], a[j], b[j], b[i]]
+                self.face(q, colour, [shade(p) for p in q], None, [normal(p) for p in q])
+        for i in range(seg):
+            j = (i + 1) % seg
+            q = [rings[2][i], rings[2][j], apex]
+            self.face(q, colour, [shade(p) for p in q], None, [normal(p) for p in q])
+        low = [rings[0][i] for i in range(seg)][::-1]
+        self.face(low, under, [tuple(v * 0.7 for v in under)] * seg, None, [(0.0, 0.0, -1.0)] * seg)
 
     def water_tower(self, c, z0, r=1.9, h=3.4, legs=2.6):
         """A rooftop water tank: a wooden drum on a frame under a low cone."""
@@ -250,6 +292,14 @@ class Shell:
         me = bpy.data.meshes.new(name)
         self.bm.to_mesh(me)
         self.bm.free()
+        # the corners that were given a normal keep it (custom normals); every other corner has its face's
+        attr = me.attributes.get("corner_normal")
+        given = [tuple(d.vector) for d in attr.data]
+        if any(n != (0.0, 0.0, 0.0) for n in given):
+            flat = [me.polygons[loop_poly].normal for loop_poly in _loop_polygons(me)]
+            me.polygons.foreach_set("use_smooth", [True] * len(me.polygons))
+            me.normals_split_custom_set([g if g != (0.0, 0.0, 0.0) else tuple(f) for g, f in zip(given, flat)])
+        me.attributes.remove(me.attributes.get("corner_normal"))
         ob = bpy.data.objects.new(name, me)
         bpy.context.collection.objects.link(ob)
         me.materials.append(material)
@@ -257,16 +307,30 @@ class Shell:
         return ob
 
 
+def _loop_polygons(me):
+    """The polygon each loop of a mesh belongs to."""
+    out = [0] * len(me.loops)
+    for p in me.polygons:
+        for i in p.loop_indices:
+            out[i] = p.index
+    return out
+
+
 def slots(s, hx, hy, z0, z1, tint=DECO, sides="SN", margin=1.0, proud=0.12):
-    """Tall window slots between piers (the Art Deco fronts): the slot strip on a panel just proud of the wall."""
+    """Tall window slots between piers (the Art Deco fronts): the slot strip on panels just proud of the wall, two storeys
+    of glass at a time with a band of stone between (the spandrels), so a front is a grid of tall windows and never a grille."""
     v0, v1 = strip_v("slot")
+    tiers = max(1, round((z1 - z0) / 7.4))
+    step = (z1 - z0) / tiers
     for side in sides:
         (nx, ny), (rx, ry) = FACES[side]
         half = (hx if side in "SN" else hy) - margin
         d = (hx if nx else hy) + proud
         n = max(1, round(2 * half / 3.4))
         p = lambda u, z: (nx * d + rx * u, ny * d + ry * u, z)  # noqa: E731
-        s.face([p(-half, z0), p(half, z0), p(half, z1), p(-half, z1)], tint, None, [(0.0, v0), (n / 4.0, v0), (n / 4.0, v1), (0.0, v1)])
+        for k in range(tiers):
+            a, b = z0 + step * k, z0 + step * (k + 1) - (1.5 if k < tiers - 1 else 0.0)
+            s.face([p(-half, a), p(half, a), p(half, b), p(-half, b)], tint, None, [(0.0, v0), (n / 4.0, v0), (n / 4.0, v1), (0.0, v1)])
 
 
 def atlas():
@@ -351,10 +415,10 @@ def atlas():
     a[:] = stone
     for b in range(4):
         x = b * bay
-        a[:, x + 38:x + 90] = glass * 1.15
+        a[:, x + 38:x + 90] = glass * 1.5
         a[:, x + 38:x + 42] = glass * 0.6
         a[:, x + 63:x + 65] = stone * 0.7
-        a[:, x + 30:x + 38] = stone * 1.08
+        a[:, x + 30:x + 38] = stone * 1.03
         a[:, x + 90:x + 98] = stone * 0.86
 
     a, h = strip("ground")

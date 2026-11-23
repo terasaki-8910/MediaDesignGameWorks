@@ -2,7 +2,7 @@
 
     node <game3d>/scripts/blender.mjs art/blender/gen_city.py -- --out public/assets/city.glb
 
-Ten buildings after the reference photos (A1: the Haussmann fronts and the dome of the Invalides beyond the bridge;
+Twelve buildings after the reference photos (A1: the Haussmann fronts and the dome of the Invalides beyond the bridge;
 A2: the Art Deco mass of the Palais de Chaillot), each as <name>_lod0 (near: dormers, chimney pots, balcony slabs, roof
 terraces as geometry) and <name>_lod1 (far: the same fronts, the dormers drawn on the mansard, bare roofs):
   haussmann_a       apartment block: arcaded ground floor, five floors of windows, two balcony lines, cornice, slate
@@ -10,8 +10,10 @@ terraces as geometry) and <name>_lod1 (far: the same fronts, the dormers drawn o
   haussmann_corner  the same with a rotunda and a slate dome on the corner
   haussmann_step    a taller block with a lower wing: stepped roofline
   haussmann_low     four storeys under a flat roof: a parapet, a roof garden, a glazed lantern, a water tank
-  haussmann_tall    seven storeys under a two-tier mansard with two rows of dormers
+  haussmann_tall    nine storeys under a two-tier mansard with two rows of dormers
   haussmann_short   a short front (seven bays) under a tall pavilion roof with two chimney stacks: the ends of a block
+  tower_house       a slender house of twelve storeys under a slate pavilion with a gilt finial
+  deco_block        an Art Deco apartment mass of twelve storeys with three setbacks
   deco_hall         long Art Deco hall: plinth, tall window slots between piers, stepped attic, taller pavilion
   deco_tower        Art Deco tower with three setbacks and a lantern
   dome              domed building: square base, portico, drum, ribbed dome, lantern and spire
@@ -81,7 +83,7 @@ def block(s, lod, hx, hy, floors, at=(0.0, 0.0), z0=0.0, chimneys=3, tiers=1, ti
             s.box((-hx - 0.6, -hy - 0.6, z - 0.05), (hx + 0.6, hy + 0.6, z + 0.2), TRIM, bottom=True)
     if roof == "terrace":
         # a flat roof behind a parapet: a garden, a glazed lantern over the stair, a water tank (the near model)
-        s.box((-hx - 0.2, -hy - 0.2, top + 0.4), (hx + 0.2, hy + 0.2, top + 1.4), TRIM, top=TERRACE)
+        s.box((-hx - 0.2, -hy - 0.2, top + 0.4), (hx + 0.2, hy + 0.2, top + 1.4), TRIM, top=PAVED, paved=True)
         deck = top + 1.4
         s.box((-hx + 2.0, -2.2, deck), (-hx + 7.0, 2.2, deck + 2.6), WALL_B, top=ZINC, strip="ashlar")
         s.hip(4.0, 2.4, deck, deck + 1.9, SKYLIGHT, c=(3.0, 0.0))
@@ -161,7 +163,31 @@ def haussmann_low(lod):
 
 def haussmann_tall(lod):
     s = Shell()
-    block(s, lod, 20.0, 9.0, 7, chimneys=4, tiers=2)
+    block(s, lod, 20.0, 9.0, 9, chimneys=4, tiers=2)
+    return s
+
+
+def tower_house(lod):
+    """A slender house of twelve storeys under a tall slate pavilion with a gilt finial: it stands a head above its row."""
+    s = Shell()
+    rz = block(s, lod, 9.0, 8.2, 11, roof="pavilion", slate_top=True, tint=WALL_B)
+    s.cylinder((0.0, 0.0), 0.5, rz + 1.0, rz + 6.5, GILT, 6, r1=0.0)
+    return s
+
+
+def deco_block(lod):
+    """An Art Deco apartment mass of twelve storeys: a plinth, piers and window slots, three setbacks with parapets (A2)."""
+    s = Shell()
+    hx, hy = 15.0, 8.5
+    s.box((-hx - 0.4, -hy - 0.4, 0.0), (hx + 0.4, hy + 0.4, 4.0), DECO_B, strip="ashlar", foot=0.7)
+    steps = [(hx, hy, 4.0, 23.0), (hx - 3.2, hy - 1.8, 23.0, 31.5), (hx - 7.0, hy - 3.6, 31.5, 38.0)]
+    for k, (x, y, z0, z1) in enumerate(steps):
+        s.box((-x, -y, z0), (x, y, z1), DECO if k < 2 else DECO_B, PAVED, strip="ashlar", paved=True)
+        s.box((-x - 0.35, -y - 0.35, z1 - 0.8), (x + 0.35, y + 0.35, z1 + 0.5), TRIM, top=PAVED, bottom=True, paved=True)
+        slots(s, x, y, z0 + 1.2, z1 - 1.6, sides="SNEW", margin=1.1)
+    s.box((-2.2, -2.2, 38.5), (2.2, 2.2, 41.5), DECO_B, ZINC, strip="ashlar")
+    s.hip(2.6, 2.6, 41.5, 43.2, SKYLIGHT)
+    s.water_tower((steps[1][0] - 2.2, 0.0), 32.0, r=1.5, h=2.6)
     return s
 
 
@@ -176,8 +202,8 @@ def deco_hall(lod):
     hx, hy = 32.0, 10.0
     s.box((-hx - 0.6, -hy - 0.6, 0.0), (hx + 0.6, hy + 0.6, 3.2), DECO_B, strip="ashlar", foot=0.7)
     s.box((-hx, -hy, 3.2), (hx, hy, 21.0), DECO, strip="ashlar")
-    s.box((-hx - 0.5, -hy - 0.5, 21.0), (hx + 0.5, hy + 0.5, 21.9), TRIM, bottom=True)
-    s.box((-hx + 2.0, -hy + 2.0, 21.9), (hx - 2.0, hy - 2.0, 25.2), DECO, ZINC, strip="ashlar")
+    s.box((-hx - 0.5, -hy - 0.5, 21.0), (hx + 0.5, hy + 0.5, 21.9), TRIM, top=PAVED, bottom=True, paved=True)
+    s.box((-hx + 2.0, -hy + 2.0, 21.9), (hx - 2.0, hy - 2.0, 25.2), DECO, PAVED, strip="ashlar", paved=True)
     for sx in (-1, 1):  # each wing's roof: a glazed gallery roof, a garden terrace at its end, a water tank
         s.hip(8.0, 3.2, 25.2, 27.6, SKYLIGHT, c=(sx * 20.0, 0.0))
         if lod == 0:
@@ -186,8 +212,8 @@ def deco_hall(lod):
     slots(s, hx, hy, 5.0, 19.2, sides="SNEW", margin=1.6)
     # the taller pavilion in the middle, stepped twice
     s.box((-10.0, -12.0, 0.0), (10.0, 12.0, 28.0), DECO, strip="ashlar", foot=0.7)
-    s.box((-10.5, -12.5, 28.0), (10.5, 12.5, 29.0), TRIM, bottom=True)
-    s.box((-8.0, -10.0, 29.0), (8.0, 10.0, 33.5), DECO, strip="ashlar")
+    s.box((-10.5, -12.5, 28.0), (10.5, 12.5, 29.0), TRIM, top=PAVED, bottom=True, paved=True)
+    s.box((-8.0, -10.0, 29.0), (8.0, 10.0, 33.5), DECO, PAVED, strip="ashlar", paved=True)
     s.box((-5.5, -7.5, 33.5), (5.5, 7.5, 36.5), DECO_B, ZINC, strip="ashlar")
     s.hip(4.6, 6.6, 36.5, 38.3, SKYLIGHT)
     slots(s, 10.0, 12.0, 4.0, 26.0, sides="SN", margin=1.4)
@@ -202,8 +228,8 @@ def deco_tower(lod):
     s = Shell()
     steps = [(15.0, 0.0, 22.0), (11.0, 22.0, 40.0), (7.5, 40.0, 54.0), (4.5, 54.0, 61.0)]
     for h, z0, z1 in steps:
-        s.box((-h, -h, z0), (h, h, z1), DECO if z0 < 50 else DECO_B, ZINC, strip="ashlar", foot=0.7 if z0 == 0.0 else None)
-        s.box((-h - 0.4, -h - 0.4, z1 - 0.9), (h + 0.4, h + 0.4, z1), TRIM, bottom=True)
+        s.box((-h, -h, z0), (h, h, z1), DECO if z0 < 50 else DECO_B, PAVED, strip="ashlar", foot=0.7 if z0 == 0.0 else None, paved=True)
+        s.box((-h - 0.4, -h - 0.4, z1 - 0.9), (h + 0.4, h + 0.4, z1 + 0.02), TRIM, top=PAVED, bottom=True, paved=True)
         slots(s, h, h, z0 + 2.5, z1 - 2.0, sides="SNEW", margin=1.2)
         if z1 < 60:  # the terrace of each setback: pylons at its corners, on the near model a parapet garden on two sides
             for sx in (-1, 1):
@@ -222,8 +248,8 @@ def dome(lod):
     s = Shell()
     h = 17.0
     top = s.storeys(h, h, 0.0, [("ground", 5.2), ("balcony", 5.4), ("floor", 5.4)], WALL, foot=0.7)
-    s.box((-h - 0.5, -h - 0.5, top), (h + 0.5, h + 0.5, top + 1.0), TRIM, bottom=True)
-    s.box((-h + 1.5, -h + 1.5, top + 1.0), (h - 1.5, h - 1.5, top + 3.0), WALL_B, ZINC, strip="ashlar")
+    s.box((-h - 0.5, -h - 0.5, top), (h + 0.5, h + 0.5, top + 1.0), TRIM, top=PAVED, bottom=True, paved=True)
+    s.box((-h + 1.5, -h + 1.5, top + 1.0), (h - 1.5, h - 1.5, top + 3.0), WALL_B, PAVED, strip="ashlar", paved=True)
     if lod == 0:
         for i in range(6):  # portico
             s.cylinder((-7.5 + 3.0 * i, -h - 2.2), 0.6, 3.0, 13.5, TRIM, 6)
@@ -266,9 +292,11 @@ def belfry(lod):
 
 CITY = city_material()
 objects = []
-for make in (haussmann_a, haussmann_corner, haussmann_step, haussmann_low, haussmann_tall, haussmann_short, deco_hall, deco_tower, dome,
-             belfry):
+for make in (haussmann_a, haussmann_corner, haussmann_step, haussmann_tall, deco_hall, deco_tower, dome, belfry):
     for lod in (0, 1):
         objects.append(finished(make(lod), f"{make.__name__}_lod{lod}", CITY, 1400 if lod == 0 else 560))
+# four simple buildings have one model each, for near and far (the file's budget counts its meshes)
+for make, lod in ((haussmann_low, 0), (haussmann_short, 0), (tower_house, 1), (deco_block, 0)):
+    objects.append(finished(make(lod), make.__name__, CITY, 560))
 bpy.context.view_layer.update()
 K.export(OUT, objects)

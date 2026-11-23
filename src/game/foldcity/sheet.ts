@@ -43,8 +43,8 @@ const R90 = BEND / (Math.PI / 2);
 /** Where the second and the third crease begin, along |b|: whole metres, so the tube's seam is a sample of the tables. */
 export const CREASE2 = Math.round(W1 + (CEILING_Y - GROUND_Y - 2 * R90));
 export const CREASE3 = Math.round(CREASE2 + BEND + (W0 - R90 - SLOT));
-/** The slot's walls dissolve between these |b|: some 150 to 400 m above the ceiling. */
-const LIP_FOLD90: readonly [number, number] = [CREASE3 + BEND + 150, CREASE3 + BEND + 400];
+/** The slot's walls end between these |b|, block by block (veilAt): some 130 to 420 m above the ceiling. */
+const LIP_FOLD90: readonly [number, number] = [CREASE3 + BEND + 130, CREASE3 + BEND + 420];
 
 // ring: a tube round the play axis. A flat floor, a quarter circle up each side, a quarter circle back overhead and a flat
 // ceiling; the two edges meet over the axis, in the middle of the boulevard that lies on the channel's third crease.
@@ -93,12 +93,28 @@ const smooth = (t: number) => {
 };
 const ramp = (s: number, from: number) => Math.min(1, Math.max(0, (s - from) / BEND));
 
-/** How far sheet point (a, b) has dissolved: 0 solid, 1 gone. */
-export function veilAt(s: SheetState, a: number, b: number): number {
+/** A block of the street lattice as the sheet's upper edge sees it: the middle of the block across the sheet, and its fixed random number. */
+export interface LipBlock { c: number; r: number }
+/** A block at the sheet's upper edge goes from whole to gone over this much travel of the edge (metres): only a fold shows it. */
+export const LIP_SOFT = 30;
+
+/**
+ * How far sheet point (a, b) has dissolved: 0 solid, 1 gone. The canyon's twisting walls fade smoothly. The sheet's upper
+ * edge (`lip`: the walls of the channel's slot) ends block by block when `block` gives the lattice: each block is whole,
+ * with its houses, or gone, at a place between lip[0] and lip[1] drawn from the block's number, so that what meets the sky
+ * is a roofline of houses and never a ruled edge. The ground's shader does the same (ground.ts, bgGround). Without
+ * `block` the edge is the smooth band between the two.
+ */
+export function veilAt(s: SheetState, a: number, b: number, block?: (a: number, b: number) => LipBlock): number {
   const u = Math.min(NA - 1e-9, Math.max(0, a - A0));
   const i = Math.floor(u);
   const twist = Math.max(0, Math.abs(b) - W0 - BEND / 2) * Math.abs(s.psi[i + 1] - s.psi[i]);
-  return Math.max(smooth((twist - TWIST_FADE[0]) / (TWIST_FADE[1] - TWIST_FADE[0])), smooth((Math.abs(b) - s.lip[0]) / Math.max(s.lip[1] - s.lip[0], 1e-6)));
+  let lip: number;
+  if (block) {
+    const k = block(a, b);
+    lip = smooth((Math.abs(k.c) - (s.lip[0] + k.r * (s.lip[1] - s.lip[0]))) / LIP_SOFT);
+  } else lip = smooth((Math.abs(b) - s.lip[0]) / Math.max(s.lip[1] - s.lip[0], 1e-6));
+  return Math.max(smooth((twist - TWIST_FADE[0]) / (TWIST_FADE[1] - TWIST_FADE[0])), lip);
 }
 
 const newState = (): SheetState => ({

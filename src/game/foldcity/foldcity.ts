@@ -7,7 +7,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { VisualTheme } from '../../core/types.ts';
 import { atmosphereUniforms, bindSky, keyTurn, patchShader, type AtmosphereParams, type AtmosphereUniforms } from './atmosphere.ts';
 import { buildGround } from './ground.ts';
-import { MODELS } from './models.ts';
+import { meshName, MODELS } from './models.ts';
 import { planCity, type Building, type CityPlan } from './plan.ts';
 import { rng } from './rng.ts';
 import type { VariantDef } from './variants.ts';
@@ -80,7 +80,7 @@ export class FoldCity implements Background {
       this.group.add(ground);
     }
 
-    const used = new Set(plan.buildings.map((b) => `${MODELS[b.model].name}_lod${b.lod}`));
+    const used = new Set(plan.buildings.map((b) => meshName(MODELS[b.model], b.lod)));
     const sources = new Map<string, THREE.Mesh>();
     let vertices = 0;
     let indices = 0;
@@ -93,7 +93,7 @@ export class FoldCity implements Background {
     }
     // the layout's table of footprints must still match the file
     for (const m of MODELS) {
-      const src = gltf.scene.getObjectByName(`${m.name}_lod0`) as THREE.Mesh | undefined;
+      const src = gltf.scene.getObjectByName(meshName(m, 0)) as THREE.Mesh | undefined;
       if (!src?.isMesh) continue;
       src.geometry.computeBoundingBox();
       const bb = src.geometry.boundingBox!;
@@ -116,7 +116,7 @@ export class FoldCity implements Background {
     const tint = new THREE.Vector4();
     let tris = 0;
     for (const b of plan.buildings) {
-      const key = `${MODELS[b.model].name}_lod${b.lod}`;
+      const key = meshName(MODELS[b.model], b.lod);
       const id = mesh.addInstance(ids.get(key)!);
       tris += sources.get(key)!.geometry.index!.count / 3;
       const v = 0.78 * (0.94 + rTint() * 0.12);

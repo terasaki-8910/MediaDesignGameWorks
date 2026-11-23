@@ -11,7 +11,7 @@ import {
 } from './plan.ts';
 import { rng } from './rng.ts';
 import {
-  A0, A1, B0, B1, blendState, CREASE3, CREASES_A, CREASES_B, curlsTightly, makeState, restState, SHEET_SIGN, STRUCTURES, surfaceOf, veilAt, type SheetState, type StructureName,
+  A0, A1, B0, B1, blendState, CREASES_A, CREASES_B, curlsTightly, makeState, restState, SHEET_SIGN, STRUCTURES, surfaceOf, veilAt, type LipBlock, type SheetState, type StructureName,
   type Transition,
 } from './sheet.ts';
 import { frameAt, makeFrame, type Frame, type Surface } from './surfaces.ts';
@@ -84,16 +84,40 @@ export function sharedLattice(seed: number): Lattice {
 }
 
 /** The surface a structure shows: the sheet beyond the tube's seam is cut away, and where it dissolves nothing stands. */
-export function shownSurface(s: SheetState, name: string): Surface {
+export function shownSurface(s: SheetState, name: string, lattice?: Lattice): Surface {
   const surf = surfaceOf(s, name);
-  return { ...surf, vRange: Number.isFinite(s.cut) ? [-s.cut, s.cut] : surf.vRange, veil: (u: number, v: number) => veilAt(s, u, v) } as Surface;
+  const block = lattice ? lipBlocks(lattice) : undefined;
+  return { ...surf, vRange: Number.isFinite(s.cut) ? [-s.cut, s.cut] : surf.vRange, veil: (u: number, v: number) => veilAt(s, u, v, block) } as Surface;
+}
+
+/** The block of the lattice a sheet point lies in, as the sheet's upper edge needs it (sheet.ts, veilAt): what the ground's shader reads from its textures. */
+export function lipBlocks(lattice: Lattice): (a: number, b: number) => LipBlock {
+  const find = (list: Lattice['u'], x: number) => {
+    let lo = 0;
+    let hi = list.length - 2;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (list[mid].c <= x) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
+  const nu = lattice.u.length - 1;
+  const out: LipBlock = { c: 0, r: 0 };
+  return (a, b) => {
+    const i = find(lattice.u, a);
+    const j = find(lattice.v, b);
+    out.c = (lattice.v[j].c + lattice.v[j + 1].c) / 2;
+    out.r = Math.round(lattice.cells[i + j * nu].r * 255) / 255;
+    return out;
+  };
 }
 
 /**
  * Does the block between street lines v0 and v1 lie against a crease, or on the walls of the channel's slot? Its houses
  * stay low, clear of the fold's other side and of the sky between the slot's walls.
  */
-const byCrease = (v0: number, v1: number) => CREASES_B.some((c) => Math.abs(c - v0) < 1 || Math.abs(c - v1) < 1) || Math.min(Math.abs(v0), Math.abs(v1)) > CREASE3;
+const byCrease = (v0: number, v1: number) => CREASES_B.some((c) => Math.abs(c - v0) < 1 || Math.abs(c - v1) < 1);
 
 /** Trees thin out with distance: all of them stand within 240 m of the play area, one in four at PROP_REACH. */
 function treeKept(lot: Lot, d: number): boolean {
@@ -161,8 +185,10 @@ export function* planSteps(seed: number, keepOut: readonly KeepOut[] = []): Gene
 
   // each structure at rest, nearest to the play area first: what is close keeps its full height, what is far fits around it
   for (const [si, name] of STRUCTURES.entries()) {
-    const surface = shownSurface(restState(name), name);
+    const surface = shownSurface(restState(name), name, lattice);
     const sheets = new SheetPoints([{ surface }], 6, REACH + 150, PLAY_CENTER);
+    // a second lattice of points between the first's, for the tall buildings: a tower finds the wall beside it
+    const between = new SheetPoints([{ surface }], 6, REACH + 150, PLAY_CENTER, 3);
     const order = buildings
       .map((b) => ({ b, d: surface.at(b.lot.u, b.lot.v, T).distanceTo(PLAY_CENTER) }))
       .filter((o) => o.d <= (o.b.prop ? PROP_REACH : REACH) && (!o.b.prop || treeKept(o.b.lot, o.d)))
@@ -186,7 +212,9 @@ export function* planSteps(seed: number, keepOut: readonly KeepOut[] = []): Gene
       for (let attempt = 0; attempt < 4; attempt++, sy *= 0.78) {
         const obb = boxAt(b.lot, f, sy);
         if (overlaps(obb, PLAY_OBB) || hash.hits(obb, GAP)) continue;
-        if (cutsSheet(sheets, obb, 0, b.lot.u, b.lot.v, fu, fv, 0)) continue;
+        // (asked of nearly the whole box: a tower beside a wall of the sheet must stand clear of it to its top)
+        if (cutsSheet(sheets, obb, 0, b.lot.u, b.lot.v, fu, fv, 0, 0.8)) continue;
+        if (MODELS[b.model].h * b.lot.scale * sy > 40 && cutsSheet(between, obb, 0, b.lot.u, b.lot.v, fu, fv, 0, 0.8)) continue;
         hash.insert(obb);
         b.alive[si] = true;
         b.sy[si] = sy;
@@ -227,7 +255,7 @@ export function* planSteps(seed: number, keepOut: readonly KeepOut[] = []): Gene
     for (const [k, at] of SAMPLES.entries()) {
       yield;
       blendState(tr, at, state);
-      const surface = shownSurface(state, 'blend');
+      const surface = shownSurface(state, 'blend', lattice);
       // whether a building cuts through another part of the sheet is asked at every second sample: it costs the most
       const sheets = k % 2 === 1 ? new SheetPoints([{ surface }], 10, REACH + 80, PLAY_CENTER) : null;
       const hash = new Hash();

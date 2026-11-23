@@ -150,7 +150,15 @@ export function installHaze() {
  * has there. The light is the same sky greyed and warmed a little (a clear evening sky alone lights the shade a
  * strong blue), with the sunlit ground in its lower half at shallow angles (the bounce that fills upright faces).
  */
-export async function loadSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer, url = LOOK.hdri, sunU = LOOK.hdriSunU, gain = LOOK.hdriGain) {
+/**
+ * `?sky=a1`: a variant of the visible sky for the owner to compare (the default is approved and stays as it is). After
+ * reference A1: the horizon's pale warm band runs up into the blue over a long gradient (to about 16 degrees instead of 9)
+ * and the blue is less saturated. Only the sky that is seen changes: the light it gives is the default sky's.
+ */
+export const SKY_A1 = { bandTop: 0.28, grey: 0.08 };
+
+export async function loadSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer, url = LOOK.hdri, sunU = LOOK.hdriSunU, gain = LOOK.hdriGain, variant: string | null = null) {
+  const a1 = variant === 'a1';
   const src = await new HDRLoader().setDataType(THREE.FloatType).loadAsync(url);
   const { width: w, height: h } = src.image as { width: number; height: number };
   const data = src.image.data as Float32Array;
@@ -170,6 +178,7 @@ export async function loadSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
     // haze band: full at and below the horizon, gone 9 degrees up, so the blue of the sky shows in the play view
     const k = 1 - THREE.MathUtils.smoothstep(elevation, -0.01, 0.16);
     const band = elevation < 0 ? 1 : k;
+    const bandA1 = elevation < 0 ? 1 : 1 - THREE.MathUtils.smoothstep(elevation, -0.01, SKY_A1.bandTop);
     const zenith = 1 + (LOOK.zenithGain - 1) * THREE.MathUtils.smoothstep(Math.sin(Math.max(elevation, 0)), 0.08, 0.85);
     const deep = THREE.MathUtils.smoothstep(-Math.sin(elevation), 0.03, 0.5);
     // the lit ground, only at shallow angles: that lights upright faces; straight below stays haze, so undersides stay dark
@@ -191,7 +200,15 @@ export async function loadSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
       for (let c = 0; c < 3; c++) {
         const v = Math.min(data[i + c] * gain, LOOK.skyClamp) * LOOK.skyIntensity * zenith;
         px[c] = v + (haze[c] - v) * Math.min(1, band);
-        sky[o + c] = THREE.DataUtils.toHalfFloat(px[c]);
+        if (!a1) sky[o + c] = THREE.DataUtils.toHalfFloat(px[c]);
+      }
+      if (a1) {
+        const lum = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+        for (let c = 0; c < 3; c++) {
+          const raw = data[i + c] + (lum - data[i + c]) * SKY_A1.grey;
+          const v = Math.min(raw * gain, LOOK.skyClamp) * LOOK.skyIntensity * zenith;
+          sky[o + c] = THREE.DataUtils.toHalfFloat(v + (haze[c] - v) * Math.min(1, bandA1));
+        }
       }
       const grey = 0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2];
       for (let c = 0; c < 3; c++) {

@@ -9,9 +9,10 @@ import type { StageFile } from '../src/core/types.ts';
 import { pierKeepOut } from '../src/game/foldcity/keepout.ts';
 import { footprint } from '../src/game/foldcity/layout.ts';
 import { MODELS } from '../src/game/foldcity/models.ts';
-import { boxAt, heightAt, planMorph, presenceAt, SAMPLES, shownSurface, type MorphBuilding } from '../src/game/foldcity/morphplan.ts';
+import { boxAt, heightAt, lipBlocks, planMorph, presenceAt, SAMPLES, shownSurface, type MorphBuilding } from '../src/game/foldcity/morphplan.ts';
 import { cutsSheet, overlaps, PLAY, PLAY_CENTER, SheetPoints, type Obb } from '../src/game/foldcity/plan.ts';
 import { parseFreeze, SECTION_STRUCTURE } from '../src/game/foldcity/progression.ts';
+import { bakeHeights, castShadows, CELL, MAP_HEIGHT, MAP_WIDTH, modelHeights } from '../src/game/foldcity/shadow.ts';
 import {
   A0, A1, B0, B1, blendState, CEILING_Y, CREASE2, CREASE3, FLAT, GROUND_Y, makeState, restState, RING_HALF, SHEET_SIGN, sheetAt, sheetFrame, SLOT, STRUCTURES, veilAt, W0, Z0,
   type SheetState, type StructureName,
@@ -330,4 +331,79 @@ test('trees, fountains, monuments and the piers feet stay out of the play volume
       const tr = { from: STRUCTURES[ti] as StructureName, to: STRUCTURES[ti + 1] as StructureName };
       check(blendState(tr, at, state), `${tr.from} to ${tr.to} at ${at}`, (b) => heightAt(b, ti, at));
     }
+});
+
+test('every near face of the city has landmarks, and its rows mix houses of four to twelve storeys', () => {
+  STRUCTURES.forEach((name, si) => {
+    // the faces the play shots and the turned views look at: within 400 m across the sheet, 500 m along it
+    const near = houses.filter((b) => b.alive[si] && Math.abs(b.lot.v) < 400 && Math.abs(b.lot.u) < 500);
+    const landmarks = near.filter((b) => MODELS[b.model].kind === 'landmark');
+    assert.ok(landmarks.length >= 6, `${name}: ${landmarks.length} landmarks near the play area`);
+    for (const sign of [-1, 1]) assert.ok(landmarks.some((b) => Math.sign(b.lot.v) === sign), `${name}: a landmark on side ${sign}`);
+    const kinds = new Set(near.map((b) => MODELS[b.model].name));
+    assert.ok(kinds.size >= 8, `${name}: ${kinds.size} kinds of building near the play area`);
+    const share = new Map<string, number>();
+    for (const b of near) share.set(MODELS[b.model].name, (share.get(MODELS[b.model].name) ?? 0) + 1 / near.length);
+    for (const [kind, s] of share) assert.ok(s < 0.34, `${name}: ${kind} is ${(s * 100).toFixed(0)} % of the near city`);
+    const heights = near.map((b) => MODELS[b.model].h * b.lot.scale * b.sy[si]);
+    assert.ok(Math.min(...heights) < 22 && Math.max(...heights) > 55, `${name}: heights ${Math.min(...heights).toFixed(0)} to ${Math.max(...heights).toFixed(0)} m`);
+  });
+});
+
+test("the sheet's upper edge ends block by block, and the houses' plan and the ground's shader agree on where", () => {
+  const state = restState('fold90');
+  const block = lipBlocks(plan.lattice);
+  const nu = plan.lattice.u.length - 1;
+  let whole = 0;
+  let gone = 0;
+  let between = 0;
+  for (let j = 0; j + 1 < plan.lattice.v.length; j++)
+    for (let i = 0; i < nu; i++) {
+      const [ua, ub, va, vb] = [plan.lattice.u[i].c, plan.lattice.u[i + 1].c, plan.lattice.v[j].c, plan.lattice.v[j + 1].c];
+      if (Math.min(Math.abs(va), Math.abs(vb)) < CREASE3 + 30 || ua < -500 || ub > 500) continue;
+      // the same value all over a block (a little inside its street lines)
+      const vs = [[0.1, 0.1], [0.9, 0.1], [0.5, 0.5], [0.1, 0.9], [0.9, 0.9]].map(([p, q]) => veilAt(state, ua + (ub - ua) * p, va + (vb - va) * q, block));
+      assert.ok(Math.max(...vs) - Math.min(...vs) < 1e-9, `block ${i},${j} is cut through`);
+      if (vs[0] === 0) whole++;
+      else if (vs[0] === 1) gone++;
+      else between++;
+    }
+  assert.ok(whole > 20 && gone > 20, `${whole} blocks whole, ${gone} gone`);
+  assert.ok(between <= 0.2 * (whole + gone), `${between} blocks half dissolved at rest`);
+  // no house stands on a block that has begun to go
+  for (const b of houses) if (b.alive[1]) assert.ok(veilAt(state, b.lot.u, b.lot.v, block) <= 0.02, 'a house on a dissolving block');
+});
+
+test('the cast shadows: each model lies in the height map where the city draws it, and a tower throws a shadow away from the light', () => {
+  // a box 8 x 6 x 4 m off-centre in its own frame
+  const mh = modelHeights(new THREE.BoxGeometry(8, 6, 4).translate(1, 3, 0));
+  assert.ok(Math.abs(mh.x0 + 3) < 1e-6 && Math.abs(mh.z0 + 2) < 1e-6);
+  assert.ok(mh.h.every((v) => Math.abs(v - 6) < 1e-6), 'the box is 6 m high all over');
+  // real lots, either way round: the map is filled inside the footprint and nowhere else
+  const data = new Uint8Array(MAP_WIDTH * MAP_HEIGHT);
+  for (const h of [houses.find((x) => x.alive[0] && !x.lot.swap)!, houses.find((x) => x.alive[0] && x.lot.swap)!]) {
+    bakeHeights(data, new Map([[h.model, mh]]), [h], 0, 0);
+    const [fu, fv] = footprint(MODELS[h.model], h.lot.scale, h.lot.swap, h.lot.stretch);
+    let n = 0;
+    let far = 0;
+    for (let k = 0; k < data.length; k++) {
+      if (!data[k]) continue;
+      n++;
+      const a = A0 + ((k % MAP_WIDTH) + 0.5) * CELL;
+      const v = B0 + (Math.floor(k / MAP_WIDTH) + 0.5) * CELL;
+      if (Math.abs(a - h.lot.u) > fu / 2 + 2 * CELL + 8 || Math.abs(v - h.lot.v) > fv / 2 + 2 * CELL + 8) far++;
+    }
+    assert.ok(n > 4, 'the building is in the map');
+    assert.equal(far, 0, 'nothing of it lies outside its footprint');
+  }
+  // a tower 40 m high on flat sheet, the light from +a at 45 degrees: its shadow runs 40 m towards -a and not towards +a
+  data.fill(0);
+  const at = (a: number, b: number) => Math.floor((b - B0) / CELL) * MAP_WIDTH + Math.floor((a - A0) / CELL);
+  for (let a = -4; a < 4; a += CELL) for (let b = -4; b < 4; b += CELL) data[at(a, b)] = 80;
+  const out = new Uint8Array(data.length);
+  for (const _ of castShadows(data, out, () => 0, { slope: 1, sun: { x: Math.SQRT1_2, y: Math.SQRT1_2, z: 0 } }, [-200, 200], 200)) void _;
+  assert.ok(out[at(-20, 0)] > 200, 'in the shadow 20 m behind the tower');
+  assert.equal(out[at(-60, 0)], 0, 'beyond the shadow');
+  assert.equal(out[at(20, 0)], 0, 'towards the light');
+  assert.equal(out[at(-20, 30)], 0, 'beside the shadow');
 });

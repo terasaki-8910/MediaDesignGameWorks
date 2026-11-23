@@ -5,9 +5,10 @@
 The streets' trees, the plazas' centrepieces, one more landmark and the feet of the play area's piers, built face by
 face like the buildings (city_kit.py) so the game draws them in the buildings' batch with the buildings' material; this
 file carries no texture of its own (its UVs point into the buildings' atlas).
-  tree_a          a tall plane tree: a pale trunk that forks, four masses of canopy
-  tree_b          a broad plane tree: a leaning trunk, five masses of canopy to one side
-  tree_c          a young plane tree: three masses of canopy
+  tree_a          a plane tree: a pale trunk that forks, five rounded masses of canopy running into each other
+  tree_b          a broad plane tree: a leaning trunk, six masses of canopy to one side
+  tree_c          a young plane tree: four masses of canopy
+                  (the masses are shaded smoothly: a normal per corner, dark underneath, lighter towards the top)
   fountain        an octagonal basin with a tiered centre: the middle of a plaza
   monument        a column on a stepped plinth with a gilt figure: the middle of a plaza
   pier_foot       a stepped mass of masonry with four buttresses: where a pier of the play area meets the city's ground
@@ -45,22 +46,30 @@ def plane_tree(trunk, crowns, lean=(0.0, 0.0)):
     for k, (x, y, cz, cr, ch, colour) in enumerate(crowns):
         if k < 2:  # a limb from the fork up into this mass
             s.cylinder(top, r * 0.6, z + stem, z + cz + ch * 0.3, BARK, 4, r1=r * 0.3, c1=(x, y))
-        s.crown((x, y), cr, z + cz, ch, colour, LEAF_B, 6, lean=(x * 0.12, y * 0.12))
+        s.crown((x, y), cr, z + cz, ch, colour, LEAF_B, 7, lean=(x * 0.12, y * 0.12), turn=0.9 * k, lump=0.07 if k % 2 else 0.04)
     return s
 
 
+# The canopies are several small masses that run into each other (a cloud of leaves, never one ball on a stick), a little
+# darker and greyer than a lawn: seen from the play area a tree is a soft dark mass with a lit side.
+LEAF_D = K.srgb("#5C6E4A")
+LEAF_E = K.srgb("#66754F")
+LEAF_F = K.srgb("#55664A")
+
+
 def tree_a():
-    return plane_tree((6.4, 0.42), [(-1.6, 0.4, 7.2, 3.6, 5.6, LEAF), (1.9, -0.7, 8.0, 3.3, 5.2, LEAF_C), (0.3, 1.9, 10.4, 3.0, 5.0, LEAF),
-                                    (-0.2, -0.4, 12.2, 2.6, 4.6, LEAF_C)], lean=(0.3, 0.1))
+    return plane_tree((5.0, 0.36), [(-1.5, 0.3, 5.4, 2.5, 3.6, LEAF_D), (1.6, -0.6, 5.9, 2.4, 3.4, LEAF_E), (0.2, 1.7, 6.6, 2.3, 3.4, LEAF_F),
+                                    (-0.5, -1.5, 7.2, 2.2, 3.2, LEAF_E), (0.1, 0.0, 8.6, 2.4, 3.6, LEAF_D)], lean=(0.3, 0.1))
 
 
 def tree_b():
-    return plane_tree((5.2, 0.48), [(-2.6, -0.6, 5.8, 3.4, 4.6, LEAF_C), (1.4, 1.3, 6.4, 3.8, 5.0, LEAF), (3.6, -1.2, 7.6, 2.9, 4.2, LEAF),
-                                    (-0.6, 2.4, 8.6, 2.8, 4.0, LEAF_C), (0.8, -0.3, 9.8, 3.0, 4.4, LEAF)], lean=(0.7, 0.2))
+    return plane_tree((4.2, 0.4), [(-2.3, -0.5, 4.6, 2.5, 3.2, LEAF_E), (1.2, 1.2, 5.0, 2.7, 3.4, LEAF_D), (3.0, -1.0, 5.6, 2.2, 3.0, LEAF_F),
+                                   (-0.6, 2.1, 6.0, 2.2, 3.0, LEAF_E), (0.6, -0.4, 7.0, 2.5, 3.4, LEAF_D), (-1.6, 0.6, 7.4, 1.9, 2.8, LEAF_F)], lean=(0.6, 0.2))
 
 
 def tree_c():
-    return plane_tree((4.6, 0.3), [(-0.9, 0.3, 5.2, 2.6, 4.2, LEAF), (1.1, -0.5, 6.0, 2.4, 3.8, LEAF_C), (0.1, 0.4, 7.8, 2.1, 3.6, LEAF)], lean=(-0.2, 0.2))
+    return plane_tree((3.6, 0.26), [(-0.8, 0.3, 4.0, 2.0, 3.0, LEAF_D), (1.0, -0.5, 4.5, 1.9, 2.8, LEAF_F), (0.1, 0.5, 5.6, 1.8, 2.8, LEAF_E),
+                                    (-0.2, -0.9, 5.0, 1.6, 2.4, LEAF_E)], lean=(-0.2, 0.2))
 
 
 def fountain():
@@ -169,9 +178,9 @@ def cathedral(lod):
 
 CITY = city_material(textured=False)
 objects = [
-    finished(tree_a(), "tree_a", CITY, 220),
-    finished(tree_b(), "tree_b", CITY, 260),
-    finished(tree_c(), "tree_c", CITY, 180),
+    finished(tree_a(), "tree_a", CITY, 260),
+    finished(tree_b(), "tree_b", CITY, 300),
+    finished(tree_c(), "tree_c", CITY, 210),
     finished(fountain(), "fountain", CITY, 260),
     finished(monument(), "monument", CITY, 260),
     finished(pier_foot(), "pier_foot", CITY, 260),

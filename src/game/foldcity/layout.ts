@@ -148,6 +148,8 @@ const rowModels = MODELS.map((m, i) => (m.kind === 'row' ? i : -1)).filter((i) =
 const landmarkAll = MODELS.map((m, i) => (m.kind === 'landmark' ? i : -1)).filter((i) => i >= 0);
 /** The studies of variants.ts load city.glb only: they leave out the landmark of cityprops.glb. */
 const landmarkCity = landmarkAll.filter((i) => !MODELS[i].props);
+/** Landmarks whose footprint is small enough to stand where the sheet curls (the walls of the tube): the towers, the dome, the belfry. */
+const slender = (list: readonly number[]) => list.filter((i) => MODELS[i].w <= 40 && MODELS[i].d <= 40);
 const shortModel = MODELS.findIndex((m) => m.name === 'haussmann_short');
 const treeModels = MODELS.map((m, i) => (m.name.startsWith('tree_') ? i : -1)).filter((i) => i >= 0);
 
@@ -169,15 +171,19 @@ export function layoutProps(lat: Lattice, seed: number): Lot[] {
   const nu = lat.u.length - 1;
   const nv = lat.v.length - 1;
   const tree = (u: number, v: number, cell: number, size = 1) => {
-    out.push({ model: treeModels[Math.floor(r() * treeModels.length)], swap: r() < 0.5, flip: r() < 0.5, scale: size * (0.78 + r() * 0.44), sy: 0.9 + r() * 0.25, u, v, cell });
+    out.push({ model: treeModels[Math.floor(r() * treeModels.length)], swap: r() < 0.5, flip: r() < 0.5, scale: size * (0.8 + r() * 0.4), sy: 0.9 + r() * 0.25, u, v, cell });
   };
   const kerb = (alongU: boolean, lo: number, hi: number, across: number, cell: number) => {
-    const n = Math.floor((hi - lo - 6) / TREE_PITCH);
-    for (let k = 0; k <= n; k++) {
-      if (r() < 0.12) continue; // a gap in the row
-      const along = lo + 3 + (n > 0 ? ((hi - lo - 6) * k) / n : (hi - lo - 6) / 2) + (r() - 0.5) * 2.4;
-      const off = across + (r() - 0.5) * 0.8;
-      tree(alongU ? along : off, alongU ? off : along, cell);
+    // not a ruled row: groups of two or three trees close together, a longer gap between the groups, now and then none
+    let along = lo + 3 + r() * 6;
+    while (along < hi - 3) {
+      const group = r() < 0.2 ? 0 : 1 + Math.floor(r() * 2.6);
+      for (let k = 0; k < group && along < hi - 3; k++) {
+        const off = across + (r() - 0.5) * 1.6;
+        tree(alongU ? along : off, alongU ? off : along, cell);
+        along += 6.5 + r() * 2.5;
+      }
+      along += TREE_PITCH * (0.7 + r() * 1.3);
     }
   };
   for (let j = 0; j < nv; j++)
@@ -274,7 +280,8 @@ export function layoutLots(
           cell: idx,
         });
       };
-      const height = () => (low ? 0.55 + r() * 0.2 : curl ? 0.7 + r() * 0.3 : r() < 0.14 ? 1.25 + r() * 0.25 : 0.78 + r() * 0.44);
+      // (the models themselves run from four to twelve storeys: the factor only breaks the line of the eaves)
+      const height = () => (low ? 0.55 + r() * 0.2 : curl ? 0.84 + r() * 0.3 : r() < 0.1 ? 1.2 + r() * 0.2 : 0.82 + r() * 0.36);
       /** The row model whose length, at this scale, comes nearest to `len` (never the one just used); returns [model, stretch]. */
       const fit = (len: number, scale: number): [number, number] => {
         let best = rowModels[0];
@@ -316,10 +323,12 @@ export function layoutLots(
         const depth = Math.min(END_DEPTH * scaleBase, room);
         return row(0.2, D - 0.2, along, dir, depth, true) ? Math.min(MAX_SCALE * scaleBase, depth / 17.2) * 19.2 + ALLEY : 0;
       };
-      if (cell.type === BLOCK_LANDMARK && !curl && !low) {
-        const k = pickWeighted(landmarkModels.map((mi) => MODELS[mi].weight), r());
-        let mi = landmarkModels[k];
-        if (mi === lastLandmark) mi = landmarkModels[(k + 1) % landmarkModels.length];
+      if (cell.type === BLOCK_LANDMARK && !low) {
+        // where the sheet curls only a slender landmark can stand (whether it does is settled on the surface, in 3D)
+        const pool = curl ? slender(landmarkModels) : landmarkModels;
+        const k = pickWeighted(pool.map((mi) => MODELS[mi].weight), r());
+        let mi = pool[k];
+        if (mi === lastLandmark) mi = pool[(k + 1) % pool.length];
         const m = MODELS[mi];
         const s = Math.min(1.12 * scaleBase, (L - 2) / m.w, (D - 2) / m.d);
         if (s >= 0.7 * scaleBase) {

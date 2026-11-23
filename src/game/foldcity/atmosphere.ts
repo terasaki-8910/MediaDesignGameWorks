@@ -27,32 +27,28 @@ export type AtmosphereUniforms = Record<string, THREE.IUniform>;
 
 /**
  * The city's own light. The play area's sun is low and comes from one side of the world, so on a folded sheet it would light
- * a wall of city more than the ground and leave a ceiling dark. The background is lit in the sheet's own frame instead: a key
- * light at a fixed height above the sheet and a fixed direction along it, and a soft light from "above the sheet" and from
- * its streets, the same on the ground, on a wall and on a ceiling. Linear colours; the gain and saturation of
- * AtmosphereParams still apply on top.
+ * a wall of city more than the ground and leave a ceiling black; a light that is the same on every face (round 1) leaves the
+ * city without direction, a model. The light in between: every face of the sheet gets a key light in its own frame, at a
+ * fixed low height above the sheet, from the direction the world's sun has along that face (the sun projected onto the
+ * sheet), so each building has a lit and a shade side and throws a long shadow across its street (ground.ts) on a floor, a
+ * wall and a ceiling alike. How much of that key a face gets, and how much sky light, follows how far the face is turned to
+ * the world's sun (EXPOSE): the canyon's wall that faces the sun stands in it, the wall opposite in shade, floor and ceiling
+ * between the two, and none is black. Linear colours; the gain and saturation of AtmosphereParams still apply on top.
  */
-const KEY_ELEVATION = (40 * Math.PI) / 180;
-/** Direction towards the key light along the sheet (a, b): from the sun's side of the play area. */
+export const KEY_ELEVATION = (34 * Math.PI) / 180;
+/** Direction towards the key light along the flat sheet (a, b): the sun's side of the play area. */
 export const KEY_ALONG: readonly [number, number] = (() => {
   const l = Math.hypot(LOOK.sunDir.x, LOOK.sunDir.z);
   return [LOOK.sunDir.x / l, LOOK.sunDir.z / l] as const;
 })();
-const KEY_COLOR = new THREE.Color(3.0, 2.5, 1.9);
-const SKY_COLOR = new THREE.Color(1.0, 1.05, 1.16);
-const SHADE_COLOR = new THREE.Color(1.0, 0.94, 0.88);
+const KEY_COLOR = new THREE.Color(3.3, 2.7, 2.0);
+const SKY_COLOR = new THREE.Color(0.92, 1.0, 1.16);
+const SHADE_COLOR = new THREE.Color(0.86, 0.84, 0.86);
+/** (key on a face turned away from the sun, key on one turned to it, sky light away, sky light towards). */
+const EXPOSE = new THREE.Vector4(0.42, 1.12, 0.56, 1.0);
 
-/**
- * The direction of the key light in a building's own frame, as the turn (0 to 1) about its up axis that the batch carries in
- * the alpha of the instance colour. `swap`: the model's X runs along b; `flip`: turned half a turn.
- */
-export function keyTurn(swap: boolean, flip: boolean): number {
-  const [la, lb] = KEY_ALONG;
-  const c = flip ? -1 : 1;
-  const [lx, lz] = swap ? [c * lb, -c * la] : [c * la, c * lb];
-  const t = Math.atan2(lz, lx) / (2 * Math.PI);
-  return t - Math.floor(t);
-}
+/** The instance colour's alpha: no longer read (the key's direction comes from the instance's matrix). */
+export const keyTurn = (_swap: boolean, _flip: boolean): number => 1;
 
 export function atmosphereUniforms(p: AtmosphereParams): AtmosphereUniforms {
   const sunH = new THREE.Vector3(LOOK.sunDir.x, 0, LOOK.sunDir.z).normalize();
@@ -76,6 +72,11 @@ export function atmosphereUniforms(p: AtmosphereParams): AtmosphereUniforms {
     uBgVeil: { value: 0 },
     uBgDebug: { value: 0 },
     uBgKey: { value: new THREE.Vector2(Math.cos(KEY_ELEVATION), Math.sin(KEY_ELEVATION)) },
+    uBgSun: { value: LOOK.sunDir.clone().normalize() },
+    uBgExpose: { value: EXPOSE.clone() },
+    uBgFarSky: { value: new THREE.Vector2(0, 1e6) },
+    uBgRowTone: { value: null as THREE.Texture | null },
+    uBgRowOn: { value: 0 },
     uBgKeyCol: { value: KEY_COLOR.clone() },
     uBgSkyCol: { value: SKY_COLOR.clone() },
     uBgShadeCol: { value: SHADE_COLOR.clone() },
@@ -103,15 +104,28 @@ uniform float uBgVeil;
 uniform float uBgDebug;
 varying vec3 vBgUp;
 uniform vec2 uBgKey;
+uniform vec4 uBgExpose;
+uniform vec2 uBgFarSky;
+uniform sampler2D uBgRowTone;
+uniform float uBgRowOn;
 uniform vec3 uBgKeyCol;
 uniform vec3 uBgSkyCol;
 uniform vec3 uBgShadeCol;
-varying vec3 vBgWorld;
-// the light on a face whose normal, in the sheet's frame (y = away from the sheet), is n; turn is where the key light
-// stands around y, sun how much of it arrives (the ground's shadows)
-vec3 bgLight( vec3 n, float turn, float sun ) {
-	vec3 l = vec3( cos( turn ) * uBgKey.x, uBgKey.y, sin( turn ) * uBgKey.x );
-	return uBgKeyCol * ( max( dot( n, l ), 0.0 ) * sun ) + mix( uBgShadeCol, uBgSkyCol, n.y * 0.5 + 0.5 );
+// the light on a face whose normal, in the sheet's frame (y = away from the sheet), is n. key = the world's sun in that
+// frame: (x, z) its direction along the sheet, y how far the sheet's face is turned to it. sun = how much of the key
+// arrives (the ground's shadows)
+vec3 bgLight( vec3 n, vec3 key, float sun ) {
+	vec2 d = normalize( key.xz + vec2( 1e-4, 0.0 ) );
+	vec3 l = vec3( d.x * uBgKey.x, uBgKey.y, d.y * uBgKey.x );
+	float ex = smoothstep( -0.9, 0.9, key.y );
+	return uBgKeyCol * ( max( dot( n, l ), 0.0 ) * sun * mix( uBgExpose.x, uBgExpose.y, ex ) ) + mix( uBgShadeCol, uBgSkyCol, n.y * 0.5 + 0.5 ) * mix( uBgExpose.z, uBgExpose.w, ex );
+}
+// how far a thing at this distance, which the haze has all but taken, has gone on into the sky behind it (0 to 1). Only
+// where the sky is behind it: all of the open canyon (uBgFarSky.x = 1), and what stands above the ceiling of the channel
+// (uBgFarSky.y, the walls of its slot). Under a ceiling the far end stays haze (the caps of morphcity.ts close it).
+float bgFar( float len ) {
+	float tau = uBgDensity * len;
+	return smoothstep( 0.80, 0.985, 1.0 - exp( - tau * tau ) ) * max( uBgFarSky.x, smoothstep( uBgFarSky.y, uBgFarSky.y + 40.0, vBgWorld.y ) );
 }
 vec3 bgAtmosphere( vec3 col ) {
 	col = mix( vec3( dot( col, vec3( 0.2126, 0.7152, 0.0722 ) ) ), col, uBgSat ) * uBgGain + uBgLift * uBgHaze;
@@ -120,16 +134,23 @@ vec3 bgAtmosphere( vec3 col ) {
 	vec3 dir = ray / len;
 	// the haze: one colour, the horizon's in the direction looked in (read from the sky map), thickening with distance alone
 	float tau = uBgDensity * len;
-	float f = ( 1.0 - exp( - tau * tau ) ) * uBgStrength;
+	// (roofs and towers stand in thinner haze, but only this side of where the haze takes everything: nothing is left standing
+	// alone in the sky when the ground under it has gone)
+	float thin = mix( bgThin, 1.0, smoothstep( 450.0, 650.0, len ) );
+	float f = ( 1.0 - exp( - tau * tau * thin ) ) * uBgStrength;
 	f = max( f, ( 1.0 - smoothstep( -110.0, -30.0, vBgWorld.y ) ) * uBgSink );
 	vec3 haze = mix( uBgHaze, uBgHazeSun, pow( max( dot( dir, uBgSunH ), 0.0 ), 5.0 ) * 0.85 );
 #ifdef ENVMAP_TYPE_CUBE_UV
 	// (the ray keeps its own height within a degree of the horizon, so the far end of the channel cannot be told from the sky beside it)
 	if ( uBgSkyOn > 0.5 ) haze = textureCubeUV( uBgSky, normalize( vec3( dir.x, clamp( dir.y, -0.02, 0.012 ), dir.z ) + vec3( 1e-4, 0.0, 0.0 ) ), 0.0 ).rgb;
 #endif
+	bgHazeCol = haze;
+	bgFog = clamp( f, 0.0, 1.0 );
 	col = mix( col, haze, clamp( max( f, uBgBase ), 0.0, 1.0 ) );
 	// where the sheet ends it dissolves into whatever sky lies behind it, so no edge shows
-	float veil = max( bgVeil, uBgVeil );
+	// and what the haze has taken altogether goes on into the sky: the far end of the canyon and of the channel, and a wall
+	// that rises out of sight, have no outline against it
+	float veil = max( max( bgVeil, uBgVeil ), bgFar( len ) );
 	if ( veil <= 0.0 ) return col;
 	vec3 sky = mix( uBgHaze, uBgHazeSun, pow( max( dot( dir, uBgSunH ), 0.0 ), 5.0 ) * 0.85 );
 	sky = mix( sky, uBgHazeDeep, smoothstep( 0.03, 0.5, - dir.y ) );
@@ -153,7 +174,8 @@ vec3 bgFacing() {
 	bool on = abs( dot( ray, normalize( vBgUp ) ) ) > 0.8660254;
 	vec3 c = normalize( vBgNormal ).y > 0.3 ? ( on ? vec3( 0.6, 0.0, 0.6 ) : vec3( 0.0, 0.0, 0.6 ) ) : vec3( 0.0, 0.6, 0.0 );
 #endif
-	return max( bgVeil, uBgVeil ) > 0.5 ? vec3( 0.0 ) : c;
+	if ( uBgDebug > 1.5 ) c = length( vBgWorld - cameraPosition ) > 200.0 ? vec3( 0.6, 0.0, 0.0 ) : vec3( 0.0, 0.6, 0.0 ); // ?bgdebug=range
+	return max( max( bgVeil, uBgVeil ), bgFar( length( vBgWorld - cameraPosition ) ) ) > 0.5 ? vec3( 0.0 ) : c;
 }
 `;
 
@@ -170,6 +192,8 @@ export function patchShader(
     light?: string;
     /** This material is the sheet's ground (the debug view tells ground from buildings). */
     ground?: boolean;
+    /** GLSL statements run last, after the haze (the slot's veil sets its own alpha). */
+    fragmentEnd?: string;
   } = {},
 ) {
   Object.assign(shader.uniforms, uniforms, extra.uniforms ?? {});
@@ -177,23 +201,92 @@ export function patchShader(
     if (!src.includes(marker)) throw new Error(`shader chunk ${marker} not found`);
     return src.replace(marker, text);
   };
-  shader.vertexShader = swap(shader.vertexShader, '#include <common>', `#include <common>\nvarying vec3 vBgWorld;\nvarying vec3 vBgNormal;\nvarying float vBgTurn;\nvarying vec3 vBgUp;\n${extra.vertexDecl ?? ''}`);
+  shader.vertexShader = swap(shader.vertexShader, '#include <common>', `#include <common>\nvarying vec3 vBgWorld;\nvarying vec3 vBgNormal;\nvarying vec3 vBgKeyDir;\nvarying float vBgHigh;\nvarying vec3 vBgUp;\nuniform vec3 uBgSun;\n${extra.vertexDecl ?? ''}`);
   shader.vertexShader = swap(
     shader.vertexShader, '#include <beginnormal_vertex>',
-    `#include <beginnormal_vertex>\nvBgNormal = objectNormal;\nvBgTurn = 0.0;\nvBgUp = vec3( 0.0, 1.0, 0.0 );\n#ifdef USE_BATCHING\nvBgUp = mat3( batchingMatrix ) * vec3( 0.0, 1.0, 0.0 );\n#endif\n#ifdef USE_BATCHING_COLOR\nvBgTurn = getBatchingColor( getIndirectIndex( gl_DrawID ) ).a * 6.2831853;\n#endif`,
+    `#include <beginnormal_vertex>\nvBgNormal = objectNormal;\nvBgKeyDir = uBgSun;\nvBgHigh = 0.0;\nvBgUp = vec3( 0.0, 1.0, 0.0 );\n#ifdef USE_BATCHING\nmat3 bgM = mat3( batchingMatrix );\nvBgUp = bgM[ 1 ];\nvBgKeyDir = vec3( dot( uBgSun, normalize( bgM[ 0 ] ) ), dot( uBgSun, normalize( bgM[ 1 ] ) ), dot( uBgSun, normalize( bgM[ 2 ] ) ) );\nvBgHigh = position.y * length( bgM[ 1 ] );\n#endif`,
   );
   if (extra.vertexBegin) shader.vertexShader = swap(shader.vertexShader, '#include <begin_vertex>', `#include <begin_vertex>\n${extra.vertexBegin}`);
   shader.vertexShader = swap(shader.vertexShader, '#include <fog_vertex>', `#include <fog_vertex>\nvBgWorld = cameraPosition + mvPosition.xyz * mat3( viewMatrix );\n${extra.vertexMain ?? ''}`);
-  shader.fragmentShader = swap(shader.fragmentShader, '#include <common>', `#include <common>\n${extra.ground ? '#define BG_GROUND\n' : ''}varying vec3 vBgNormal;\nvarying float vBgTurn;\nfloat bgVeil = 0.0; // set by a material: 1 = this fragment has dissolved into the haze\n${extra.fragmentDecl ?? ''}`);
+  shader.fragmentShader = swap(shader.fragmentShader, '#include <common>', `#include <common>\n${extra.ground ? '#define BG_GROUND\n' : ''}varying vec3 vBgWorld;\nvarying vec3 vBgNormal;\nvarying vec3 vBgKeyDir;\nvarying float vBgHigh;\nfloat bgVeil = 0.0; // set by a material: 1 = this fragment has dissolved into the haze\nvec3 bgHazeCol = vec3( 0.0 ); // set by bgAtmosphere: the haze's colour along this ray, and how much of it lies on the fragment
+float bgFog = 0.0;
+float bgThin = 1.0; // the haze's depth here, as a share: roofs and towers stand in thinner haze than the streets\n${extra.fragmentDecl ?? ''}`);
   // the city's own light replaces the scene's sun, fill and sky light
   shader.fragmentShader = swap(
     shader.fragmentShader, '#include <opaque_fragment>',
-    `outgoingLight = diffuseColor.rgb * ( ${extra.light ?? 'bgLight( normalize( vBgNormal ), vBgTurn, 1.0 )'} );\n#include <opaque_fragment>`,
+    `bgThin = mix( 1.0, 0.6, smoothstep( 14.0, 60.0, vBgHigh ) );\noutgoingLight = diffuseColor.rgb * ( ${extra.light ?? 'bgLight( normalize( vBgNormal ), vBgKeyDir, 1.0 )'} );\n#include <opaque_fragment>`,
   );
   shader.fragmentShader = swap(shader.fragmentShader, '#include <envmap_physical_pars_fragment>', `#include <envmap_physical_pars_fragment>\n${DECL}`);
+  // far facades lose their windows: beyond about 200 m a front is the mean tone of each of its rows (soft horizontal bands
+  // of storeys and cornices) with a fifth of its windows' contrast left, read from a one-pixel-wide copy of the atlas; nearer
+  // than 135 m it is the atlas itself
+  if (shader.fragmentShader.includes('#include <map_fragment>'))
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <map_fragment>',
+      `#ifdef USE_MAP
+	vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+	if ( uBgRowOn > 0.5 ) sampledDiffuseColor.rgb = mix( sampledDiffuseColor.rgb, textureLod( uBgRowTone, vec2( 0.5, vMapUv.y ), 0.0 ).rgb, 0.78 * smoothstep( 135.0, 200.0, length( vBgWorld - cameraPosition ) ) );
+	diffuseColor *= sampledDiffuseColor;
+#endif`,
+    );
   if (extra.fragmentColor) shader.fragmentShader = swap(shader.fragmentShader, '#include <color_fragment>', `#include <color_fragment>\n${extra.fragmentColor}`);
   if (extra.fragmentRough) shader.fragmentShader = swap(shader.fragmentShader, '#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\n${extra.fragmentRough}`);
-  shader.fragmentShader = swap(shader.fragmentShader, '#include <fog_fragment>', `#include <fog_fragment>\ngl_FragColor.rgb = uBgDebug > 0.5 ? bgFacing() : bgAtmosphere( gl_FragColor.rgb );`);
+  shader.fragmentShader = swap(shader.fragmentShader, '#include <fog_fragment>', `#include <fog_fragment>\ngl_FragColor.rgb = uBgDebug > 0.5 ? bgFacing() : bgAtmosphere( gl_FragColor.rgb );
+${extra.fragmentEnd ?? ''}`);
+}
+
+/**
+ * The mean colour of every row of the facade atlas, as a texture one pixel wide: what a front looks like from too far to
+ * tell its windows (patchShader). Null when the image cannot be read.
+ */
+export function rowTone(map: THREE.Texture): THREE.DataTexture | null {
+  const image = map.image as (CanvasImageSource & { width: number; height: number }) | undefined;
+  if (!image || typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(image, 0, 0);
+  const px = ctx.getImageData(0, 0, image.width, image.height).data;
+  const out = new Uint8Array(image.height * 4);
+  const lin = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const enc = (c: number) => (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055);
+  const h = image.height;
+  const rows = new Float64Array(h * 3);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < image.width; x++) for (let c = 0; c < 3; c++) rows[y * 3 + c] += lin(px[(y * image.width + x) * 4 + c] / 255) / image.width;
+  // within each strip of the atlas (art/blender/city_kit.py, STRIPS: rows from the bottom of a 512 px image) the rows are
+  // smoothed and drawn three quarters of the way to the strip's mean: soft bands of storeys, not the stripes of a blind
+  const STRIPS = [0, 16, 80, 96, 208, 288, 368, 456, 512];
+  const k = h / 512;
+  for (let s = 0; s + 1 < STRIPS.length; s++) {
+    const y1 = h - Math.round(STRIPS[s] * k); // image rows run from the top
+    const y0 = h - Math.round(STRIPS[s + 1] * k);
+    const mean = [0, 0, 0];
+    for (let y = y0; y < y1; y++) for (let c = 0; c < 3; c++) mean[c] += rows[y * 3 + c] / (y1 - y0);
+    const radius = Math.round(9 * k);
+    for (let y = y0; y < y1; y++) {
+      for (let c = 0; c < 3; c++) {
+        let sum = 0;
+        let w = 0;
+        for (let d = -radius; d <= radius; d++) {
+          const yy = Math.min(y1 - 1, Math.max(y0, y + d));
+          const g = Math.exp(-(d * d) / (2 * (radius / 2) ** 2));
+          sum += rows[yy * 3 + c] * g;
+          w += g;
+        }
+        out[y * 4 + c] = Math.round(enc(0.25 * (sum / w) + 0.75 * mean[c]) * 255);
+      }
+      out[y * 4 + 3] = 255;
+    }
+  }
+  const tex = new THREE.DataTexture(out, 1, image.height, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.minFilter = tex.magFilter = THREE.LinearFilter;
+  tex.flipY = map.flipY;
+  tex.needsUpdate = true;
+  return tex;
 }
 
 /** Hand the scene's sky map to the haze: call from onBeforeRender, every frame (the map arrives after the first frames). */
