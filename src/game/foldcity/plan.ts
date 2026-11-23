@@ -244,7 +244,7 @@ export function planCity(def: VariantDef, seed: number): CityPlan {
     const [u0, u1] = surface.uRange;
     const [v0, v1] = surface.vRange;
     const m = MODELS[lot.model];
-    const [fu, fv] = footprint(m, lot.scale, lot.swap);
+    const [fu, fv] = footprint(m, lot.scale, lot.swap, lot.stretch);
     if (!surface.periodic && (lot.u - fu / 2 < u0 || lot.u + fu / 2 > u1)) continue;
     if (lot.v - fv / 2 < v0 || lot.v + fv / 2 > v1) continue;
     frameAt(surface, sign, lot.u, lot.v, f);
@@ -277,7 +277,7 @@ export function planCity(def: VariantDef, seed: number): CityPlan {
       const obb: Obb = {
         c: f.p.clone().addScaledVector(f.n, H / 2),
         a: [x.clone(), f.n.clone(), z.clone()],
-        h: [(m.w * lot.scale) / 2, H / 2, (m.d * lot.scale) / 2],
+        h: [(m.w * lot.scale * (lot.stretch ?? 1)) / 2, H / 2, (m.d * lot.scale) / 2],
       };
       if (overlaps(obb, playObb) || hash.hits(obb, GAP)) continue;
       if (cutsSheet(sheets, obb, face, lot.u, lot.v, fu, fv, surface.periodic ? u1 - u0 : 0)) {

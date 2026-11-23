@@ -12,8 +12,8 @@ import { meshName, MODELS } from './models.ts';
 import { heightAt, planSteps, type KeepOut, type MorphBuilding, type MorphPlan } from './morphplan.ts';
 import { SECTION_STRUCTURE, type Freeze } from './progression.ts';
 import { rng } from './rng.ts';
-import { blendState, copyState, makeState, restState, SHEET_SIGN, sheetAt, STRUCTURES, surfaceOf, type SheetState, type StructureName } from './sheet.ts';
-import { frameAt, makeFrame, type Surface } from './surfaces.ts';
+import { blendState, copyState, makeState, restState, sheetFrame, STRUCTURES, type SheetState, type StructureName } from './sheet.ts';
+import { makeFrame } from './surfaces.ts';
 
 /** A fold from one structure into the next takes this long; with reduced motion the city fades out and back in instead. */
 export const MORPH_SECONDS = 4;
@@ -48,7 +48,6 @@ interface Wave { origin: THREE.Vector3; start: number; strength: number; speed: 
 
 const MAX_TILT = 0.09;
 const EXTRA_SINK = 1.4;
-const CORNERS = [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const;
 
 export interface MorphCityOptions {
   /** Squares of sheet to keep free of buildings (the piers' feet). */
@@ -58,12 +57,16 @@ export interface MorphCityOptions {
   freeze?: Freeze | null;
   /** Fold on and on through every structure and back (`?morph=loop`), to measure the frame time of a fold. */
   loop?: boolean;
+  /** `?bgdebug=facing`: paint the background by class instead of lighting it (atmosphere.ts, bgFacing). */
+  debug?: boolean;
 }
 
 export class MorphCity implements Background {
   readonly group = new THREE.Group();
   plan: MorphPlan | null = null;
   stats = { instances: 0, groundTriangles: 0 };
+  /** How long the folds' warm-up took at load, in ms. */
+  warmMs = 0;
   private readonly theme: VisualTheme;
   private readonly opts: MorphCityOptions;
   private items: Item[] = [];
@@ -81,7 +84,6 @@ export class MorphCity implements Background {
   private fade: { t: number; target: number; switched: boolean } | null = null;
   private loopStep = 1;
   private readonly state: SheetState = makeState();
-  private readonly surface: Surface = surfaceOf(this.state);
   private readonly frame = makeFrame();
   private readonly m4 = new THREE.Matrix4();
   private readonly m5 = new THREE.Matrix4();
@@ -117,6 +119,7 @@ export class MorphCity implements Background {
     this.plan = plan;
     const atm = atmosphereUniforms(ATMOSPHERE);
     this.atm = atm;
+    if (this.opts.debug) atm.uBgDebug.value = 1;
 
     const ground = buildSheetGround(plan.lattice, atm);
     ground.mesh.onBeforeRender = (_r, scene) => bindSky(atm, scene);
@@ -158,6 +161,7 @@ export class MorphCity implements Background {
     mesh.sortObjects = false;
     mesh.frustumCulled = false; // its instances move with the sheet; each is still culled on its own
     mesh.name = 'foldcity-buildings';
+    mesh.renderOrder = 1; // after the play area, before the ground
     const ids = new Map<string, number>();
     for (const [key, src] of sources) ids.set(key, mesh.addGeometry(src.geometry));
     const rTint = rng(this.theme.city.seed * 13 + 5);
@@ -171,14 +175,33 @@ export class MorphCity implements Background {
       // the alpha carries where the key light stands for this building (atmosphere.ts)
       mesh.setColorAt(id, tint.set(v * (1 + warm), v, v * (1 - warm), keyTurn(b.lot.swap, b.lot.flip)));
       this.items.push({
-        b, id, geometry, lod: 1, foot: footprint(MODELS[b.model], b.lot.scale, b.lot.swap), p: new THREE.Vector3(), x: new THREE.Vector3(1, 0, 0), n: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1),
+        b, id, geometry, lod: 1, foot: footprint(MODELS[b.model], b.lot.scale, b.lot.swap, b.lot.stretch), p: new THREE.Vector3(), x: new THREE.Vector3(1, 0, 0), n: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1),
         h: 0, sink: 0.5, angle: 0, axis: new THREE.Vector3(1, 0, 0),
       });
     }
     this.stats.instances = list.length;
     this.mesh = mesh;
     this.group.add(mesh);
+    this.warm();
     this.pose();
+  }
+
+  /**
+   * Run every fold once, a few fractions each way, before the city is first shown: the fold's code is compiled and its
+   * tables have been through the blend by the time a player clears the first section. Costs a few poses at load.
+   */
+  private warm() {
+    const t0 = performance.now();
+    const shown = { from: this.from, to: this.to, f: this.f };
+    for (let k = 0; k < 3; k++)
+      for (let i = 0; i + 1 < STRUCTURES.length; i++)
+        for (const [from, to] of [[i, i + 1], [i + 1, i]])
+          for (const f of [0.15, 0.5, 0.85]) {
+            Object.assign(this, { from, to, f });
+            this.pose();
+          }
+    Object.assign(this, shown);
+    this.warmMs = performance.now() - t0;
   }
 
   /**
@@ -248,22 +271,15 @@ export class MorphCity implements Background {
       }
       if (it.h <= 0) this.mesh.setVisibleAt(it.id, true);
       it.h = h;
-      const f = frameAt(this.surface, SHEET_SIGN, b.lot.u, b.lot.v, this.frame);
+      const f = sheetFrame(this.state, b.lot.u, b.lot.v, this.frame);
       it.p.copy(f.p);
       it.n.copy(f.n);
       it.x.copy(b.lot.swap ? f.ev : f.eu).multiplyScalar(b.lot.flip ? -1 : 1);
       it.z.crossVectors(it.x, it.n);
+      // while the sheet bends its curl lies between the two structures', and so does the seat (nothing jumps on arrival)
       if (still) it.sink = b.sink[at];
-      else {
-        // while the sheet bends, the ground under the corners is wherever it is now
-        const [fu, fv] = it.foot;
-        let sink = 0.5;
-        for (const [su, sv] of CORNERS) {
-          sheetAt(this.state, b.lot.u + (su * fu) / 2, b.lot.v + (sv * fv) / 2, this.tmp);
-          sink = Math.max(sink, 0.5 - this.tmp.sub(it.p).dot(it.n));
-        }
-        it.sink = sink;
-      }
+      else if (b.alive[ti] && b.alive[ti + 1]) it.sink = b.sink[ti] + (b.sink[ti + 1] - b.sink[ti]) * fwd;
+      else it.sink = b.alive[ti] ? b.sink[ti] : b.sink[ti + 1];
       this.write(it);
     }
   }
@@ -272,8 +288,9 @@ export class MorphCity implements Background {
   private write(it: Item) {
     const m = MODELS[it.b.model];
     const s = it.b.lot.scale;
-    this.m4.makeBasis(this.t1.copy(it.x).multiplyScalar(s), this.t2.copy(it.n).multiplyScalar(s * it.h), this.t3.copy(it.z).multiplyScalar(s));
-    this.tmp.set(0, 0, 0).addScaledVector(it.x, -m.cx * s).addScaledVector(it.z, -m.cz * s).addScaledVector(it.n, -(it.sink + EXTRA_SINK));
+    const sx = s * (it.b.lot.stretch ?? 1);
+    this.m4.makeBasis(this.t1.copy(it.x).multiplyScalar(sx), this.t2.copy(it.n).multiplyScalar(s * it.h), this.t3.copy(it.z).multiplyScalar(s));
+    this.tmp.set(0, 0, 0).addScaledVector(it.x, -m.cx * sx).addScaledVector(it.z, -m.cz * s).addScaledVector(it.n, -(it.sink + EXTRA_SINK));
     this.m4.setPosition(this.tmp);
     if (it.angle !== 0) {
       this.m5.makeRotationAxis(it.axis, it.angle).multiply(this.m4);

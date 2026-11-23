@@ -13,7 +13,8 @@ import { boxAt, heightAt, planMorph, presenceAt, SAMPLES, shownSurface, type Mor
 import { cutsSheet, overlaps, PLAY, PLAY_CENTER, SheetPoints, type Obb } from '../src/game/foldcity/plan.ts';
 import { parseFreeze, SECTION_STRUCTURE } from '../src/game/foldcity/progression.ts';
 import {
-  A0, A1, B0, B1, blendState, makeState, restState, SEAM, SHEET_SIGN, sheetAt, STRUCTURES, twistVeil, type SheetState, type StructureName,
+  A0, A1, B0, B1, blendState, CEILING_Y, CREASE2, CREASE3, FLAT, GROUND_Y, makeState, restState, RING_HALF, SHEET_SIGN, sheetAt, sheetFrame, SLOT, STRUCTURES, veilAt, W0, Z0,
+  type SheetState, type StructureName,
 } from '../src/game/foldcity/sheet.ts';
 import { frameAt, makeFrame } from '../src/game/foldcity/surfaces.ts';
 import { VARIANTS } from '../src/game/foldcity/variants.ts';
@@ -29,31 +30,47 @@ const Q = new THREE.Vector3();
 /** The fractions of a fold that are checked: the plan's own samples and the three the review frames are taken at. */
 const FRACTIONS = [...new Set([...SAMPLES, 0.25, 0.5, 0.75])].sort((a, b) => a - b);
 
-test('the sections show the canyon, the right-angle fold and the ring, in that order', () => {
+test('the sections show the canyon, the right-angle channel and the tube, in that order', () => {
   assert.deepEqual([...SECTION_STRUCTURE], ['horizon', 'fold90', 'ring']);
   assert.deepEqual(parseFreeze('s1-s2:0.5'), { from: 0, to: 1, f: 0.5 });
   assert.deepEqual(parseFreeze('s3-s2:0.25'), { from: 2, to: 1, f: 0.25 });
   for (const bad of ['s1-s3:0.5', 's1-s2:1.5', 's0-s1:0.5', 'loop', null]) assert.equal(parseFreeze(bad), null, String(bad));
 });
 
-test('at rest the sheet is the approved shape of each structure, to within half a metre', () => {
-  const proto = { horizon: VARIANTS.horizon.make()[0].surface, fold90: VARIANTS.fold90.make()[0].surface, ring: VARIANTS.ring.make()[0].surface };
-  for (const name of STRUCTURES) {
-    const s = restState(name);
-    let worst = 0;
-    for (let a = name === 'ring' ? SEAM : A0; a <= A1; a += 7.3)
-      for (const b of [-900, -200, -160, 0, 155, 170, 400]) {
-        sheetAt(s, a, b, P);
-        if (name === 'horizon') proto.horizon.at(b, a, Q);
-        else if (name === 'fold90') proto.fold90.at(a + 1500, b, Q);
-        else proto.ring.at(a - 5, b, Q);
-        worst = Math.max(worst, P.distanceTo(Q));
-      }
-    assert.ok(worst < 0.5, `${name} is ${worst.toFixed(2)} m off its study`);
-  }
-  // and the ring closes: the far end of the sheet meets the seam
+test('at rest the sheet is each structure: the approved canyon, the right-angle channel with its slot of sky, the closed tube', () => {
+  // the canyon is the study the owner approved, to within half a metre
+  const proto = VARIANTS.horizon.make()[0].surface;
+  let worst = 0;
+  for (let a = A0; a <= A1; a += 7.3)
+    for (const b of [-900, -200, -160, 0, 155, 170, 400]) worst = Math.max(worst, sheetAt(restState('horizon'), a, b, P).distanceTo(proto.at(b, a, Q)));
+  assert.ok(worst < 0.5, `horizon is ${worst.toFixed(2)} m off its study`);
+  // the channel: flat ground, upright walls, a level ceiling running back in, then the slot's walls straight up
+  const fold = restState('fold90');
+  for (const a of [A0, -300, 0, 700, A1])
+    for (const side of [-1, 1]) {
+      const at = (b: number) => sheetAt(fold, a, side * b, P);
+      assert.ok(Math.abs(at(W0 - 1).y - GROUND_Y) < 1e-6);
+      const wall = at(250).z;
+      assert.ok(Math.abs(at(CREASE2 - 2).z - wall) < 0.01 && Math.abs(Math.abs(wall - Z0) - (W0 + 60 / Math.PI)) < 0.2, `the wall stands at z ${wall.toFixed(1)}`);
+      assert.ok(Math.abs(at(CREASE2 + 32).y - CEILING_Y) < 0.6 && Math.abs(at(CREASE3 - 2).y - CEILING_Y) < 0.6, `the ceiling is at y ${at(CREASE3 - 2).y.toFixed(1)}`);
+      assert.ok(Math.abs(Math.abs(at(CREASE3 + 32).z - Z0) - SLOT) < 0.6 && Math.abs(Math.abs(at(900).z - Z0) - SLOT) < 0.6, `the slot's wall is at z ${at(900).z.toFixed(1)}`);
+      assert.ok(at(900).y > CEILING_Y + 400);
+    }
+  // the tube closes over the axis, and holds the play volume with room to spare
   const ring = restState('ring');
-  assert.ok(sheetAt(ring, SEAM, 0, P).distanceTo(sheetAt(ring, A1, 0, Q)) < 0.01);
+  assert.equal(ring.cut, RING_HALF);
+  assert.ok(sheetAt(ring, 0, RING_HALF, P).distanceTo(sheetAt(ring, 0, -RING_HALF, Q)) < 0.05, `the seam gapes by ${P.distanceTo(Q).toFixed(2)} m`);
+  assert.ok(Math.abs(P.z - Z0) < 0.03 && P.y > PLAY.max.y + 40);
+  // the strip under the play area lies in the same place in every structure and all through every fold
+  const state = makeState();
+  for (let ti = 0; ti + 1 < STRUCTURES.length; ti++)
+    for (let f = 0; f <= 1; f += 0.05) {
+      blendState({ from: STRUCTURES[ti], to: STRUCTURES[ti + 1] }, f, state);
+      for (const b of [-FLAT, -30, 0, 45, FLAT]) {
+        sheetAt(state, 20, b, P);
+        assert.ok(Math.abs(P.y - GROUND_Y) < 1e-6 && Math.abs(P.z - Z0 - b) < 1e-6, `the floor moves at b ${b}`);
+      }
+    }
 });
 
 test('the plan is the same every time, and every structure is a city', () => {
@@ -67,7 +84,29 @@ test('the plan is the same every time, and every structure is a city', () => {
     // what the batch draws if everything were in view (the frame's budget is 1.5 M with the play area)
     assert.ok(plan.stats.triangles[si] < 600_000, `${name}: ${plan.stats.triangles[si]} triangles`);
   });
-  assert.ok(plan.buildings.length <= 4200, `${plan.buildings.length} instances`);
+  // what the batch holds: every building and prop that stands in some structure
+  const instances = plan.buildings.filter((b) => b.alive.some(Boolean)).length;
+  assert.ok(instances <= 4200, `${instances} instances`);
+});
+
+test('the frame the city poses its buildings with is the frame of the surface', () => {
+  const state = makeState();
+  const a = makeFrame();
+  const b = makeFrame();
+  for (const [tr, f] of [[{ from: 'horizon', to: 'horizon' }, 0], [{ from: 'horizon', to: 'fold90' }, 0.4], [{ from: 'fold90', to: 'ring' }, 0.6], [{ from: 'ring', to: 'ring' }, 0]] as const) {
+    blendState(tr, f, state);
+    const surface = shownSurface(state, 'frame');
+    for (const u of [-900, -200, 31.3, 240, 600, 1100])
+      for (const v of [-700, -430, -260, -171.3, -20, 0.5, 90, 158.2, 300, 371, 455, 520]) {
+        if (Math.abs(v) > state.cut) continue;
+        frameAt(surface, SHEET_SIGN, u, v, a);
+        sheetFrame(state, u, v, b);
+        const what = `${tr.from} to ${tr.to} at ${f}, sheet ${u}, ${v}`;
+        assert.ok(a.p.distanceTo(b.p) < 1e-9, what);
+        assert.ok(a.n.angleTo(b.n) < 0.02, `${what}: normals ${a.n.angleTo(b.n).toFixed(3)} rad apart`);
+        assert.ok(a.eu.angleTo(b.eu) < 0.02 && Math.abs(b.ev.dot(b.n)) < 1e-6, `${what}: tangents ${a.eu.angleTo(b.eu).toFixed(3)} rad apart`);
+      }
+  }
 });
 
 const playBox = (grow: number): Obb => {
@@ -106,25 +145,32 @@ function overlapping(list: { obb: Obb; r: number }[]): number {
 /** The sheet itself stays 10 m clear of the play volume. */
 function sheetClear(state: SheetState, what: string) {
   const clear = PLAY.clone().expandByScalar(10);
-  for (let a = state.tailCut ? SEAM : A0; a <= A1; a += 12)
-    for (let b = B0; b <= B1; b += 12) assert.ok(!clear.containsPoint(sheetAt(state, a, b, P)), `${what}: the sheet passes through the play volume at ${P.toArray().map(Math.round)}`);
+  const reach = Math.min(B1, state.cut);
+  for (let a = A0; a <= A1; a += 12)
+    for (let b = -reach; b <= reach; b += 12) assert.ok(!clear.containsPoint(sheetAt(state, a, b, P)), `${what}: the sheet passes through the play volume at ${P.toArray().map(Math.round)}`);
 }
 
-/** How often the profile (the cross-section of the sheet along a) crosses itself. */
+/** How often the cross-section of the sheet (what is shown of it) crosses itself, at a few places along the axis. */
 function selfCrossings(state: SheetState): number {
-  const pts: [number, number][] = [];
-  for (let a = state.tailCut ? SEAM : A0; a <= A1 - 2; a += 4) {
-    sheetAt(state, a, 0, P);
-    pts.push([P.x, P.y]);
-  }
-  const side = (a: [number, number], b: [number, number], c: [number, number]) => {
-    const v = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-    return v > 1e-6 ? 1 : v < -1e-6 ? -1 : 0;
-  };
   let n = 0;
-  for (let i = 0; i < pts.length - 1; i++)
-    for (let j = i + 3; j < pts.length - 1; j++)
-      if (side(pts[i], pts[j], pts[j + 1]) * side(pts[i + 1], pts[j], pts[j + 1]) < 0 && side(pts[i], pts[i + 1], pts[j]) * side(pts[i], pts[i + 1], pts[j + 1]) < 0) n++;
+  const reach = Math.min(B1, state.cut);
+  for (const a of [A0 + 300, -200, 0, 300, 900]) {
+    const pts: [number, number][] = [];
+    for (let b = -reach; b <= reach + 1e-9; b += 4) {
+      if (veilAt(state, a, b) > 0.98) continue;
+      sheetAt(state, a, b, P);
+      pts.push([P.z, P.y]);
+    }
+    const side = (p: [number, number], q: [number, number], c: [number, number]) => {
+      const v = (q[0] - p[0]) * (c[1] - p[1]) - (q[1] - p[1]) * (c[0] - p[0]);
+      return v > 1e-6 ? 1 : v < -1e-6 ? -1 : 0;
+    };
+    for (let i = 0; i < pts.length - 1; i++)
+      for (let j = i + 3; j < pts.length - 1; j++) {
+        if (i === 0 && j === pts.length - 2) continue; // the tube's two ends meet at the seam
+        if (side(pts[i], pts[j], pts[j + 1]) * side(pts[i + 1], pts[j], pts[j + 1]) < 0 && side(pts[i], pts[i + 1], pts[j]) * side(pts[i], pts[i + 1], pts[j + 1]) < 0) n++;
+      }
+  }
   return n;
 }
 
@@ -140,7 +186,7 @@ test('in every structure: no two buildings overlap, nothing enters the play volu
     const points = new SheetPoints([{ surface }], 6, 1150, PLAY_CENTER, 3);
     let cut = 0;
     for (const { obb, b } of list) {
-      const [fu, fv] = footprint(MODELS[b.model], b.lot.scale, b.lot.swap);
+      const [fu, fv] = footprint(MODELS[b.model], b.lot.scale, b.lot.swap, b.lot.stretch);
       if (cutsSheet(points, obb, 0, b.lot.u, b.lot.v, fu, fv, 0, 0.8)) cut++;
     }
     assert.equal(cut, 0, `${name}: ${cut} buildings cut through the sheet`);
@@ -154,7 +200,7 @@ test('nothing is built where a pier of the play area comes down, and a foot stan
   for (const foot of feet) assert.ok(foot.alive.every(Boolean) && foot.presence.every((p) => presenceAt(p, 0.5) === 1));
   for (const b of plan.buildings) {
     if (MODELS[b.model].name === 'pier_foot') continue;
-    const [fu, fv] = footprint(MODELS[b.model], b.lot.scale, b.lot.swap);
+    const [fu, fv] = footprint(MODELS[b.model], b.lot.scale, b.lot.swap, b.lot.stretch);
     for (const k of keepOut) assert.ok(Math.abs(b.lot.u - k.a) >= fu / 2 + k.r || Math.abs(b.lot.v - k.b) >= fv / 2 + k.r, `${MODELS[b.model].name} on the foot of a pier`);
   }
   // the piers reach the ground in every structure: sheet (x, z + 7.5) lies under the pier, never below its end (y = 12 - 132)
@@ -186,8 +232,9 @@ test('a fold starts and ends exactly on the two structures, and every building i
     for (const [f, name] of [[0, tr.from], [1, tr.to]] as const) {
       blendState(tr, f, state);
       const rest = restState(name);
-      assert.deepEqual([...state.px.slice(0, 50)], [...rest.px.slice(0, 50)]);
-      assert.equal(state.tailCut, rest.tailCut);
+      assert.deepEqual([...state.psi.slice(0, 50)], [...rest.psi.slice(0, 50)]);
+      assert.deepEqual([...state.gy.slice(300, 500)], [...rest.gy.slice(300, 500)]);
+      assert.equal(state.cut, rest.cut);
     }
     for (const b of plan.buildings) {
       assert.equal(presenceAt(b.presence[ti], 0), b.alive[ti] ? 1 : 0);
@@ -222,15 +269,15 @@ test('a fold is continuous: no point of the sheet near the play area jumps betwe
     for (let f = 0; f < 1; f += 1 / 240) {
       blendState(tr, f, a);
       blendState(tr, Math.min(1, f + 1 / 240), b);
-      for (let u = SEAM; u <= A1; u += 40)
-        for (const v of [-600, -170, 0, 170, 600]) {
+      for (let u = A0; u <= A1; u += 40)
+        for (const v of [-900, -600, -400, -170, 0, 170, 400, 600, 900]) {
           sheetAt(a, u, v, P);
           if (P.distanceTo(PLAY_CENTER) < 450) worst = Math.max(worst, P.distanceTo(sheetAt(b, u, v, Q)));
         }
     }
-    // one frame of a 4 s fold at 60 fps. The fastest piece is the top of a canyon wall some 400 m up, which swings down in
-    // under a second (about 19 m a frame); a cut or a wrong branch in the blend would show as hundreds of metres
-    assert.ok(worst < 24, `${tr.from} to ${tr.to}: a point moves ${worst.toFixed(1)} m in one frame`);
+    // one frame of a 4 s fold at 60 fps: nothing within sight sweeps past (the fold before this one moved the tops of its
+    // walls 19 m a frame)
+    assert.ok(worst < 6, `${tr.from} to ${tr.to}: a point moves ${worst.toFixed(1)} m in one frame`);
   }
 });
 
@@ -244,9 +291,9 @@ test('at rest the back of the sheet is not turned to the play volume or a review
     const surface = shownSurface(state, name);
     let seen = 0;
     let back = 0;
-    for (let a = surface.uRange[0] + 5; a < A1; a += 25)
-      for (let b = B0 + 5; b < B1; b += 25) {
-        if (twistVeil(state, a, b) > 0.6) continue; // more than half gone into the haze
+    for (let a = A0 + 5; a < A1; a += 25)
+      for (let b = Math.max(B0, surface.vRange[0]) + 5; b < Math.min(B1, surface.vRange[1]); b += 25) {
+        if (veilAt(state, a, b) > 0.6) continue; // more than half dissolved
         frameAt(surface, SHEET_SIGN, a, b, f);
         for (const eye of eyes) {
           const d = f.p.distanceTo(eye);

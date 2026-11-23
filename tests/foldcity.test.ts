@@ -70,8 +70,9 @@ test('every building stands on its surface: no gap under its footprint, nothing 
     for (const b of plan.buildings) {
       const face = plan.faces[b.face];
       const m = MODELS[b.model];
-      const w = b.lot.swap ? m.d * b.scale : m.w * b.scale;
-      const d = b.lot.swap ? m.w * b.scale : m.d * b.scale;
+      const len = m.w * b.scale * (b.lot.stretch ?? 1); // a house is stretched along its length to fill its place
+      const w = b.lot.swap ? m.d * b.scale : len;
+      const d = b.lot.swap ? len : m.d * b.scale;
       frameAt(face.surface, face.sign, b.lot.u, b.lot.v, f);
       for (let i = -2; i <= 2; i++)
         for (let j = -2; j <= 2; j++) {
@@ -95,7 +96,7 @@ test('buildings keep off the creases: an avenue lies on every fold and no footpr
         assert.ok(line && line.avenue && line.hw >= CREASE_HW - 1e-6, `${name}/${face.surface.name}: no avenue on the crease at u=${c.toFixed(1)}`);
         for (const b of plan.buildings.filter((x) => x.face === fi)) {
           const m = MODELS[b.model];
-          const half = (b.lot.swap ? m.d : m.w) * b.scale * 0.5 * (b.lot.swap ? 1 : 1);
+          const half = (b.lot.swap ? m.d : m.w * (b.lot.stretch ?? 1)) * b.scale * 0.5;
           assert.ok(Math.abs(b.lot.u - c) >= half + CREASE_HW - 0.5, `${name}: a building reaches into the crease avenue at u=${c.toFixed(1)}`);
         }
       }
@@ -147,10 +148,10 @@ test('no building cuts through another part of the sheet (another turn of a curl
 });
 
 test('the city stays inside the budget it is drawn with: instances and triangles', () => {
-  const tris = (b: Building) => (b.lod === 0 ? 900 : 260); // generous means of the two levels of detail (city.glb)
+  const tris = (b: Building) => (b.lod === 0 ? 600 : 220); // generous means of the two levels of detail (city.glb)
   for (const name of VARIANT_NAMES) {
     const list = planOf(name).buildings;
-    assert.ok(list.length <= 1400, `${name}: ${list.length} instances`);
+    assert.ok(list.length <= 2600, `${name}: ${list.length} instances`); // a block is four or more houses now
     const total = list.reduce((s, b) => s + tris(b), 0);
     assert.ok(total < 900_000, `${name}: about ${total} triangles if everything were in view`);
   }

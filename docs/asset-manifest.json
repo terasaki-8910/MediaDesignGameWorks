@@ -145,7 +145,7 @@
       "license": "own",
       "source": "art/blender/gen_city.py (with art/blender/city_kit.py)",
       "author": "terasaki-8910",
-      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs); colours per face and one grey courses texture generated in the script",
+      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs); colours per face and one 512 px facade atlas (limestone fronts with windows, slate) painted by the script itself with numpy, no outside source",
       "attribution": ""
     },
     {
@@ -153,7 +153,7 @@
       "license": "own",
       "source": "art/blender/gen_cityprops.py (with art/blender/city_kit.py)",
       "author": "terasaki-8910",
-      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs); colours per face and one grey courses texture generated in the script",
+      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs); colours per face; no texture in the file (its UVs use city.glb's atlas)",
       "attribution": ""
     },
     {

@@ -116,7 +116,7 @@ export class Game {
     this.world = new World(this.cs, M);
     this.engine.scene.add(this.world.root);
     const query = new URLSearchParams(location.search);
-    this.city = createBackground(stage.visualTheme, { variant: query.get('city'), morph: query.get('morph'), keepOut: pierKeepOut(pierFeet(planSlabs(this.cs))) });
+    this.city = createBackground(stage.visualTheme, { variant: query.get('city'), morph: query.get('morph'), debug: query.get('bgdebug'), keepOut: pierKeepOut(pierFeet(planSlabs(this.cs))) });
     this.engine.scene.add(this.city.group);
     this.player = new Player({ object: new THREE.Group(), animate: () => {} }); // nothing until the character has loaded
     this.engine.scene.add(this.player.root);
@@ -170,10 +170,25 @@ export class Game {
     Promise.all([gate, sky, kit, city, character]).finally(() => {
       giltTakesSky(this.engine.scene, this.world.giltMaterials()); // before warmUp, so the gilt's shader is compiled once
       this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
+      if (query.get('bgdebug') === 'facing') this.flattenForDebug();
       this.ready = true;
     });
     if (opts.demo) this.director = new DemoDirector(this, opts.demo);
     if (!opts.capture) requestAnimationFrame((t) => this.frame(t));
+  }
+
+  /** `?bgdebug=facing`: everything but the background city turns flat white and the sky black, so a script can count classes. */
+  private flattenForDebug() {
+    const white = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+    const black = new THREE.MeshBasicMaterial({ color: 0x000000, fog: false });
+    this.engine.scene.background = new THREE.Color(0x000000);
+    this.engine.bloom.intensity = 0;
+    this.engine.scene.traverse((o) => {
+      for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p === this.city.group) return;
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) mesh.material = o.parent === this.engine.scene && mesh.geometry.type === 'CircleGeometry' ? black : white;
+      else if ((o as THREE.Sprite).isSprite || (o as THREE.Points).isPoints || (o as THREE.Line).isLine) o.visible = false;
+    });
   }
 
   get section(): PuzzleSection {

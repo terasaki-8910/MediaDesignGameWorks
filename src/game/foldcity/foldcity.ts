@@ -26,7 +26,7 @@ export interface Background {
 }
 
 /** `sink` is slight: the city's ground is meant to be seen, and a haze that follows world height would differ between a floor, a wall and a ceiling of the same sheet. */
-export const ATMOSPHERE: AtmosphereParams = { density: 0.0021, strength: 1, gain: 0.7, saturation: 0.78, lift: 0.08, sink: 0.12, base: 0.24 };
+export const ATMOSPHERE: AtmosphereParams = { density: 0.0021, strength: 1, gain: 0.6, saturation: 0.72, lift: 0.09, sink: 0.12, base: 0.1 };
 
 interface Item {
   b: Building;
@@ -136,9 +136,10 @@ export class FoldCity implements Background {
     const { b } = it;
     const m = MODELS[b.model];
     const s = b.scale;
-    this.m4.makeBasis(this.t1.copy(b.x).multiplyScalar(s), this.t2.copy(b.n).multiplyScalar(s * b.sy), this.t3.copy(b.z).multiplyScalar(s));
+    const sx = s * (b.lot.stretch ?? 1);
+    this.m4.makeBasis(this.t1.copy(b.x).multiplyScalar(sx), this.t2.copy(b.n).multiplyScalar(s * b.sy), this.t3.copy(b.z).multiplyScalar(s));
     // the model's origin relative to the footprint centre, sunk into the surface
-    this.tmp.set(0, 0, 0).addScaledVector(b.x, -m.cx * s).addScaledVector(b.z, -m.cz * s).addScaledVector(b.n, -(b.sink + EXTRA_SINK));
+    this.tmp.set(0, 0, 0).addScaledVector(b.x, -m.cx * sx).addScaledVector(b.z, -m.cz * s).addScaledVector(b.n, -(b.sink + EXTRA_SINK));
     this.m4.setPosition(this.tmp);
     if (angle !== 0) {
       this.m5.makeRotationAxis(it.axis, angle).multiply(this.m4);

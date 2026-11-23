@@ -1,15 +1,17 @@
-// The ground of the sheet: one continuous mesh following the surface, streets, pavements, courtyards, plazas and parks
-// drawn in the fragment shader from the street lattice (two tiny data textures), so the pattern is crisp at any scale
+// The ground of the sheet: one continuous mesh following the surface, streets of setts, pavements, courts, plazas and parks
+// drawn in the fragment shader from the street lattice (three tiny data textures), so the pattern is crisp at any scale
 // and costs no texture memory worth counting. Streets cross creases because the pattern lives in sheet coordinates.
 import * as THREE from 'three';
 import { KEY_ALONG, patchShader, type AtmosphereUniforms } from './atmosphere.ts';
 import { BLOCK_LANDMARK, SIDEWALK, type Lattice } from './layout.ts';
-import { A0, A1, B1, BEND, GROUND_Y, PROFILE_SAMPLES, PROFILE_STEP, SEAM, sheetGrid, TWIST_FADE, W0, Z0, type SheetState } from './sheet.ts';
+import { A0, A1, B1, BEND, GROUND_Y, SAMPLES_A, SAMPLES_B, sheetGrid, TWIST_FADE, W0, Z0, type SheetState } from './sheet.ts';
 import { breaks, frameAt, makeFrame, type Surface } from './surfaces.ts';
 
 const GLSL_DECL = /* glsl */ `
 uniform sampler2D uLines;
 uniform sampler2D uCells;
+uniform sampler2D uLineIndex;
+uniform vec2 uLineOrigin;
 uniform vec2 uCount;
 uniform vec3 uStreet;
 uniform vec3 uWalk;
@@ -18,7 +20,6 @@ uniform vec3 uPlaza;
 uniform vec3 uPlazaB;
 uniform vec3 uPark;
 uniform vec3 uPath;
-uniform vec3 uMark;
 uniform vec3 uUnder;
 uniform vec4 uSheetBox;
 uniform vec3 uSheetShow;
@@ -34,32 +35,29 @@ float vn( vec2 p ) {
 	vec2 i = floor( p ); vec2 f = fract( p ); f = f * f * ( 3.0 - 2.0 * f );
 	return mix( mix( h21( i ), h21( i + vec2( 1.0, 0.0 ) ), f.x ), mix( h21( i + vec2( 0.0, 1.0 ) ), h21( i + vec2( 1.0, 1.0 ) ), f.x ), f.y );
 }
+// the street line at or below s: the index map gives it to the metre, the next line's centre settles the rest
 int findLine( float s, int row, int n ) {
-	int lo = 0;
-	int hi = n - 2;
-	for ( int k = 0; k < 12; k ++ ) {
-		if ( lo >= hi ) break;
-		int mid = ( lo + hi + 1 ) / 2;
-		if ( texelFetch( uLines, ivec2( mid, row ), 0 ).x <= s ) lo = mid; else hi = mid - 1;
-	}
-	return lo;
+	int i = int( texelFetch( uLineIndex, ivec2( int( floor( s - uLineOrigin[ row ] ) ), row ), 0 ).r * 255.0 + 0.5 );
+	if ( i < n - 2 && texelFetch( uLines, ivec2( i + 1, row ), 0 ).x <= s ) i ++;
+	return clamp( i, 0, n - 2 );
 }
 // 1 inside, 0 outside, soft over one pixel
 float inside( float d, float aa ) { return smoothstep( - aa, aa, d ); }
-// joints of a tile grid: 1 on a joint
-float joints( vec2 s, float tile, float w, float aa ) {
+// joints of a tile grid: 1 on a joint; they fade out where a tile is smaller than a pixel
+float joints( vec2 s, vec2 tile, float w, float aa ) {
 	vec2 q = abs( fract( s / tile + 0.5 ) - 0.5 ) * tile;
 	float j = 1.0 - min( smoothstep( w - aa, w + aa, q.x ), smoothstep( w - aa, w + aa, q.y ) );
-	return j * ( 1.0 - smoothstep( 0.25, 0.8, aa / tile ) );
+	return j * ( 1.0 - smoothstep( 0.25, 0.8, aa / min( tile.x, tile.y ) ) );
 }
 
-// the ends of the shared sheet: far ends dissolve into the haze, the ring's tail is not drawn
+// the ends of the shared sheet: its far ends and its upper edges dissolve, the sheet beyond the tube's seam is not drawn
 void bgEnds( vec2 s ) {
 	if ( uSheetShow.z < 0.5 ) return;
-	if ( uSheetShow.y > 0.5 && s.x < uSheetBox.w ) discard;
-	float v = max( 1.0 - smoothstep( 20.0, 240.0, s.x - uSheetBox.x ), 1.0 - smoothstep( 20.0, 240.0, uSheetBox.z - abs( s.y ) ) );
+	if ( abs( s.y ) > uSheetBox.w ) discard;
+	// (the sheet's two ends along the axis need none of this: at that distance the haze has taken everything)
+	float v = 1.0 - smoothstep( 20.0, 240.0, uSheetBox.z - abs( s.y ) );
 	v = max( v, smoothstep( ${TWIST_FADE[0].toFixed(2)}, ${TWIST_FADE[1].toFixed(2)}, vTwist ) );
-	bgVeil = max( v, uSheetShow.x * ( 1.0 - smoothstep( 20.0, 280.0, uSheetBox.y - s.x ) ) );
+	bgVeil = max( v, smoothstep( uSheetShow.x, uSheetShow.y, abs( s.y ) ) );
 }
 // the back of the sheet: the city's foundations, a grid of deep vaults between ribs of stone under the streets
 vec3 bgUnder( vec2 s ) {
@@ -115,81 +113,61 @@ vec3 bgGround( vec2 s ) {
 	float eu = min( e0, e1 );
 	float ev = min( e2, e3 );
 	float e = min( eu, ev );
-	float big = 0.5 * ( vn( s * 0.021 ) + vn( s * 0.07 + 7.0 ) );
-	float fine = 0.5 * vn( s * 1.3 ) + 0.3 * vn( s * 4.1 + 3.0 ) + 0.2 * vn( s * 11.0 );
-	float tone = 0.88 + 0.22 * rnd + 0.3 * ( big - 0.5 );
+	// weathering: broad patches (repairs, damp, wear) and a grain that fades with distance
+	float big = vn( s * 0.035 );
+	float mid = vn( s * 0.16 + 11.0 );
+	float fine = mix( 0.5, vn( s * 1.7 ), 1.0 - smoothstep( 0.2, 0.9, aa ) );
+	float tone = 0.86 + 0.26 * rnd;
 
-	// the street
-	vec3 street = uStreet * ( 0.86 + 0.3 * fine ) * ( 0.9 + 0.2 * big );
+	// the roadway: setts in courses across the street, patched and worn, darker in the gutters, a paler crown
 	bool inU = eu < 0.0;
 	bool inV = ev < 0.0;
-	float mark = 0.0;
+	bool alongV = inU; // a street between two u lines runs along v
+	vec4 L = alongV ? ( e0 < e1 ? la : lb ) : ( e2 < e3 ? lc : ld );
+	float lat = abs( ( alongV ? s.x : s.y ) - L.x );
+	vec3 street = uStreet * ( 0.8 + 0.22 * big + 0.2 * mid ) * ( 0.9 + 0.2 * fine );
+	street *= 1.0 - 0.14 * joints( alongV ? s.yx : s.xy, vec2( 0.9, 0.45 ), 0.04, aa );
 	float median = 0.0;
 	if ( inU != inV ) {
-		bool alongV = inU; // a street between two u lines runs along v
-		vec4 L = alongV ? ( e0 < e1 ? la : lb ) : ( e2 < e3 ? lc : ld );
-		float lat = abs( ( alongV ? s.x : s.y ) - L.x );
-		float along = alongV ? s.y : s.x;
-		float edge = alongV ? ev : eu; // distance from the junction
-		float dash = step( fract( along / 8.0 ), 0.55 );
-		if ( L.z > 0.5 ) {
-			mark += ( 1.0 - smoothstep( 0.1 - aa, 0.1 + aa, abs( lat - L.y * 0.5 ) ) ) * dash * 0.5; // lane dashes
-			float z = step( 0.5, fract( ( alongV ? s.x : s.y ) / 1.7 ) ) * inside( edge - 0.6, aa ) * ( 1.0 - inside( edge - 4.2, aa ) );
-			mark += z * 0.55;
-			// a boulevard (the wide avenue on a crease) has a planted strip down its middle, between two kerbs
-			if ( L.y > 15.0 ) median = 1.0 - inside( lat - 3.2, aa );
-		}
-		mark *= 1.0 - smoothstep( 0.2, 0.7, aa );
+		street *= 1.0 + 0.1 * ( 1.0 - smoothstep( 0.0, L.y * 0.7, lat ) ); // the crown of the road, worn pale
+		// a boulevard (the wide avenue on a crease) has a planted strip down its middle, between two kerbs
+		if ( L.y > 15.0 ) median = 1.0 - inside( lat - 3.2, aa );
 	}
-	// setts: courses across the street, only seen close
-	street *= 1.0 - 0.12 * joints( s, 0.9, 0.05, aa );
-	street = mix( street, uMark, clamp( mark, 0.0, 1.0 ) * 0.5 );
-	vec3 bed = mix( uPark * 0.8, uPath * 0.8, smoothstep( 0.45, 0.65, vn( s * 0.35 ) ) ) * ( 0.85 + 0.3 * fine );
+	vec3 bed = mix( uPark * 0.85, uPath * 0.85, smoothstep( 0.4, 0.7, mid ) ) * ( 0.85 + 0.3 * fine );
 	street = mix( street, bed, median );
-	// the gutter along the kerb
-	street *= 1.0 - 0.3 * ( 1.0 - smoothstep( 0.0, 0.7, - e ) );
+	street *= 1.0 - 0.28 * ( 1.0 - smoothstep( 0.0, 1.1, - e ) ); // the gutter along the kerb
 
-	// the pavement along the block edge, with its kerb and joints
-	vec3 walk = uWalk * ( 0.92 + 0.16 * fine ) * ( 0.92 + 0.16 * big );
-	walk *= 1.0 - 0.12 * joints( s, 1.8, 0.05, aa );
-	walk *= 1.0 + 0.14 * ( 1.0 - smoothstep( 0.25, 0.4 + aa, e ) ); // the kerb: a band of pale stone at the street's edge
-	bgRough = 0.85;
+	// the pavement along the block edge: pale slabs, a kerb of paler stone at the street's edge
+	vec3 walk = uWalk * ( 0.88 + 0.14 * big + 0.1 * mid ) * ( 0.94 + 0.12 * fine );
+	walk *= 1.0 - 0.12 * joints( s, vec2( 1.7, 1.7 ), 0.05, aa );
+	walk *= 1.0 + 0.16 * ( 1.0 - smoothstep( 0.3, 0.45 + aa, e ) );
 
-	// the block
-	vec3 yard = uYard * tone * ( 0.85 + 0.2 * fine );
-	yard *= 1.0 - 0.07 * joints( s, 5.5, 0.07, aa );
-	vec3 inner = yard;
-	if ( type > 0.5 && type < 1.5 ) {
-		// plaza: paving all the way to the street, bands of light and dark stone, a ring of stone round the middle
+	// the block: its courts, paved in larger slabs, each block its own tone
+	vec3 inner = uYard * tone * ( 0.84 + 0.2 * mid ) * ( 0.92 + 0.16 * fine );
+	inner *= 1.0 - 0.1 * joints( s, vec2( 3.2, 3.2 ), 0.06, aa );
+	bool plaza = type > 0.5 && type < 1.5;
+	if ( plaza ) {
+		// plaza: paving laid in rings round the fountain or the monument, a dark band at two radii, rays between them
 		vec2 c = vec2( 0.5 * ( la.x + la.y + lb.x - lb.y ), 0.5 * ( lc.x + lc.y + ld.x - ld.y ) );
 		vec2 p = s - c;
 		vec2 hs = vec2( 0.5 * ( lb.x - lb.y - la.x - la.y ), 0.5 * ( ld.x - ld.y - lc.x - lc.y ) );
 		float rr = length( p );
 		float m = min( hs.x, hs.y );
-		// paving laid in rings round the fountain or the monument, a dark band at two radii, rays between them
 		float band = ( 1.0 - smoothstep( 0.5 - aa, 0.5 + aa, abs( rr - 13.0 ) ) ) + ( 1.0 - smoothstep( 0.7 - aa, 0.7 + aa, abs( rr - m * 0.78 ) ) );
-		float ang = atan( p.y, p.x );
-		float ray = ( 1.0 - smoothstep( 0.35, 0.35 + aa, abs( fract( ang * 2.546479 ) - 0.5 ) * rr * 0.39 ) ) * step( 13.0, rr ) * step( rr, m * 0.78 );
-		float rings = 0.5 + 0.5 * sin( rr * 2.4 );
-		inner = mix( uPlaza, uPlazaB, clamp( band + ray * 0.8, 0.0, 1.0 ) * 0.55 + 0.1 * rings * ( 1.0 - smoothstep( 0.3, 0.9, aa ) ) );
-		inner *= ( 0.9 + 0.16 * fine ) * ( 0.94 + 0.1 * rnd );
-		float rim = min( hs.x - abs( p.x ), hs.y - abs( p.y ) );
-		inner *= 1.0 + 0.1 * ( 1.0 - smoothstep( 0.25, 0.4 + aa, rim ) );
+		float ray = ( 1.0 - smoothstep( 0.35, 0.35 + aa, abs( fract( atan( p.y, p.x ) * 2.546479 ) - 0.5 ) * rr * 0.39 ) ) * step( 13.0, rr ) * step( rr, m * 0.78 );
+		inner = mix( uPlaza, uPlazaB, clamp( band + ray * 0.8, 0.0, 1.0 ) * 0.55 ) * ( 0.84 + 0.2 * mid ) * ( 0.92 + 0.16 * fine ) * ( 0.94 + 0.1 * rnd );
+		inner *= 1.0 - 0.1 * joints( s, vec2( 2.4, 2.4 ), 0.05, aa );
 	} else if ( type > 1.5 && type < 2.5 ) {
 		// park: lawn with a winding path and a darker rim of hedge
 		vec2 c = vec2( 0.5 * ( la.x + la.y + lb.x - lb.y ), 0.5 * ( lc.x + lc.y + ld.x - ld.y ) );
 		vec2 p = s - c;
-		vec3 lawn = uPark * ( 0.8 + 0.4 * fine ) * ( 0.9 + 0.2 * big );
-		float trees = smoothstep( 0.55, 0.75, vn( s * 0.22 + rnd * 40.0 ) );
-		lawn *= 1.0 - 0.28 * trees;
-		float wind = abs( p.y - 7.0 * sin( p.x * 0.11 + rnd * 6.0 ) ) - 1.4;
-		float path = 1.0 - inside( wind, aa );
+		vec3 lawn = uPark * ( 0.78 + 0.3 * mid + 0.14 * big ) * ( 0.9 + 0.2 * fine );
+		float path = 1.0 - inside( abs( p.y - 7.0 * sin( p.x * 0.11 + rnd * 6.0 ) ) - 1.4, aa );
 		float rimH = 1.0 - inside( e - ${(SIDEWALK + 2.0).toFixed(1)}, aa );
 		inner = mix( lawn, uPath * ( 0.9 + 0.15 * fine ), path );
 		inner = mix( inner, lawn * 0.65, rimH * ( 1.0 - path ) );
 	}
 
-	bool plaza = type > 0.5 && type < 1.5;
 	float inBlock = inside( e, aa ); // 0 in the street, 1 in the block
 	float yardM = inside( e - ${SIDEWALK.toFixed(1)}, aa ); // 1 beyond the pavement (a plaza has none)
 	vec3 blockCol = mix( walk, inner, plaza ? 1.0 : yardM );
@@ -206,37 +184,42 @@ vec3 bgGround( vec2 s ) {
 	if ( bgBuilt( iu + du, iv ) ) shade = max( shade, bgBlockCast( s, ua, ub, lc, ld ) );
 	if ( bgBuilt( iu, iv + dv ) ) shade = max( shade, bgBlockCast( s, la, lb, va, vb ) );
 	if ( bgBuilt( iu + du, iv + dv ) ) shade = max( shade, bgBlockCast( s, ua, ub, va, vb ) );
-	bgSun = 1.0 - 0.85 * shade;
+	bgSun = 1.0 - 0.8 * shade;
 	return mix( street, blockCol, inBlock );
 }
 `;
 
-/** The shared sheet's vertices: sheet.ts's `sheetAt` in the vertex shader, reading the state's profile from a one-row texture. */
+/** The shared sheet's vertices: sheet.ts's `sheetAt` in the vertex shader, reading the state's two tables from a two-row texture. */
 const GLSL_BEND = /* glsl */ `
-uniform highp sampler2D uProfile;
-uniform vec3 uProfileInfo;
+uniform highp sampler2D uSheetTab;
 vec3 bgSheet( vec2 s ) {
-	float u = clamp( ( s.x - uProfileInfo.x ) / uProfileInfo.y, 0.0, uProfileInfo.z - 0.001 );
+	float u = clamp( s.x - ${A0.toFixed(1)}, 0.0, ${(SAMPLES_A - 0.001).toFixed(3)} );
 	int i = int( floor( u ) );
-	vec4 p0 = texelFetch( uProfile, ivec2( i, 0 ), 0 );
-	vec4 p1 = texelFetch( uProfile, ivec2( i + 1, 0 ), 0 );
-	vec4 p = mix( p0, p1, u - float( i ) );
-	// the twist of the canyon wall here (sheet.ts, twistVeil)
-	vTwist = max( 0.0, abs( s.y ) - ${(W0 + BEND / 2).toFixed(1)} ) * abs( p1.w - p0.w ) / uProfileInfo.y;
-	float d = abs( s.y ) - ${W0.toFixed(1)};
-	float g = abs( s.y );
-	float h = 0.0;
-	if ( d > 0.0 && p.w > 1e-5 ) {
-		float k = p.w / ${BEND.toFixed(1)};
-		float t = min( d, ${BEND.toFixed(1)} );
-		g = ${W0.toFixed(1)} + sin( k * t ) / k;
-		h = ( 1.0 - cos( k * t ) ) / k;
-		if ( d > ${BEND.toFixed(1)} ) {
-			g += ( d - ${BEND.toFixed(1)} ) * cos( p.w );
-			h += ( d - ${BEND.toFixed(1)} ) * sin( p.w );
+	float p0 = texelFetch( uSheetTab, ivec2( i, 0 ), 0 ).x;
+	float p1 = texelFetch( uSheetTab, ivec2( i + 1, 0 ), 0 ).x;
+	float psi = mix( p0, p1, u - float( i ) );
+	float d = abs( s.y );
+	// the twist of the canyon wall here (sheet.ts, veilAt)
+	vTwist = max( 0.0, d - ${(W0 + BEND / 2).toFixed(1)} ) * abs( p1 - p0 );
+	float v = clamp( d, 0.0, ${(SAMPLES_B - 0.001).toFixed(3)} );
+	int j = int( floor( v ) );
+	vec2 tab = mix( texelFetch( uSheetTab, ivec2( j, 1 ), 0 ).yz, texelFetch( uSheetTab, ivec2( j + 1, 1 ), 0 ).yz, v - float( j ) );
+	vec2 q = tab;
+	if ( d > ${W0.toFixed(1)} ) {
+		vec4 a0 = texelFetch( uSheetTab, ivec2( ${W0}, 1 ), 0 );
+		vec4 a1 = texelFetch( uSheetTab, ivec2( ${W0 + BEND}, 1 ), 0 );
+		float t = min( d - ${W0.toFixed(1)}, ${BEND.toFixed(1)} );
+		float hlf = ( psi + a1.x - a0.x ) / ${BEND.toFixed(1)} * t * 0.5;
+		float chord = t * ( abs( hlf ) < 1e-3 ? 1.0 - hlf * hlf / 6.0 : sin( hlf ) / hlf );
+		q = a0.yz + chord * vec2( cos( a0.x + hlf ), sin( a0.x + hlf ) );
+		if ( d > ${(W0 + BEND).toFixed(1)} ) {
+			vec2 dd = tab - a1.yz;
+			float c = cos( psi );
+			float sn = sin( psi );
+			q += vec2( dd.x * c - dd.y * sn, dd.x * sn + dd.y * c );
 		}
 	}
-	return vec3( p.x - sin( p.z ) * h, p.y + cos( p.z ) * h, ${Z0.toFixed(1)} + sign( s.y ) * g );
+	return vec3( s.x, ${GROUND_Y.toFixed(1)} + q.y, ${Z0.toFixed(1)} + sign( s.y ) * q.x );
 }
 `;
 
@@ -271,7 +254,21 @@ export function latticeTextures(lat: Lattice) {
   const cells = new THREE.DataTexture(bytes, cu, cv, THREE.RGBAFormat, THREE.UnsignedByteType);
   cells.minFilter = cells.magFilter = THREE.NearestFilter;
   cells.needsUpdate = true;
-  return { lines, cells, count: new THREE.Vector2(nu, nv) };
+  // for every metre of u and of v, the street line at or below it: the shader finds its block in two reads
+  const origin = new THREE.Vector2(Math.floor(lat.u[0].c), Math.floor(lat.v[0].c));
+  const span = Math.max(Math.ceil(lat.u[nu - 1].c) - origin.x, Math.ceil(lat.v[nv - 1].c) - origin.y) + 2;
+  const idx = new Uint8Array(span * 2 * 4);
+  [lat.u, lat.v].forEach((list, row) => {
+    let k = 0;
+    for (let m = 0; m < span; m++) {
+      while (k < list.length - 2 && list[k + 1].c <= m + origin.getComponent(row)) k++;
+      idx[(row * span + m) * 4] = k;
+    }
+  });
+  const index = new THREE.DataTexture(idx, span, 2, THREE.RGBAFormat, THREE.UnsignedByteType);
+  index.minFilter = index.magFilter = THREE.NearestFilter;
+  index.needsUpdate = true;
+  return { lines, cells, index, origin, count: new THREE.Vector2(nu, nv) };
 }
 
 export function buildGround(opts: GroundOptions): THREE.Mesh {
@@ -332,9 +329,9 @@ export function buildGround(opts: GroundOptions): THREE.Mesh {
 
 /** Where the sheet ends and how its ends are shown (the shared sheet of sheet.ts; the old variants leave it off). */
 export interface SheetEnds {
-  /** (a0, a1, |b| max, seam). */
+  /** (a0, a1, |b| max, |b| beyond which nothing is drawn). */
   uSheetBox: { value: THREE.Vector4 };
-  /** (endFade, tailCut, 1 = on). */
+  /** (the sheet dissolves from this |b|, to this |b|, 1 = on). */
   uSheetShow: { value: THREE.Vector3 };
 }
 
@@ -354,21 +351,23 @@ export function groundMaterial(
       'bgEnds( vSheet );\ndiffuseColor.rgb = bgGround( vSheet );\n#ifdef DOUBLE_SIDED\nif ( ! gl_FrontFacing ) { diffuseColor.rgb = bgUnder( vSheet ); bgRough = 0.95; bgSun = 0.0; }\n#endif',
     fragmentRough: 'roughnessFactor = bgRough;',
     light: 'bgLight( vec3( 0.0, 1.0, 0.0 ), 0.0, bgSun )',
+    ground: true,
     uniforms: {
       ...ends,
       ...bend,
       uKeyAlong: { value: new THREE.Vector2(KEY_ALONG[0], KEY_ALONG[1]) },
       uLines: { value: tex.lines },
+      uLineIndex: { value: tex.index },
+      uLineOrigin: { value: tex.origin },
       uCells: { value: tex.cells },
       uCount: { value: tex.count },
-      uStreet: { value: srgb('#4d4a45') },
-      uWalk: { value: srgb('#7d776d') },
-      uYard: { value: srgb('#5e5952') },
-      uPlaza: { value: srgb('#857d6d') },
-      uPlazaB: { value: srgb('#70695a') },
-      uPark: { value: srgb('#5d6650') },
-      uPath: { value: srgb('#8f8672') },
-      uMark: { value: srgb('#a8a294') },
+      uStreet: { value: srgb('#57534d') },
+      uWalk: { value: srgb('#8b8579') },
+      uYard: { value: srgb('#6f6a60') },
+      uPlaza: { value: srgb('#8a8272') },
+      uPlazaB: { value: srgb('#6f685a') },
+      uPark: { value: srgb('#5f6a52') },
+      uPath: { value: srgb('#93897a') },
       uUnder: { value: srgb('#5d564d') },
     },
   };
@@ -409,29 +408,28 @@ export function buildSheetGround(lattice: Lattice, uniforms: AtmosphereUniforms)
   g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(na * nb * 3), 3));
   g.setAttribute('aSheet', new THREE.BufferAttribute(sheet, 2));
   g.setIndex(new THREE.BufferAttribute(index, 1));
-  const table = new Float32Array((PROFILE_SAMPLES + 1) * 4);
-  const profile = new THREE.DataTexture(table, PROFILE_SAMPLES + 1, 1, THREE.RGBAFormat, THREE.FloatType);
-  profile.minFilter = profile.magFilter = THREE.NearestFilter;
-  const { material, ends } = groundMaterial(lattice, uniforms, true, {
-    uProfile: { value: profile },
-    uProfileInfo: { value: new THREE.Vector3(A0, PROFILE_STEP, PROFILE_SAMPLES) },
-  });
-  ends.uSheetBox.value.set(A0, A1, B1, SEAM);
+  const width = Math.max(SAMPLES_A, SAMPLES_B) + 1;
+  const table = new Float32Array(width * 2 * 4);
+  const tab = new THREE.DataTexture(table, width, 2, THREE.RGBAFormat, THREE.FloatType);
+  tab.minFilter = tab.magFilter = THREE.NearestFilter;
+  const { material, ends } = groundMaterial(lattice, uniforms, true, { uSheetTab: { value: tab } });
   const mesh = new THREE.Mesh(g, material);
   mesh.name = 'foldcity-ground';
   mesh.frustumCulled = false;
+  mesh.renderOrder = 2; // after the buildings: they hide most of it, and its shader is the dearer one
   return {
     mesh,
     triangles: index.length / 3,
     update(state) {
-      for (let i = 0, k = 0; i <= PROFILE_SAMPLES; i++) {
-        table[k++] = state.px[i];
-        table[k++] = state.py[i];
-        table[k++] = state.th[i];
-        table[k++] = state.psi[i];
+      for (let i = 0; i <= SAMPLES_A; i++) table[i * 4] = state.psi[i];
+      for (let i = 0, k = width * 4; i <= SAMPLES_B; i++, k += 4) {
+        table[k] = state.g[i];
+        table[k + 1] = state.gx[i];
+        table[k + 2] = state.gy[i];
       }
-      profile.needsUpdate = true;
-      ends.uSheetShow.value.set(state.endFade, state.tailCut, 1);
+      tab.needsUpdate = true;
+      ends.uSheetBox.value.set(A0, A1, B1, Math.min(state.cut, 1e6));
+      ends.uSheetShow.value.set(state.lip[0], state.lip[1], 1);
     },
   };
 }
