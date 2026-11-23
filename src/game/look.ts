@@ -155,7 +155,7 @@ export function installHaze() {
  * reference A1: the horizon's pale warm band runs up into the blue over a long gradient (to about 16 degrees instead of 9)
  * and the blue is less saturated. Only the sky that is seen changes: the light it gives is the default sky's.
  */
-export const SKY_A1 = { bandTop: 0.28, grey: 0.08 };
+export const SKY_A1 = { bandTop: 0.28, grey: 0.08, redFall: 2.5, greenFall: 1.3 };
 
 export async function loadSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer, url = LOOK.hdri, sunU = LOOK.hdriSunU, gain = LOOK.hdriGain, variant: string | null = null) {
   const a1 = variant === 'a1';
@@ -207,7 +207,10 @@ export async function loadSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
         for (let c = 0; c < 3; c++) {
           const raw = data[i + c] + (lum - data[i + c]) * SKY_A1.grey;
           const v = Math.min(raw * gain, LOOK.skyClamp) * LOOK.skyIntensity * zenith;
-          sky[o + c] = THREE.DataUtils.toHalfFloat(v + (haze[c] - v) * Math.min(1, bandA1));
+          // (the warm band leaves red first, then green, on its way up into the blue: half-way it is a pale blue as in A1, not
+          // the lilac a straight blend of peach and blue gives)
+          const t = Math.min(1, bandA1) ** (c === 0 ? SKY_A1.redFall : c === 1 ? SKY_A1.greenFall : 1);
+          sky[o + c] = THREE.DataUtils.toHalfFloat(v + (haze[c] - v) * t);
         }
       }
       const grey = 0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2];

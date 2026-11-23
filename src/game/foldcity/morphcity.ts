@@ -4,9 +4,9 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { VisualTheme } from '../../core/types.ts';
-import { atmosphereUniforms, bindSky, KEY_ELEVATION, keyTurn, patchShader, rowTone, type AtmosphereUniforms } from './atmosphere.ts';
+import { atmosphereUniforms, bindSky, FAR_WINDOWS, KEY_ELEVATION, patchShader, rowTone, type AtmosphereUniforms } from './atmosphere.ts';
 import { LOOK } from '../look.ts';
-import { ATMOSPHERE, type Background } from './foldcity.ts';
+import { ATMOSPHERE, type Background, type Prepare } from './foldcity.ts';
 import { buildSheetGround, type SheetGround } from './ground.ts';
 import { footprint } from './layout.ts';
 import { meshName, MODELS } from './models.ts';
@@ -30,6 +30,34 @@ const breathe = () =>
     const channel = new MessageChannel();
     channel.port1.onmessage = () => resolve();
     channel.port2.postMessage(0);
+  });
+
+/**
+ * Settles once `o` has been drawn (true), or after `ms` milliseconds without a frame that draws it (false).
+ * Not a timer either: it asks again after every turn of the page's loop, a bounded number of times.
+ */
+const drawn = (o: THREE.Object3D, ms: number) =>
+  new Promise<boolean>((resolve) => {
+    const before = o.onAfterRender;
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      o.onAfterRender = before;
+      resolve(ok);
+    };
+    o.onAfterRender = function (this: THREE.Object3D, ...args: Parameters<THREE.Object3D['onAfterRender']>) {
+      before.apply(this, args);
+      finish(true);
+    };
+    const t0 = performance.now();
+    let turns = 0;
+    const ask = () => {
+      if (done) return;
+      if (performance.now() - t0 > ms || ++turns > 200_000) finish(false);
+      else void breathe().then(ask);
+    };
+    ask();
   });
 
 interface Item {
@@ -63,7 +91,11 @@ export interface MorphCityOptions {
   /** Fold on and on through every structure and back (`?morph=loop`), to measure the frame time of a fold. */
   loop?: boolean;
   /** `?bgdebug=facing`: paint the background by class instead of lighting it (atmosphere.ts, bgFacing). */
-  debug?: 0 | 1 | 2;
+  debug?: 0 | 1 | 2 | 3;
+  /** `?farwin=1`: keep the fronts' windows out to about 400 m at reduced contrast (atmosphere.ts, FAR_WINDOWS). */
+  farWindows?: boolean;
+  /** `?bgdebug=notrees`: leave the trees out of the batch (their shadows stay). */
+  noTrees?: boolean;
 }
 
 export class MorphCity implements Background {
@@ -126,7 +158,10 @@ export class MorphCity implements Background {
     return STRUCTURES.indexOf(name);
   }
 
-  async load(url: string) {
+  async load(url: string, prepare?: Prepare) {
+    // everything is put together off the scene and only shown once its shaders are compiled (prepare): the first frame that
+    // draws the city is then an ordinary frame, where compiling in that frame held the page for about a second
+    const stage = new THREE.Group();
     // the buildings, and beside them the props (trees, fountains, the piers' feet): one batch, the buildings' material
     const loader = new GLTFLoader();
     const [gltf, props] = await Promise.all([loader.loadAsync(url), loader.loadAsync(url.replace(/city\.glb$/, 'cityprops.glb'))]);
@@ -147,13 +182,14 @@ export class MorphCity implements Background {
     const atm = atmosphereUniforms(ATMOSPHERE);
     this.atm = atm;
     if (this.opts.debug) atm.uBgDebug.value = this.opts.debug;
+    if (this.opts.farWindows) (atm.uBgWin.value as THREE.Vector4).set(135, 200, FAR_WINDOWS, 1);
 
     const modelH = this.modelH;
     const ground = buildSheetGround(plan.lattice, atm, this.shadows);
     ground.mesh.onBeforeRender = (_r, scene) => bindSky(atm, scene);
     this.ground = ground;
     this.stats.groundTriangles = ground.triangles;
-    this.group.add(ground.mesh);
+    stage.add(ground.mesh);
 
     // the two far ends of the sheet: a plane of plain haze across each, so the end of the channel and of the tube is haze and
     // not a window of sky in the shape of their cross-section. It follows the same rule as everything far (atmosphere.ts,
@@ -177,7 +213,7 @@ export class MorphCity implements Background {
     const seed = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), capMaterial);
     seed.position.set(0, GROUND_Y - 300, Z0);
     seed.frustumCulled = false;
-    this.group.add(seed);
+    stage.add(seed);
     for (const a of [A0 + 2, A1 - 2]) {
       // (no higher than a little over the ceiling: above that it would be sky, and drawing it costs the whole sky's pixels)
       const top = CEILING_Y + 60;
@@ -188,7 +224,7 @@ export class MorphCity implements Background {
       cap.frustumCulled = false;
       cap.renderOrder = 3;
       this.caps.push(cap);
-      this.group.add(cap);
+      stage.add(cap);
     }
 
     // the haze in the channel's slot: the sky seen through the slot lies behind as much haze as the ceiling beside it, so
@@ -202,7 +238,7 @@ export class MorphCity implements Background {
     slot.frustumCulled = false;
     slot.renderOrder = 4; // after the ground: over the sky and the slot's far walls
     this.slot = slot;
-    this.group.add(slot);
+    stage.add(slot);
 
     const list = plan.buildings.filter((b) => b.alive.some(Boolean));
     const sources = new Map<string, THREE.Mesh>();
@@ -261,8 +297,8 @@ export class MorphCity implements Background {
       const prop = MODELS[b.model].kind === 'prop';
       const v = 0.94 * (prop ? 0.96 + rTint() * 0.08 : 0.94 + (h1 - Math.floor(h1)) * 0.12) * (0.98 + rTint() * 0.04);
       const warm = prop ? (rTint() - 0.5) * 0.05 : (h2 - Math.floor(h2) - 0.5) * 0.1 + (rTint() - 0.5) * 0.02;
-      // the alpha carries where the key light stands for this building (atmosphere.ts)
-      mesh.setColorAt(id, tint.set(v * (1 + warm), v, v * (1 - warm), keyTurn(b.lot.swap, b.lot.flip)));
+      // the alpha carries the number of the building's block: with it the building goes into the far haze when its block does (atmosphere.ts, bgFar)
+      mesh.setColorAt(id, tint.set(v * (1 + warm), v, v * (1 - warm), b.lot.cell >= 0 ? Math.round(cell * 255) / 255 : 0.5));
       this.items.push({
         b, id, geometry, lod: 1, foot: footprint(MODELS[b.model], b.lot.scale, b.lot.swap, b.lot.stretch), p: new THREE.Vector3(), x: new THREE.Vector3(1, 0, 0), n: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1),
         h: 0, sink: 0.5, angle: 0, axis: new THREE.Vector3(1, 0, 0),
@@ -270,10 +306,20 @@ export class MorphCity implements Background {
     }
     this.stats.instances = list.length;
     this.mesh = mesh;
-    this.group.add(mesh);
+    stage.add(mesh);
     // (the shadow map of the structure shown is made by the first pose; those of the others a little later: shadowWork)
     this.warm();
     this.pose();
+    if (prepare) await prepare(stage).catch(() => {});
+    // and its parts enter one at a time, each once the one before has been drawn: the graphics driver finishes a shader the
+    // first time something is drawn with it (the ground's takes about 0.6 s, the far ends' 0.15 s, the buildings' 0.1 s on the
+    // PC this was measured on), so the wait is three shorter frames, all before the game says it is ready, and not one of
+    // nearly a second after it. (Without `prepare`, as in the review shots and the frame-by-frame capture, where frames are drawn on demand, nothing is waited for.)
+    let live = !!prepare;
+    for (const o of [...stage.children]) {
+      this.group.add(o);
+      if (live && o.visible) live = await drawn(o, 400);
+    }
   }
 
   /**
@@ -364,7 +410,7 @@ export class MorphCity implements Background {
     for (const it of this.items) {
       const { b } = it;
       const h = still ? (b.alive[at] ? b.sy[at] : 0) : heightAt(b, ti, fwd);
-      if (h <= 0) {
+      if (h <= 0 || (this.opts.noTrees && MODELS[b.model].name.startsWith('tree_'))) {
         if (it.h > 0) this.mesh.setVisibleAt(it.id, false);
         it.h = 0;
         continue;
@@ -410,7 +456,10 @@ export class MorphCity implements Background {
     return { si, out, steps };
   }
 
-  /** Make one shadow map that is still missing, whole (about 0.1 s: one long frame instead of many slowed ones). */
+  /**
+   * Make one shadow map that is still missing, whole: about 20 ms (measured), one frame that takes two. (Spread over many
+   * frames at 2 ms each it cost more: every one of those frames missed its refresh on a busy GPU.)
+   */
   private shadowWorkWhole() {
     if (!this.plan || !this.modelH.size) return;
     const si = this.shadowMaps.findIndex((m) => !m);

@@ -145,7 +145,7 @@
       "license": "own",
       "source": "art/blender/gen_city.py (with art/blender/city_kit.py)",
       "author": "terasaki-8910",
-      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs); colours per face and one 512 px facade atlas (limestone fronts with windows, slate) painted by the script itself with numpy, no outside source",
+      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py, run through game3d blender.mjs); twelve buildings, each a near model with its relief as geometry and a far model of textured quads; colours per face and one 512 px facade atlas (limestone fronts with windows, slate, zinc, glazing) painted by the script itself with numpy, no outside source",
       "attribution": ""
     },
     {

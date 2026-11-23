@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { footprint, latticeFrom, layoutLots, layoutProps, lines, type Lattice, type Lot } from './layout.ts';
 import { MODEL_INDEX, MODELS } from './models.ts';
 import {
-  boxObb, cutsSheet, facesPlayArea, GAP, Hash, MAX_BURY, MAX_GAP, MAX_TILT, NEAR_LOD, overlaps, PLAY, PLAY_CENTER, PLAY_MARGIN, SheetPoints, type Obb,
+  boxObb, cutsSheet, facesPlayArea, GAP, Hash, MAX_BURY, MAX_GAP, MAX_TILT, overlaps, PLAY, PLAY_CENTER, PLAY_MARGIN, SheetPoints, type Obb,
 } from './plan.ts';
 import { rng } from './rng.ts';
 import {
@@ -23,6 +23,11 @@ export const SCALE = 1.25;
 export const REACH = 1000;
 /** Trees, lamps and fountains stand only this near: further off they are smaller than a pixel. */
 export const PROP_REACH = 540;
+/** The detailed model of a building stands within this distance of the play volume. */
+export const NEAR_PLAY = 200;
+/** From FAR_LOW[0] to FAR_LOW[1] metres from the play volume the buildings' height comes down to FAR_HEIGHT metres at most. */
+export const FAR_LOW: readonly [number, number] = [300, 430];
+export const FAR_HEIGHT = 38;
 /** A building takes this share of a transition to sink away or to rise. */
 export const RAMP = 0.18;
 /** The fractions of a transition the plan checks (and the tests check again). */
@@ -119,11 +124,33 @@ export function lipBlocks(lattice: Lattice): (a: number, b: number) => LipBlock 
  */
 const byCrease = (v0: number, v1: number) => CREASES_B.some((c) => Math.abs(c - v0) < 1 || Math.abs(c - v1) < 1);
 
-/** Trees thin out with distance: all of them stand within 240 m of the play area, one in four at PROP_REACH. */
+/** Trees stand only near (`d` = metres from the play volume): all of them within TREE_NEAR, none beyond TREE_REACH, where a crown is a dot. */
+export const TREE_NEAR = 170;
+export const TREE_REACH = 265;
 function treeKept(lot: Lot, d: number): boolean {
   if (!MODELS[lot.model].name.startsWith('tree_')) return true;
   const h = Math.sin(lot.u * 12.9898 + lot.v * 78.233) * 43758.5453;
-  return h - Math.floor(h) < 1 - 0.75 * smooth((d - 240) / (PROP_REACH - 240));
+  return h - Math.floor(h) < 1 - smooth((d - TREE_NEAR) / (TREE_REACH - TREE_NEAR));
+}
+
+/**
+ * A building that ends in a point stands on its wall of the folded city with that point aimed at the play area. Along the
+ * play area's own length (and SPIRE_CLEAR beyond each end) such a lot gets the blunt building named here instead, fitted
+ * into the same footprint, so no spire points at a camera head-on; further along the canyon the spires stand and are seen
+ * from their side.
+ */
+export const SPIRE_CLEAR = 120;
+const BLUNT: Readonly<Record<string, string>> = { tower_house: 'haussmann_short', belfry: 'haussmann_step', deco_tower: 'deco_block', dome: 'deco_block', cathedral: 'deco_hall' };
+export function blunt(lot: Lot): Lot {
+  const old = MODELS[lot.model];
+  const to = BLUNT[old.name];
+  if (!to || lot.u < PLAY.min.x - SPIRE_CLEAR || lot.u > PLAY.max.x + SPIRE_CLEAR) return lot;
+  const model = MODEL_INDEX.get(to)!;
+  const m = MODELS[model];
+  const length = old.w * lot.scale * (lot.stretch ?? 1);
+  let scale = Math.min(lot.scale, (old.d * lot.scale) / m.d);
+  if (length / (m.w * scale) < 0.8) scale = length / (m.w * 0.8);
+  return { ...lot, model, scale, stretch: Math.min(1.28, length / (m.w * scale)) };
 }
 
 const T = new THREE.Vector3();
@@ -172,7 +199,7 @@ export function* planSteps(seed: number, keepOut: readonly KeepOut[] = []): Gene
     const [fu, fv] = footprint(MODELS[lot.model], lot.scale, lot.swap, lot.stretch);
     return !keepOut.some((k) => Math.abs(lot.u - k.a) < fu / 2 + k.r && Math.abs(lot.v - k.b) < fv / 2 + k.r);
   };
-  const lots = layoutLots(lattice, seed, SCALE, true, curlsTightly, byCrease).filter(clear);
+  const lots = layoutLots(lattice, seed, SCALE, true, curlsTightly, byCrease).filter(clear).map(blunt);
   const foot = MODEL_INDEX.get('pier_foot')!;
   const feet: Lot[] = keepOut.map((k) => ({ model: foot, u: k.a, v: k.b, swap: false, flip: false, scale: k.foot, sy: 1, cell: -1 }));
   const entry = (lot: Lot, prop: boolean): MorphBuilding => ({
@@ -191,13 +218,13 @@ export function* planSteps(seed: number, keepOut: readonly KeepOut[] = []): Gene
     const between = new SheetPoints([{ surface }], 6, REACH + 150, PLAY_CENTER, 3);
     const order = buildings
       .map((b) => ({ b, d: surface.at(b.lot.u, b.lot.v, T).distanceTo(PLAY_CENTER) }))
-      .filter((o) => o.d <= (o.b.prop ? PROP_REACH : REACH) && (!o.b.prop || treeKept(o.b.lot, o.d)))
+      .filter((o) => o.d <= (o.b.prop ? PROP_REACH : REACH) && (!o.b.prop || treeKept(o.b.lot, PLAY.distanceToPoint(surface.at(o.b.lot.u, o.b.lot.v, T)))))
       .sort((p, q) => p.d - q.d);
     const hash = new Hash();
     let standing = 0;
     let props = 0;
     let triangles = 0;
-    for (const { b, d } of order) {
+    for (const { b } of order) {
       const sink = b.model === foot ? 0.5 : seat(surface, b.lot, f);
       if (sink < 0) continue;
       if (b.prop) {
@@ -208,7 +235,10 @@ export function* planSteps(seed: number, keepOut: readonly KeepOut[] = []): Gene
         continue;
       }
       const [fu, fv] = footprint(MODELS[b.model], b.lot.scale, b.lot.swap, b.lot.stretch);
-      let sy = b.lot.sy;
+      // far along the canyon nothing stands much higher than a house: a tower there would reach into a view whose frame
+      // leaves out the wall it stands on, and hang in the haze
+      const far = smooth((PLAY.distanceToPoint(f.p) - FAR_LOW[0]) / (FAR_LOW[1] - FAR_LOW[0]));
+      let sy = Math.min(b.lot.sy, (FAR_HEIGHT + (1 - far) * 200) / (MODELS[b.model].h * b.lot.scale));
       for (let attempt = 0; attempt < 4; attempt++, sy *= 0.78) {
         const obb = boxAt(b.lot, f, sy);
         if (overlaps(obb, PLAY_OBB) || hash.hits(obb, GAP)) continue;
@@ -219,7 +249,8 @@ export function* planSteps(seed: number, keepOut: readonly KeepOut[] = []): Gene
         b.alive[si] = true;
         b.sy[si] = sy;
         b.sink[si] = sink;
-        b.lod[si] = d < NEAR_LOD ? 0 : 1;
+        // (the detailed model wherever a camera of the play area can come near: by the distance to the play volume, not to its centre)
+        b.lod[si] = PLAY.distanceToPoint(surface.at(b.lot.u, b.lot.v, T)) < NEAR_PLAY ? 0 : 1;
         triangles += MODELS[b.model].tris[b.lod[si]];
         standing++;
         break;

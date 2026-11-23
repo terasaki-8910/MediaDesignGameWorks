@@ -2,7 +2,7 @@
 // drawn in the fragment shader from the street lattice (three tiny data textures), so the pattern is crisp at any scale
 // and costs no texture memory worth counting. Streets cross creases because the pattern lives in sheet coordinates.
 import * as THREE from 'three';
-import { KEY_ALONG, patchShader, type AtmosphereUniforms } from './atmosphere.ts';
+import { FAR_JITTER, KEY_ALONG, patchShader, type AtmosphereUniforms } from './atmosphere.ts';
 import { BLOCK_LANDMARK, SIDEWALK, type Lattice } from './layout.ts';
 import { A0, A1, B0, B1, BEND, GROUND_Y, LIP_SOFT, SAMPLES_A, SAMPLES_B, sheetGrid, TWIST_FADE, W0, Z0, type SheetState } from './sheet.ts';
 import { breaks, frameAt, makeFrame, type Surface } from './surfaces.ts';
@@ -33,6 +33,8 @@ varying vec2 vSheet;
 float bgRough = 0.92;
 // how much of the key light reaches this point of the ground (the buildings' shadows)
 float bgSun = 1.0;
+// how much of the sky's light does: little in a court and at the foot of the fronts, more in the middle of a street
+float bgOcc = 1.0;
 
 float h21( vec2 p ) { p = fract( p * vec2( 123.34, 456.21 ) ); p += dot( p, p + 45.32 ); return fract( p.x * p.y ); }
 float vn( vec2 p ) {
@@ -143,7 +145,7 @@ vec3 bgGround( vec2 s ) {
 	float lat = abs( ( alongV ? s.x : s.y ) - L.x );
 	// grime: damp and soot lie in broad stains, darkest where the two scales of noise are both low
 	float grime = smoothstep( 0.25, 0.75, 0.6 * big + 0.4 * vn( s * 0.07 + 5.0 ) );
-	vec3 street = uStreet * ( 0.72 + 0.3 * big + 0.24 * mid ) * ( 0.9 + 0.2 * fine ) * ( 0.84 + 0.16 * grime );
+	vec3 street = uStreet * ( 0.72 + 0.3 * big + 0.24 * mid ) * ( 0.8 + 0.4 * fine ) * ( 0.84 + 0.16 * grime );
 	street *= 1.0 - 0.24 * joints( alongV ? s.yx : s.xy, vec2( 0.9, 0.45 ), 0.04, aa );
 	float median = 0.0;
 	if ( inU != inV ) {
@@ -156,12 +158,12 @@ vec3 bgGround( vec2 s ) {
 	street *= 1.0 - 0.42 * ( 1.0 - smoothstep( 0.0, 1.5, - e ) ); // the gutter along the kerb, in the kerb's shade
 
 	// the pavement along the block edge: pale slabs, a kerb of paler stone at the street's edge
-	vec3 walk = uWalk * ( 0.84 + 0.18 * big + 0.12 * mid ) * ( 0.94 + 0.12 * fine ) * ( 0.93 + 0.14 * slabTone( s, vec2( 1.7, 1.7 ), aa ) ) * ( 0.86 + 0.14 * grime );
+	vec3 walk = uWalk * ( 0.84 + 0.18 * big + 0.12 * mid ) * ( 0.88 + 0.24 * fine ) * ( 0.93 + 0.14 * slabTone( s, vec2( 1.7, 1.7 ), aa ) ) * ( 0.86 + 0.14 * grime );
 	walk *= 1.0 - 0.22 * joints( s, vec2( 1.7, 1.7 ), 0.05, aa );
 	walk *= 1.0 + 0.26 * ( 1.0 - smoothstep( 0.3, 0.45 + aa, e ) );
 
 	// the block: its courts, paved in larger slabs, each block its own tone
-	vec3 inner = uYard * tone * ( 0.84 + 0.2 * mid ) * ( 0.92 + 0.16 * fine ) * ( 0.92 + 0.16 * slabTone( s, vec2( 3.2, 3.2 ), aa ) ) * ( 0.84 + 0.16 * grime );
+	vec3 inner = uYard * tone * ( 0.84 + 0.2 * mid ) * ( 0.85 + 0.3 * fine ) * ( 0.92 + 0.16 * slabTone( s, vec2( 3.2, 3.2 ), aa ) ) * ( 0.84 + 0.16 * grime );
 	inner *= 1.0 - 0.2 * joints( s, vec2( 3.2, 3.2 ), 0.07, aa );
 	bool plaza = type > 0.5 && type < 1.5;
 	if ( plaza ) {
@@ -209,13 +211,23 @@ vec3 bgGround( vec2 s ) {
 	if ( bgBuilt( iu + du, iv + dv ) ) shade = max( shade, bgBlockCast( s, ua, ub, va, vb ) );
 	}
 	bgSun = uShadowOn > 0.5 ? 1.0 - 0.94 * bgShadow( s ) : 1.0 - 0.8 * shade;
+	// the sky's light: a court between two rows of houses is deep shade, a pavement lies at the foot of its front, a street
+	// opens towards its middle; plazas and parks lie open
+	bool builtHere = bgBuilt( iu, iv );
+	float open = plaza || ( type > 1.5 && type < 2.5 ) ? 1.0 : mix( 0.62, 0.36, yardM );
+	if ( ! builtHere ) open = 1.0;
+	bgOcc = mix( mix( 0.5, 1.0, smoothstep( 0.0, 12.0, - e ) ), open, inBlock ) * ( 0.74 + 0.26 * bgSun );
 	// the sheet's upper edge (the walls of the channel's slot): it ends block by block, each block whole with its houses
 	// or gone, so what meets the sky there is a roofline and never a ruled edge (sheet.ts, lipVeil)
 	if ( uSheetShow.z > 0.5 ) {
 		float cut = uSheetShow.x + rnd * ( uSheetShow.y - uSheetShow.x );
 		bgVeil = max( bgVeil, smoothstep( 0.0, ${LIP_SOFT.toFixed(1)}, 0.5 * abs( lc.x + ld.x ) - cut ) );
+		// what the haze has all but taken goes on into the sky block by block as well (atmosphere.ts, bgFar)
+		bgFarShift = ( rnd - 0.5 ) * ${FAR_JITTER.toFixed(1)};
 	}
-	return mix( street, blockCol, inBlock );
+	// patches of a couple of metres (repairs, damp), which stay when the grain has gone: no stretch of paving is one tone
+	float patchy = mix( 0.5, vn( s * 0.55 + 3.0 ), 1.0 - smoothstep( 0.6, 2.5, aa ) );
+	return mix( street, blockCol, inBlock ) * ( 0.85 + 0.3 * patchy );
 }
 `;
 
@@ -390,9 +402,9 @@ export function groundMaterial(
     vertexBegin: bend ? 'transformed = bgSheet( aSheet );' : 'vTwist = 0.0;',
     fragmentDecl: GLSL_DECL,
     fragmentColor:
-      'bgEnds( vSheet );\ndiffuseColor.rgb = bgGround( vSheet );\n#ifdef DOUBLE_SIDED\nif ( ! gl_FrontFacing ) { diffuseColor.rgb = bgUnder( vSheet ); bgRough = 0.95; bgSun = 0.0; }\n#endif',
+      'bgEnds( vSheet );\ndiffuseColor.rgb = bgGround( vSheet );\n#ifdef DOUBLE_SIDED\nif ( ! gl_FrontFacing ) { diffuseColor.rgb = bgUnder( vSheet ); bgRough = 0.95; bgSun = 0.0; bgOcc = 0.8; }\n#endif',
     fragmentRough: 'roughnessFactor = bgRough;',
-    light: 'bgLight( vec3( 0.0, 1.0, 0.0 ), vBgKeyDir, bgSun )',
+    light: 'bgLight( vec3( 0.0, 1.0, 0.0 ), vBgKeyDir, bgSun, bgOcc )',
     ground: true,
     uniforms: {
       ...ends,
@@ -407,7 +419,7 @@ export function groundMaterial(
       uLineOrigin: { value: tex.origin },
       uCells: { value: tex.cells },
       uCount: { value: tex.count },
-      uStreet: { value: srgb('#57534d') },
+      uStreet: { value: srgb('#5d5851') },
       uWalk: { value: srgb('#8b8579') },
       uYard: { value: srgb('#6f6a60') },
       uPlaza: { value: srgb('#8a8272') },

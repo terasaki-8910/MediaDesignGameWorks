@@ -32,8 +32,10 @@ export interface BackgroundOptions {
   morph?: string | null;
   /** Squares of sheet under the play area's piers: nothing is built there. */
   keepOut?: readonly KeepOut[];
-  /** `?bgdebug=facing`: the background painted by class (ground seen roof-on, other ground, roofs, walls), for measuring; `?bgdebug=range`: by distance (beyond 200 m red, nearer green). */
+  /** `?bgdebug=facing`: the background painted by class (ground seen roof-on, other ground, roofs, walls), for measuring; `?bgdebug=range`: by distance (beyond 200 m red, nearer green); `?bgdebug=dist`: by distance in bands of 100 m; `?bgdebug=notrees`: the city as it is, without its trees (their shadows stay), to find the trees' pixels by difference. */
   debug?: string | null;
+  /** `?farwin=1`: a variant for comparison, the fronts' windows kept out to about 400 m at reduced contrast (the default fades them to tone from 135-200 m). */
+  farWindows?: boolean;
 }
 
 /**
@@ -51,5 +53,5 @@ export function createBackground(theme: VisualTheme, opts: BackgroundOptions = {
   const freeze = loop ? null : parseFreeze(opts.morph ?? null);
   if (opts.morph && !freeze && !loop) console.warn(`cannot read ?morph=${opts.morph} (for example s1-s2:0.5: neighbouring sections, a fraction from 0 to 1)`);
   const pin = variant && (STRUCTURES as readonly string[]).includes(variant) ? (variant as StructureName) : undefined;
-  return new MorphCity(theme, { keepOut: opts.keepOut, pin, freeze, loop, debug: opts.debug === 'facing' ? 1 : opts.debug === 'range' ? 2 : 0 });
+  return new MorphCity(theme, { keepOut: opts.keepOut, pin, freeze, loop, debug: opts.debug === 'facing' ? 1 : opts.debug === 'range' ? 2 : opts.debug === 'dist' ? 3 : 0, noTrees: opts.debug === 'notrees', farWindows: opts.farWindows });
 }

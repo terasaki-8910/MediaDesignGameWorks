@@ -12,7 +12,7 @@ file carries no texture of its own (its UVs point into the buildings' atlas).
   fountain        an octagonal basin with a tiered centre: the middle of a plaza
   monument        a column on a stepped plinth with a gilt figure: the middle of a plaza
   pier_foot       a stepped mass of masonry with four buttresses: where a pier of the play area meets the city's ground
-  cathedral_lod0  a Gothic church: nave and transept under steep slate roofs, two west towers with spires, a fleche,
+  cathedral_lod0  a Gothic church: nave and transept under steep slate roofs, two west towers with stone spires, a fleche,
   cathedral_lod1  buttresses along the nave (near model only)
 Origin: ground centre of the footprint, +X the long side. The trees and the plazas' pieces are modelled from BURIED below
 the ground up, so a piece on bent ground still stands in it. The game stands each tree on its own, turned, scaled and
@@ -51,10 +51,11 @@ def plane_tree(trunk, crowns, lean=(0.0, 0.0)):
 
 
 # The canopies are several small masses that run into each other (a cloud of leaves, never one ball on a stick), a little
-# darker and greyer than a lawn: seen from the play area a tree is a soft dark mass with a lit side.
-LEAF_D = K.srgb("#5C6E4A")
-LEAF_E = K.srgb("#66754F")
-LEAF_F = K.srgb("#55664A")
+# greyed olive like a plane tree's at dusk: the key light and the sky reach a crown from above, so seen from the play area a
+# tree is a lit mass, dark only underneath.
+LEAF_D = K.srgb("#88916F")
+LEAF_E = K.srgb("#939A77")
+LEAF_F = K.srgb("#7D876A")
 
 
 def tree_a():
@@ -145,14 +146,18 @@ def cathedral(lod):
     s.cylinder((27.0, 0.0), hw + 0.3, wall - 3.0, wall + 5.0, LEAD, 10 if lod == 0 else 6, r1=0.0)
     # the fleche over the crossing
     s.cylinder((11.5, 0.0), 1.5, wall + 9.0, wall + 14.0, LEAD, 6)
-    s.cylinder((11.5, 0.0), 1.7, wall + 14.0, wall + 31.0, LEAD, 6, r1=0.0)
+    s.cylinder((11.5, 0.0), 1.7, wall + 14.0, wall + 31.0, LEAD, 6, r1=0.0, alt=ZINC)
     # the west front: two towers with spires, the gable between them
     for sy in (-1, 1):
         s.o = (-19.0, sy * 9.0)
         s.box((-5.0, -5.0, 0.0), (5.0, 5.0, 40.0), WALL, foot=0.72, strip="ashlar")
         s.box((-5.4, -5.4, 26.0), (5.4, 5.4, 26.8), TRIM, bottom=True)
         s.box((-5.5, -5.5, 40.0), (5.5, 5.5, 41.0), TRIM, bottom=True)
-        s.frustum(4.6, 4.6, 41.0, 0.0, 0.0, 62.0, SLATE, strip="slate")
+        s.frustum(4.6, 4.6, 41.0, 0.0, 0.0, 62.0, SPIRE)  # a spire of dressed stone
+        if lod == 0:
+            for px in (-1, 1):
+                for py in (-1, 1):
+                    s.frustum(0.8, 0.8, 41.0, 0.0, 0.0, 46.0, SPIRE_B, c=(px * 4.6, py * 4.6))
         for side in "SNEW":
             s.panel(side, 5.0, 5.0, -1.3, 1.3, 29.0, 38.0, GLASS, 0.1 if lod == 0 else 0.3)
             if lod == 0:
@@ -184,7 +189,7 @@ objects = [
     finished(fountain(), "fountain", CITY, 260),
     finished(monument(), "monument", CITY, 260),
     finished(pier_foot(), "pier_foot", CITY, 260),
-    finished(cathedral(0), "cathedral_lod0", CITY, 1000),
+    finished(cathedral(0), "cathedral_lod0", CITY, 1100),
     finished(cathedral(1), "cathedral_lod1", CITY, 600),
 ]
 bpy.context.view_layer.update()

@@ -12,10 +12,14 @@ import { planCity, type Building, type CityPlan } from './plan.ts';
 import { rng } from './rng.ts';
 import type { VariantDef } from './variants.ts';
 
+/** Gets an object that is about to enter the scene ready to be drawn (the game compiles its shaders without holding a frame). */
+export type Prepare = (object: THREE.Object3D) => Promise<unknown>;
+
 /** What the game needs of a background city. */
 export interface Background {
   readonly group: THREE.Group;
-  load(url: string): Promise<void>;
+  /** `prepare` is given what the city is about to show and settles once that can be drawn without a pause (its shaders are compiled). */
+  load(url: string, prepare?: Prepare): Promise<void>;
   /** Send a folding wave through the city from a point. */
   wave(origin: THREE.Vector3, strength?: number, speed?: number, dur?: number): void;
   /** Back to time zero with every building upright (review shots). */
@@ -26,7 +30,7 @@ export interface Background {
 }
 
 /** `sink` is slight: the city's ground is meant to be seen, and a haze that follows world height would differ between a floor, a wall and a ceiling of the same sheet. */
-export const ATMOSPHERE: AtmosphereParams = { density: 0.0021, strength: 1, gain: 0.6, saturation: 0.72, lift: 0.09, sink: 0.12, base: 0.1 };
+export const ATMOSPHERE: AtmosphereParams = { density: 1 / 560, power: 5, strength: 1, gain: 0.78, saturation: 0.74, lift: 0.012, sink: 0.12, base: 0 };
 
 interface Item {
   b: Building;

@@ -82,8 +82,10 @@ test('the plan is the same every time, and every structure is a city', () => {
   STRUCTURES.forEach((name, si) => {
     assert.ok(plan.stats.standing[si] > 450, `${name}: ${plan.stats.standing[si]} buildings`);
     assert.ok(plan.stats.props[si] > 100, `${name}: ${plan.stats.props[si]} props`);
-    // what the batch draws if everything were in view (the frame's budget is 1.5 M with the play area)
-    assert.ok(plan.stats.triangles[si] < 600_000, `${name}: ${plan.stats.triangles[si]} triangles`);
+    // what the batch holds of the structure, near models included (some 280 detailed buildings of 1200 to 2900 triangles
+    // each). No frame draws all of it: each instance is culled on its own, and tests/e2e/budget.cjs holds every shot to
+    // the frame's budget
+    assert.ok(plan.stats.triangles[si] < 900_000, `${name}: ${plan.stats.triangles[si]} triangles`);
   });
   // what the batch holds: every building and prop that stands in some structure
   const instances = plan.buildings.filter((b) => b.alive.some(Boolean)).length;

@@ -116,7 +116,7 @@ export class Game {
     this.world = new World(this.cs, M);
     this.engine.scene.add(this.world.root);
     const query = new URLSearchParams(location.search);
-    this.city = createBackground(stage.visualTheme, { variant: query.get('city'), morph: query.get('morph'), debug: query.get('bgdebug'), keepOut: pierKeepOut(pierFeet(planSlabs(this.cs))) });
+    this.city = createBackground(stage.visualTheme, { variant: query.get('city'), morph: query.get('morph'), debug: query.get('bgdebug'), farWindows: query.get('farwin') === '1', keepOut: pierKeepOut(pierFeet(planSlabs(this.cs))) });
     this.engine.scene.add(this.city.group);
     this.player = new Player({ object: new THREE.Group(), animate: () => {} }); // nothing until the character has loaded
     this.engine.scene.add(this.player.root);
@@ -166,11 +166,16 @@ export class Game {
         console.error('kit not loaded, showing the plain slabs:', e);
         this.world.showColliders();
       });
-    const city = this.city.load('./assets/city.glb').catch((e) => console.warn('background city not loaded:', e));
+    // (the city's shaders are compiled off the frame, against the scene as it is lit once the sky is in, before the city is shown)
+    const compileCity = async (o: THREE.Object3D) => {
+      await sky;
+      await this.engine.renderer.compileAsync(o, this.engine.camera, this.engine.scene);
+    };
+    const city = this.city.load('./assets/city.glb', this.shots || opts.capture ? undefined : compileCity).catch((e) => console.warn('background city not loaded:', e));
     Promise.all([gate, sky, kit, city, character]).finally(() => {
       giltTakesSky(this.engine.scene, this.world.giltMaterials()); // before warmUp, so the gilt's shader is compiled once
       this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
-      if (query.get('bgdebug') === 'facing' || query.get('bgdebug') === 'range') this.flattenForDebug();
+      if (['facing', 'range', 'dist'].includes(query.get('bgdebug') ?? '')) this.flattenForDebug();
       this.ready = true;
     });
     if (opts.demo) this.director = new DemoDirector(this, opts.demo);
