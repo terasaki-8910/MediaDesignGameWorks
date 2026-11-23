@@ -22,13 +22,19 @@ export const LOOK = {
   /** One exposure for the sky as background and as ambient light (the tone mapping pass has no exposure of its own). */
   skyIntensity: 0.55,
   ambientIntensity: 1.2,
+  /**
+   * The light from the upper sky (over about 9 degrees) is cut to this fraction: the paving is lit by that half of the
+   * sky almost alone, the shaded uprights mostly by the bright horizon band and the bounce (reference A3: lit to shade
+   * about 2:1 on the paving, in display values).
+   */
+  skyFill: 0.17,
   /** The light from the sky is this much greyer than the sky itself, and tinted by `fillTint`. */
   fillGrey: 0.8,
   fillTint: new THREE.Color(1.12, 1.0, 0.84),
   /** What the sky's lower half shows to the lighting: sunlit paving and stone, the bounce that fills the shaded faces. */
   bounceColor: new THREE.Color(0.6, 0.47, 0.36),
-  sunColor: '#ffc780', // about 3300 K
-  sunIntensity: 5.6,
+  sunColor: '#ffd2a0', // about 3700 K
+  sunIntensity: 15,
   /** Towards the sun. The play axis runs +X, so the light crosses it from the right and a little from behind. */
   sunDir: new THREE.Vector3(Math.cos(sunAzimuth) * Math.cos(sunElevation), Math.sin(sunElevation), Math.sin(sunAzimuth) * Math.cos(sunElevation)),
   /** Half the side of the square the shadow map covers around the view's focus, in metres. */
@@ -39,12 +45,21 @@ export const LOOK = {
   /** Looking down into the city the haze turns to this: the low sun does not reach there (brief: the darkest values). */
   hazeDeepColor: new THREE.Color(0.31, 0.255, 0.22),
   /** Whatever the view, things sink into the haze between these depths below the walkways (the piers fade out). */
-  hazeSink: [4, 72] as [number, number],
-  hazeDistance: 0.0030, // exp2 density with distance: nothing within the play space, the far city fades
-  hazeFloor: 0.0022, // extinction per metre at the walkway level ...
+  hazeSink: [10, 120] as [number, number],
+  hazeDistance: 0.0017, // exp2 density with distance: nothing within the play space, the far city fades
+  /** Rays that climb (the hanging city) cross thinner air: their exp2 density is this fraction of `hazeDistance` (from about 6 degrees up). */
+  hazeUpFactor: 0.36,
+  hazeFloor: 0.0007, // extinction per metre at the walkway level ...
   hazeLevel: 12, // ... (y of the walkways) ...
-  hazeHeight: 18,
-  hazeCeiling: 112, // the mirrored city above sinks into the same haze, growing upwards from this level // ... growing e-fold for each this many metres below it
+  hazeHeight: 18, // ... growing e-fold for each this many metres below it
+  /**
+   * What the haze turns into on a rising ray: the sky itself, so the hanging city dissolves into the blue behind it instead of
+   * standing beige in front of it. Measured from the sky map (linear, scene units) at 14 degrees up, away from the sun, to the
+   * side, and in the sun's direction; the sky blends in from the horizon band to 9 degrees up exactly as `loadSky` does.
+   */
+  skyAnti: new THREE.Color(0.16, 0.265, 0.585),
+  skySide: new THREE.Color(0.33, 0.51, 1.0),
+  skySun: new THREE.Color(1.5, 1.45, 1.45),
   /** Compared with AgX and ACES against A1.jpg in the fixed shots: both washed the gold stone and the blue sky out at this exposure. */
   toneMapping: ToneMappingMode.NEUTRAL as ToneMappingMode,
   bloom: { intensity: 0.7, threshold: 2.4, smoothing: 0.5 },
@@ -91,23 +106,25 @@ export function installHaze() {
 	#ifdef FOG_EXP2
 		vec3 hazeRay = vFogWorld - cameraPosition;
 		float hazeLen = max( length( hazeRay ), 1e-4 );
+		vec3 hazeDir = hazeRay / hazeLen;
 		float hazeY0 = ( cameraPosition.y - ${LOOK.hazeLevel.toFixed(2)} ) / ${LOOK.hazeHeight.toFixed(2)};
 		float hazeY1 = ( vFogWorld.y - ${LOOK.hazeLevel.toFixed(2)} ) / ${LOOK.hazeHeight.toFixed(2)};
 		float hazeE0 = exp( - clamp( hazeY0, -10.0, 30.0 ) );
 		float hazeE1 = exp( - clamp( hazeY1, -10.0, 30.0 ) );
 		float hazeDy = hazeY1 - hazeY0;
 		float hazeMean = abs( hazeDy ) > 1e-3 ? ( hazeE0 - hazeE1 ) / hazeDy : hazeE0;
-		float hazeU0 = ( ${LOOK.hazeCeiling.toFixed(2)} - cameraPosition.y ) / ${LOOK.hazeHeight.toFixed(2)};
-		float hazeU1 = ( ${LOOK.hazeCeiling.toFixed(2)} - vFogWorld.y ) / ${LOOK.hazeHeight.toFixed(2)};
-		float hazeF0 = exp( - clamp( hazeU0, -10.0, 30.0 ) );
-		float hazeF1 = exp( - clamp( hazeU1, -10.0, 30.0 ) );
-		hazeMean += 1.0 * ( abs( hazeDy ) > 1e-3 ? ( hazeF1 - hazeF0 ) / hazeDy : hazeF0 ); // the haze above is denser: it thins the mirrored city
-		float hazeTau = ${LOOK.hazeFloor.toFixed(5)} * hazeLen * hazeMean + fogDensity * fogDensity * hazeLen * hazeLen;
+		float hazeDens = fogDensity * mix( 1.0, ${LOOK.hazeUpFactor.toFixed(3)}, smoothstep( 0.02, 0.10, hazeDir.y ) );
+		float hazeTau = ${LOOK.hazeFloor.toFixed(5)} * hazeLen * hazeMean + hazeDens * hazeDens * hazeLen * hazeLen;
 		float fogFactor = 1.0 - exp( - hazeTau );
 		fogFactor = max( fogFactor, 0.94 * smoothstep( ${(-LOOK.hazeSink[0]).toFixed(1)}, ${(-LOOK.hazeSink[1]).toFixed(1)}, vFogWorld.y - ${LOOK.hazeLevel.toFixed(2)} ) );
-		float hazeSun = pow( max( dot( hazeRay / hazeLen, ${glsl(sunH)} ), 0.0 ), 5.0 ) * 0.85;
+		float hazeSun = pow( max( dot( hazeDir, ${glsl(sunH)} ), 0.0 ), 5.0 ) * 0.85;
 		vec3 hazeCol = mix( fogColor, ${glsl(LOOK.hazeSunColor)}, hazeSun );
-		hazeCol = mix( hazeCol, ${glsl(LOOK.hazeDeepColor)}, smoothstep( 0.03, 0.5, - hazeRay.y / hazeLen ) );
+		hazeCol = mix( hazeCol, ${glsl(LOOK.hazeDeepColor)}, smoothstep( 0.03, 0.5, - hazeDir.y ) );
+		// a rising ray ends in the sky: its colour at that height and heading
+		float hazeAim = dot( normalize( vec3( hazeDir.x, 0.0, hazeDir.z ) + vec3( 1e-4, 0.0, 0.0 ) ), ${glsl(sunH)} );
+		vec3 hazeBlue = hazeAim < 0.0 ? mix( ${glsl(LOOK.skyAnti)}, ${glsl(LOOK.skySide)}, hazeAim + 1.0 ) : mix( ${glsl(LOOK.skySide)}, ${glsl(LOOK.skySun)}, hazeAim );
+		hazeBlue = mix( hazeBlue, vec3( dot( hazeBlue, vec3( 0.2126, 0.7152, 0.0722 ) ) ), 0.4 ) * vec3( 1.07, 1.0, 0.93 ); // not as blue as the sky: the hanging city is lit by it
+		hazeCol = mix( hazeCol, hazeBlue, 0.85 * smoothstep( -0.01, 0.16, hazeDir.y ) );
 		gl_FragColor.rgb = mix( gl_FragColor.rgb, hazeCol, fogFactor );
 	#else
 		float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
@@ -147,6 +164,8 @@ export async function loadSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
     const deep = THREE.MathUtils.smoothstep(-Math.sin(elevation), 0.03, 0.5);
     // the lit ground, only at shallow angles: that lights upright faces; straight below stays haze, so undersides stay dark
     const ground = THREE.MathUtils.smoothstep(-elevation, 0.1, 0.3) * (1 - THREE.MathUtils.smoothstep(-elevation, 0.75, 1.15));
+    // the upper sky lights the paving almost alone: its share of the light is cut, the horizon band is kept
+    const upperCut = 1 - (1 - LOOK.skyFill) * THREE.MathUtils.smoothstep(elevation, 0.05, 0.5);
     for (let x = 0; x < w; x++) {
       const sx = (((x + shift) % w) + w) % w;
       const i = (y * w + sx) * 4;
@@ -166,7 +185,7 @@ export async function loadSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
       }
       const grey = 0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2];
       for (let c = 0; c < 3; c++) {
-        const lit = px[c] + (grey * fill[c] - px[c]) * LOOK.fillGrey;
+        const lit = (px[c] + (grey * fill[c] - px[c]) * LOOK.fillGrey) * upperCut;
         light[o + c] = THREE.DataUtils.toHalfFloat(lit + (bounce[c] - lit) * ground);
       }
       sky[o + 3] = light[o + 3] = one;
