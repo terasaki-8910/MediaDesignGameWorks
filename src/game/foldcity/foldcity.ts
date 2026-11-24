@@ -43,8 +43,12 @@ export const ATMOSPHERE: AtmosphereParams = {
   toe: 0, knee: 6, untoe: 1, chroma: 1, skyShade: 2.2, skySun: 2.32, skyLo: 0.1, skyUp: 1, occ: 0.9, occShade: 0.32, occTop: 0.8, downLift: 0.5, canyon: 0.7, shadow: 0.5,
   winBase: 0.3, winNear: 45, winFar: 105, winKeep: 0.97, calm: 0.9, calmBase: 0.2, calmTone: 0.15, calmNear: 60, calmFar: 160,
   ground: 0.54, slab: 0, pave: 0.3, band: 0.4, own: 2, joint: 1.3, setts: 1, canyonPave: 0.45, cars: 1, traffic: 0.7, garden: 0.65, grain: 3, skyWin: 0.65, skyWinFar: 0.4, rowBand: 0.05, rowEven: 0.8, skyHaze: 0.55, skyHazeFar: 0.88,
-  // `?bldg=tex` only: the textured units (atmosphere.ts). Set against the same two measures, with as little room
-  texLow: 0.8, texFine: 0.1, texFineTop: 2, texWin: 0.34, texWinFar: 0.2, texShade: 1.6, texDirt: 0.25, texDirtBase: 0.1, texTone: 1.07, texRoofTone: 1.1, texRoofNear: 0.62,
+  // the textured buildings (atmosphere.ts), set against the same two measures after their ceilings for busy detail were
+  // raised (2026-11-24, the owner: windows and weathering stronger than the look test). What binds: the near-black share
+  // (T6: the frame has 0.1 to 0.2 % of room beside the play area's own darks and the streets', hence texDark, texDarkShade
+  // and texToneShade) and the walls' detail ratio, which the buildings' forms set more than their textures do
+  texLow: 0.8, texFine: 0.1, texFineTop: 2, texWin: 0.75, texWinFar: 0.45, texBand: 0.6, texShade: 1.25, texDirt: 0.6, texDirtBase: 0.15, texDirtOwn: 0.6, texTone: 0.98, texRoofTone: 1.1, texRoofNear: 0.8,
+  texDark: 0.35, texDarkShade: 0.75, texToneShade: 1.25,
 };
 
 interface Item {

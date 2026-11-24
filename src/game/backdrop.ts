@@ -33,13 +33,13 @@ export interface BackgroundOptions {
   morph?: string | null;
   /** Squares of sheet under the play area's piers: nothing is built there. */
   keepOut?: readonly KeepOut[];
-  /** `?bgdebug=facing`: the background painted by class (ground seen roof-on, other ground, roofs, walls), for measuring; `?bgdebug=range`: by distance (beyond 200 m red, nearer green); `?bgdebug=dist`: by distance in bands of 100 m; `?bgdebug=notrees`: the city as it is, without its trees (their shadows stay), to find the trees' pixels by difference. */
+  /** `?bgdebug=facing`: the background painted by class (ground seen roof-on, other ground, roofs, walls), for measuring; `?bgdebug=range`: by distance (beyond 200 m red, nearer green); `?bgdebug=dist`: by distance in bands of 100 m; `?bgdebug=notrees`: the city as it is, without its trees (their shadows stay), to find the trees' pixels by difference; `?bgdebug=unit0`, `unit1`, `unit2`: every building painted by three bits of the number of the unit it shows (and of its half turn), everything else black, to count the different buildings in a view. */
   debug?: string | null;
   /** `?farwin=1`: a variant for comparison, the fronts' windows kept further from the play volume at reduced contrast (the default fades them to tone 45 to 105 m from it). */
   farWindows?: boolean;
   /** `?bgtune=key:value,...`: numbers of the city's atmosphere to try without a build (foldcity/atmosphere.ts, TUNABLE). */
   tune?: string | null;
-  /** `?bldg=tex`: a look test, the near level of the Haussmann and Art Deco lots as the textured units of citytex.glb. */
+  /** `?bldg=old`: for comparison, the buildings as they were before the textured ones (city.glb: plain colours and the painted atlas). */
   buildings?: string | null;
 }
 
@@ -58,5 +58,5 @@ export function createBackground(theme: VisualTheme, opts: BackgroundOptions = {
   const freeze = loop ? null : parseFreeze(opts.morph ?? null);
   if (opts.morph && !freeze && !loop) console.warn(`cannot read ?morph=${opts.morph} (for example s1-s2:0.5: neighbouring sections, a fraction from 0 to 1)`);
   const pin = variant && (STRUCTURES as readonly string[]).includes(variant) ? (variant as StructureName) : undefined;
-  return new MorphCity(theme, { keepOut: opts.keepOut, pin, freeze, loop, debug: opts.debug === 'facing' ? 1 : opts.debug === 'range' ? 2 : opts.debug === 'dist' ? 3 : 0, noTrees: opts.debug === 'notrees', farWindows: opts.farWindows, texBuildings: opts.buildings === 'tex', tune: parseTune(opts.tune ?? null) });
+  return new MorphCity(theme, { keepOut: opts.keepOut, pin, freeze, loop, debug: opts.debug === 'facing' ? 1 : opts.debug === 'range' ? 2 : opts.debug === 'dist' ? 3 : opts.debug === 'unit0' ? 4 : opts.debug === 'unit1' ? 5 : opts.debug === 'unit2' ? 6 : 0, noTrees: opts.debug === 'notrees', farWindows: opts.farWindows, oldBuildings: opts.buildings === 'old', tune: parseTune(opts.tune ?? null) });
 }

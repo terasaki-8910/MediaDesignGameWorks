@@ -71,20 +71,42 @@ export function modelHeights(geometry: THREE.BufferGeometry): ModelHeights {
   return { x0, z0, dx, dz, h };
 }
 
-/** Draw the heights of the buildings that stand in structure `si` into `data` (MAP_WIDTH x MAP_HEIGHT bytes, rows along b). */
-export function bakeHeights(data: Uint8Array, models: ReadonlyMap<number, ModelHeights>, buildings: readonly MorphBuilding[], si: number, sinkExtra: number) {
+/** What stands in a building's box instead of its model: a mesh's height field, its factors along the box's three axes, its own centre, and a half turn. */
+export interface ShadowFit {
+  mh: ModelHeights;
+  kx: number;
+  ky: number;
+  kz: number;
+  cx: number;
+  cz: number;
+  turn: boolean;
+}
+
+/**
+ * Draw the heights of the buildings that stand in structure `si` into `data` (MAP_WIDTH x MAP_HEIGHT bytes, rows along b).
+ * `fit` gives the mesh that stands in a building's box where it is not the model's own (the textured units: morphcity.ts).
+ */
+export function bakeHeights(
+  data: Uint8Array, models: ReadonlyMap<number, ModelHeights>, buildings: readonly MorphBuilding[], si: number, sinkExtra: number,
+  fit?: (b: MorphBuilding, si: number) => ShadowFit | undefined,
+) {
   const w = MAP_WIDTH;
   data.fill(0);
   for (const b of buildings) {
     if (!b.alive[si]) continue;
-    const mh = models.get(b.model);
+    const own = fit?.(b, si);
+    const mh = own?.mh ?? models.get(b.model);
     if (!mh) continue;
     const m = MODELS[b.model];
     const lot = b.lot;
     const s = lot.scale;
     const sx = s * (lot.stretch ?? 1);
-    const c = lot.flip ? -1 : 1;
-    const sy = s * b.sy[si];
+    const c = (lot.flip ? -1 : 1) * (own?.turn ? -1 : 1);
+    const sy = s * b.sy[si] * (own?.ky ?? 1);
+    const kx = own?.kx ?? 1;
+    const kz = own?.kz ?? 1;
+    const cx = own ? own.cx : m.cx;
+    const cz = own ? own.cz : m.cz;
     const drop = b.sink[si] + sinkExtra;
     // the footprint's reach along a and b (the model's X runs along b when swapped)
     const ru = (lot.swap ? m.d * s : m.w * sx) / 2 + CELL;
@@ -98,8 +120,8 @@ export function bakeHeights(data: Uint8Array, models: ReadonlyMap<number, ModelH
         const da = A0 + (i + 0.5) * CELL - lot.u;
         const db = B0 + (j + 0.5) * CELL - lot.v;
         // morphcity.ts, write(): x = c * (swap ? ev : eu), z = x cross n
-        const mx = m.cx + (c * (lot.swap ? db : da)) / sx;
-        const mz = m.cz + (lot.swap ? -c * da : c * db) / s;
+        const mx = cx + (c * (lot.swap ? db : da)) / (sx * kx);
+        const mz = cz + (lot.swap ? -c * da : c * db) / (s * kz);
         const gi = Math.floor((mx - mh.x0) / mh.dx);
         const gj = Math.floor((mz - mh.z0) / mh.dz);
         if (gi < 0 || gj < 0 || gi >= GRID || gj >= GRID) continue;

@@ -175,7 +175,7 @@ export class Game {
     Promise.all([gate, sky, kit, city, character]).finally(() => {
       giltTakesSky(this.engine.scene, this.world.giltMaterials()); // before warmUp, so the gilt's shader is compiled once
       this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
-      if (['facing', 'range', 'dist'].includes(query.get('bgdebug') ?? '')) this.flattenForDebug();
+      if (['facing', 'range', 'dist', 'unit0', 'unit1', 'unit2'].includes(query.get('bgdebug') ?? '')) this.flattenForDebug();
       this.ready = true;
     });
     if (opts.demo) this.director = new DemoDirector(this, opts.demo);

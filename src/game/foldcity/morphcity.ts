@@ -4,19 +4,21 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { VisualTheme } from '../../core/types.ts';
-import { atmosphereUniforms, bindSky, FAR_WINDOWS, KEY_ELEVATION, patchShader, rowTone, TEX_LAYERS, type AtmosphereParams, type AtmosphereUniforms } from './atmosphere.ts';
+import { atmosphereUniforms, bindSky, FAR_WINDOWS, KEY_ELEVATION, patchShader, rowTone, TEX_LAYERS, TEX_NAMES, type AtmosphereParams, type AtmosphereUniforms } from './atmosphere.ts';
 import { LOOK } from '../look.ts';
 import { ATMOSPHERE, type Background, type Prepare } from './foldcity.ts';
 import { buildSheetGround, type SheetGround } from './ground.ts';
 import { footprint } from './layout.ts';
-import { meshName, MODELS, TEX_FOR, TEX_UNITS, type TexUnit } from './models.ts';
+import { meshName, MODELS, pickUnit, unitFamily, type UnitInfo } from './models.ts';
+import { chooseUnits, type UnitChoice } from './unitpick.ts';
 import { heightAt, planSteps, type KeepOut, type MorphBuilding, type MorphPlan } from './morphplan.ts';
 import { PLAY_CENTER } from './plan.ts';
 import { SECTION_STRUCTURE, type Freeze } from './progression.ts';
 import { rng } from './rng.ts';
-import { bakeHeights, castShadows, MAP_HEIGHT, MAP_WIDTH, modelHeights, shadowTexture, type ModelHeights } from './shadow.ts';
+import { bakeHeights, castShadows, MAP_HEIGHT, MAP_WIDTH, modelHeights, shadowTexture, type ModelHeights, type ShadowFit } from './shadow.ts';
 import { A0, A1, blendState, BEND, CEILING_Y, headingAt, SLOT, copyState, GROUND_Y, makeState, restState, RING_HALF, RING_RADIUS, sheetAt, sheetFrame, STRUCTURES, Z0, type SheetState, type StructureName } from './sheet.ts';
 import { skyline, type SkyMass } from './skyline.ts';
+import { UNITS } from './units.ts';
 import { makeFrame } from './surfaces.ts';
 
 /** A fold from one structure into the next takes this long; with reduced motion the city fades out and back in instead. */
@@ -64,10 +66,18 @@ const drawn = (o: THREE.Object3D, ms: number) =>
 interface Item {
   b: MorphBuilding;
   id: number;
-  geometry: [number, number];
-  lod: 0 | 1;
-  /** `?bldg=tex`: the textured unit that is its near level, scaled to the model's footprint and height. */
-  unit?: TexUnit;
+  /** Per structure: the geometry of its near and of its far level there. */
+  geometry: [number, number][];
+  /** The geometry it shows now. */
+  shown: number;
+  /**
+   * The textured unit that stands in its box, per structure (a lot's height differs between structures, and with it the
+   * unit whose proportions fit), and the one it shows now; none for a tree, and none at all with `?bldg=old`.
+   */
+  units?: (UnitInfo | null)[];
+  unit?: UnitInfo | null;
+  /** The unit stands a half turn about its own up (the same unit beside itself never shows the same end). */
+  turn: boolean;
   /** Its footprint along a and b. */
   foot: [number, number];
   /** The frame it stands in now, its height factor (0 = not shown) and how far its base is sunk. */
@@ -94,31 +104,31 @@ export interface MorphCityOptions {
   /** Fold on and on through every structure and back (`?morph=loop`), to measure the frame time of a fold. */
   loop?: boolean;
   /** `?bgdebug=facing`: paint the background by class instead of lighting it (atmosphere.ts, bgFacing). */
-  debug?: 0 | 1 | 2 | 3;
+  debug?: 0 | 1 | 2 | 3 | 4 | 5 | 6;
   /** `?farwin=1`: keep the fronts' windows further from the play volume at reduced contrast (atmosphere.ts, FAR_WINDOWS). */
   farWindows?: boolean;
   /** `?bgdebug=notrees`: leave the trees out of the batch (their shadows stay). */
   noTrees?: boolean;
   /** `?bgtune=key:value,...`: numbers of the city's atmosphere to try without a build (atmosphere.ts, parseTune). */
   tune?: Partial<AtmosphereParams>;
-  /** `?bldg=tex`: a look test. The near level of the Haussmann and Art Deco lots is a textured unit of citytex.glb (models.ts, TEX_FOR). */
-  texBuildings?: boolean;
+  /** `?bldg=old`: the buildings of city.glb as they were before the textured units (for comparison). */
+  oldBuildings?: boolean;
 }
 
 /**
- * The layers of citytex.glb as one array texture (512 x 256, five layers, mipmapped: 3.5 MB on the GPU): the colour of
- * each from its own image, its weathering mask (alpha) from a channel of the two mask images. Returns the texture and
- * the mean colour of each layer (linear), which the shader's distance tone needs.
+ * The layers of buildings.glb as one array texture (512 x 256, eight layers, mipmapped: 5.6 MB on the GPU): the colour of
+ * each from its own image, its weathering mask (alpha) from a channel of the three mask images. Returns the texture,
+ * the mean colour of each layer (linear), which the shader's distance tone needs, and the mean colour of every row of
+ * every layer as a small texture (a column a layer): what a front's storeys are from afar.
  */
-function texLayers(file: { scene: THREE.Object3D }): { texture: THREE.DataArrayTexture; means: THREE.Vector3[] } {
+function texLayers(file: { scene: THREE.Object3D }): { texture: THREE.DataArrayTexture; means: THREE.Vector3[]; rows: THREE.DataTexture } {
   const images = new Map<string, CanvasImageSource & { width: number; height: number }>();
   file.scene.traverse((o) => {
     const mat = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
     if (mat?.map?.image) images.set(mat.name, mat.map.image as CanvasImageSource & { width: number; height: number });
   });
-  const names = ['limestone', 'facade', 'slate', 'zinc', 'glazing'];
-  const first = images.get('M_tx_limestone');
-  if (!first) throw new Error('citytex.glb has no layer images');
+  const first = images.get(`M_tx_${TEX_NAMES[0]}`);
+  if (!first) throw new Error('buildings.glb has no layer images');
   const { width, height } = first;
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -126,29 +136,42 @@ function texLayers(file: { scene: THREE.Object3D }): { texture: THREE.DataArrayT
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   const read = (name: string) => {
     const image = images.get(name);
-    if (!image || image.width !== width || image.height !== height) throw new Error(`citytex.glb: image ${name} is missing or of another size`);
+    if (!image || image.width !== width || image.height !== height) throw new Error(`buildings.glb: image ${name} is missing or of another size`);
     ctx.drawImage(image, 0, 0);
     return ctx.getImageData(0, 0, width, height).data;
   };
-  const masks = [read('M_tx_mask_a'), read('M_tx_mask_b')];
-  const data = new Uint8Array(width * height * 4 * names.length);
-  const lin = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const masks = [read('M_tx_mask_a'), read('M_tx_mask_b'), read('M_tx_mask_c')];
+  const n = TEX_NAMES.length;
+  const data = new Uint8Array(width * height * 4 * n);
+  const rowData = new Uint8Array(n * height * 4);
+  const lin = new Float32Array(256);
+  for (let i = 0; i < 256; i++) lin[i] = i / 255 <= 0.04045 ? i / 255 / 12.92 : ((i / 255 + 0.055) / 1.055) ** 2.4;
+  const srgb = (c: number) => Math.round(255 * (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055));
   const means: THREE.Vector3[] = [];
-  for (const [k, name] of names.entries()) {
+  for (const [k, name] of TEX_NAMES.entries()) {
     const px = read(`M_tx_${name}`);
     const mask = masks[Math.floor(k / 3)];
     const sum = [0, 0, 0];
     const at = k * width * height * 4;
-    for (let i = 0; i < width * height; i++) {
-      for (let c = 0; c < 3; c++) {
-        data[at + i * 4 + c] = px[i * 4 + c];
-        sum[c] += lin(px[i * 4 + c] / 255);
+    for (let y = 0; y < height; y++) {
+      const row = [0, 0, 0];
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        for (let c = 0; c < 3; c++) {
+          data[at + i * 4 + c] = px[i * 4 + c];
+          row[c] += lin[px[i * 4 + c]];
+        }
+        data[at + i * 4 + 3] = mask[i * 4 + (k % 3)];
       }
-      data[at + i * 4 + 3] = mask[i * 4 + (k % 3)];
+      for (let c = 0; c < 3; c++) {
+        sum[c] += row[c];
+        rowData[(y * n + k) * 4 + c] = srgb(row[c] / width);
+      }
+      rowData[(y * n + k) * 4 + 3] = 255;
     }
     means.push(new THREE.Vector3(sum[0], sum[1], sum[2]).divideScalar(width * height));
   }
-  const texture = new THREE.DataArrayTexture(data, width, height, names.length);
+  const texture = new THREE.DataArrayTexture(data, width, height, n);
   texture.format = THREE.RGBAFormat;
   texture.type = THREE.UnsignedByteType;
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -158,8 +181,17 @@ function texLayers(file: { scene: THREE.Object3D }): { texture: THREE.DataArrayT
   texture.generateMipmaps = true;
   texture.anisotropy = 4;
   texture.needsUpdate = true;
-  return { texture, means };
+  const rows = new THREE.DataTexture(rowData, n, height, THREE.RGBAFormat, THREE.UnsignedByteType);
+  rows.colorSpace = THREE.SRGBColorSpace;
+  rows.wrapS = THREE.ClampToEdgeWrapping;
+  rows.wrapT = THREE.RepeatWrapping;
+  rows.minFilter = rows.magFilter = THREE.LinearFilter;
+  rows.needsUpdate = true;
+  return { texture, means, rows };
 }
+
+/** The mesh of a unit at a level of detail, by its name in buildings.glb (a prop is one mesh). */
+const unitMesh = (u: UnitInfo, lod: 0 | 1) => (u.family === 'prop' ? u.name : `${u.name}_lod${lod}`);
 
 /** A geometry's colours as four floats a vertex (the city's models carry three, the textured units four as normalized shorts): one batch needs them alike. */
 function colour4(geometry: THREE.BufferGeometry) {
@@ -187,7 +219,10 @@ export class MorphCity implements Background {
   private readonly opts: MorphCityOptions;
   private items: Item[] = [];
   /** The far skyline of the open canyon (skyline.ts): instances of the same batch, standing where they stand for good. */
-  private sky: { id: number; mass: SkyMass; open: THREE.Matrix4 }[] = [];
+  private sky: { id: number; mass: SkyMass; k: [number, number, number]; open: THREE.Matrix4 }[] = [];
+  /** `?bgdebug=unit0..2`: the colour that says which unit a building shows (three bits of its number). */
+  private unitCode: ((it: Item) => [number, number, number]) | null = null;
+  private readonly c4 = new THREE.Vector4();
   /** Where the far skyline stands: 0 = on the open canyon's flat far end, 1 = round the far end of the tube (pose). */
   private skyRing = 0;
   private mesh: THREE.BatchedMesh | null = null;
@@ -198,6 +233,9 @@ export class MorphCity implements Background {
    * reads two textures (each holding the map of the structure in `shadowSlot`) and blends them through a fold.
    */
   private readonly modelH = new Map<number, ModelHeights>();
+  /** The height field of each textured unit (its far mesh), by its name, and the building each plan entry is drawn as. */
+  private readonly unitH = new Map<string, ModelHeights>();
+  private readonly itemOf = new Map<MorphBuilding, Item>();
   private readonly shadowMaps: (Uint8Array | null)[] = STRUCTURES.map(() => null);
   private shadowJob: { si: number; out: Uint8Array; steps: Generator<void, void> } | null = null;
   private readonly shadowTex = [shadowTexture(), shadowTexture()];
@@ -255,8 +293,9 @@ export class MorphCity implements Background {
     };
     // the two files load while the city is planned (the plan needs neither): the plan's second or so of work no longer waits
     // for the download and the parsing, which go on between its slices
-    const tex = !!this.opts.texBuildings;
-    const assets = Promise.all([loader.loadAsync(url), loader.loadAsync(url.replace(/city\.glb$/, 'cityprops.glb')), tex ? loader.loadAsync(url.replace(/city\.glb$/, 'citytex.glb')) : null]);
+    // (the buildings are the textured units of buildings.glb; `?bldg=old` loads those of city.glb instead. The trees are in cityprops.glb either way)
+    const old = !!this.opts.oldBuildings;
+    const assets = Promise.all([old ? loader.loadAsync(url) : null, loader.loadAsync(url.replace(/city\.glb$/, 'cityprops.glb')), old ? null : loader.loadAsync(url.replace(/city\.glb$/, 'buildings.glb'))]);
     assets.catch(() => {}); // (a failed load is reported where it is awaited, below)
     // planned in slices of about 50 ms, so the page keeps drawing while it loads (a few longer frames rather than one for
     // each of the plan's forty-odd steps)
@@ -343,41 +382,40 @@ export class MorphCity implements Background {
     const sources = new Map<string, THREE.Mesh>();
     let vertices = 0;
     let indices = 0;
-    // `?bldg=tex`: which textured unit stands in for the near level of each lot (one of the model's candidates, by the lot)
-    const unitOf = new Map<MorphBuilding, TexUnit>();
-    if (units) {
-      const pick = rng(this.theme.city.seed * 17 + 3);
-      for (const b of list) {
-        const names = TEX_FOR[MODELS[b.model].name];
-        if (!names) continue;
-        const name = names[Math.min(names.length - 1, Math.floor(pick() * names.length))];
-        unitOf.set(b, TEX_UNITS.find((u) => u.name === name)!);
-      }
-    }
-    for (const b of list)
-      for (const lod of [0, 1] as const) {
-        const m = MODELS[b.model];
-        const unit = lod === 0 ? unitOf.get(b) : undefined;
-        const key = unit ? `${unit.name}_lod0` : meshName(m, lod);
-        if (sources.has(key)) continue;
-        const file = unit ? 'citytex.glb' : m.props ? 'cityprops.glb' : 'city.glb';
-        const src = (unit ? units! : m.props ? props : gltf).scene.getObjectByName(key) as THREE.Mesh | undefined;
-        if (!src?.isMesh) throw new Error(`${file} has no mesh "${key}"`);
-        sources.set(key, src);
-        vertices += src.geometry.getAttribute('position').count;
-        indices += src.geometry.index!.count;
-      }
-    // the far skyline is made of far models, some of which may stand nowhere in the city itself
-    const masses = skyline(this.theme.city.seed);
-    for (const mass of masses) {
-      const m = MODELS[mass.model];
-      const key = meshName(m, 1);
-      if (sources.has(key)) continue;
-      const src = (m.props ? props : gltf).scene.getObjectByName(key) as THREE.Mesh | undefined;
-      if (!src?.isMesh) throw new Error(`${m.props ? 'cityprops.glb' : 'city.glb'} has no mesh "${key}"`);
+    const source = (key: string, file: { scene: THREE.Object3D }, fileName: string) => {
+      const have = sources.get(key);
+      if (have) return have;
+      const src = file.scene.getObjectByName(key) as THREE.Mesh | undefined;
+      if (!src?.isMesh) throw new Error(`${fileName} has no mesh "${key}"`);
       sources.set(key, src);
       vertices += src.geometry.getAttribute('position').count;
       indices += src.geometry.index!.count;
+      return src;
+    };
+    // which textured unit stands in each lot's box, structure by structure (unitpick.ts)
+    const unitsOf = units ? chooseUnits(list, this.theme.city.seed) : new Map<MorphBuilding, UnitChoice>();
+    for (const b of list) {
+      const m = MODELS[b.model];
+      const own = unitsOf.get(b);
+      if (own) for (const u of own.units) for (const lod of [0, 1] as const) source(unitMesh(u!, lod), units!, 'buildings.glb');
+      else for (const lod of [0, 1] as const) source(meshName(m, lod), m.props ? props : gltf!, m.props ? 'cityprops.glb' : 'city.glb');
+    }
+    // the far skyline is made of far models, some of which may stand nowhere in the city itself
+    const masses = skyline(this.theme.city.seed);
+    const massUnit = new Map<SkyMass, UnitInfo>();
+    {
+      const pick = rng(this.theme.city.seed * 19 + 7);
+      let before: UnitInfo | null = null;
+      for (const mass of masses) {
+        const m = MODELS[mass.model];
+        const p = pick();
+        const u: UnitInfo | null = units ? pickUnit(UNITS, m, m.w, m.h * mass.sy, p, before, null, unitFamily(m, pick())) : null;
+        if (u) {
+          massUnit.set(mass, u);
+          before = u;
+          source(unitMesh(u, 1), units!, 'buildings.glb');
+        } else source(meshName(m, 1), m.props ? props : gltf!, m.props ? 'cityprops.glb' : 'city.glb');
+      }
     }
     for (const [i, m] of MODELS.entries()) {
       const far = sources.get(meshName(m, 1));
@@ -390,31 +428,41 @@ export class MorphCity implements Background {
       const centre = Math.abs((bb.max.x + bb.min.x) / 2 - m.cx) + Math.abs((bb.max.z + bb.min.z) / 2 - m.cz);
       if (off + centre > 1.5) console.warn(`foldcity/models.ts disagrees with the GLB for ${m.name} (off by ${(off + centre).toFixed(1)} m)`);
     }
-    const material = (gltf.scene.getObjectByName(meshName(MODELS[0], 0)) as THREE.Mesh).material as THREE.MeshStandardMaterial;
-    material.fog = false;
-    if (material.map) material.map.anisotropy = 4;
     const tuned = { ...ATMOSPHERE, ...this.opts.tune };
-    const tone = material.map ? rowTone(material.map, tuned.rowBand, tuned.rowEven) : null;
-    if (tone) {
-      atm.uBgRowTone.value = tone;
-      atm.uBgRowOn.value = 1;
-    }
+    let material: THREE.MeshStandardMaterial;
     if (units) {
-      // the textured units' layers ride in the same material (one draw call): an array texture beside the atlas
+      // the textured units' layers as an array texture, in one material (one draw call). Its map is one white texel: a
+      // face that shows no layer (glass, rails, pots, gilt, the trees) is its vertex colour
       const layers = texLayers(units);
-      if (layers.means.length !== TEX_LAYERS) throw new Error('citytex.glb: wrong number of layers');
+      if (layers.means.length !== TEX_LAYERS) throw new Error('buildings.glb: wrong number of layers');
       atm.uBgTex.value = layers.texture;
+      atm.uBgTexRow.value = layers.rows;
       (atm.uBgTexMean.value as THREE.Vector3[]).forEach((v, k) => v.copy(layers.means[k]));
+      const white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+      white.colorSpace = THREE.SRGBColorSpace;
+      white.needsUpdate = true;
+      material = new THREE.MeshStandardMaterial({ map: white, vertexColors: true, roughness: 0.85, metalness: 0 });
+      material.name = 'M_city';
       for (const src of sources.values()) colour4(src.geometry);
-      for (const u of TEX_UNITS) {
-        const src = sources.get(`${u.name}_lod0`);
+      for (const u of UNITS) {
+        const src = sources.get(unitMesh(u, 0));
         if (!src) continue;
+        this.unitH.set(u.name, modelHeights((sources.get(unitMesh(u, 1)) ?? src).geometry));
         src.geometry.computeBoundingBox();
         const bb = src.geometry.boundingBox!;
         const off = Math.abs(bb.max.x - bb.min.x - u.w) + Math.abs(bb.max.z - bb.min.z - u.d) + Math.abs(bb.max.y - u.top) + Math.abs((bb.max.x + bb.min.x) / 2 - u.cx) + Math.abs((bb.max.z + bb.min.z) / 2 - u.cz);
-        if (off > 1.5) console.warn(`foldcity/models.ts disagrees with citytex.glb for ${u.name} (off by ${off.toFixed(1)} m)`);
+        if (off > 1.5) console.warn(`foldcity/units.ts disagrees with buildings.glb for ${u.name} (off by ${off.toFixed(1)} m)`);
+      }
+    } else {
+      material = (gltf!.scene.getObjectByName(meshName(MODELS[0], 0)) as THREE.Mesh).material as THREE.MeshStandardMaterial;
+      if (material.map) material.map.anisotropy = 4;
+      const tone = material.map ? rowTone(material.map, tuned.rowBand, tuned.rowEven) : null;
+      if (tone) {
+        atm.uBgRowTone.value = tone;
+        atm.uBgRowOn.value = 1;
       }
     }
+    material.fog = false;
     material.onBeforeCompile = (shader) => patchShader(shader, atm, { tex: !!units });
     material.customProgramCacheKey = () => (units ? 'foldcity-buildings-tex' : 'foldcity-buildings');
 
@@ -427,10 +475,21 @@ export class MorphCity implements Background {
     for (const [key, src] of sources) ids.set(key, mesh.addGeometry(src.geometry));
     const rTint = rng(this.theme.city.seed * 13 + 5);
     const tint = new THREE.Vector4();
+    // `?bgdebug=unit0..2`: three bits of (the unit's number, its half turn) as the instance's colour; 0 = not a building
+    const codeBits = (code: number) => {
+      const k = ((this.opts.debug ?? 0) - 4) * 3;
+      return [(code >> k) & 1, (code >> (k + 1)) & 1, (code >> (k + 2)) & 1].map((bit) => bit * 0.6) as [number, number, number];
+    };
+    const unitCode = (u: UnitInfo | null | undefined, turn: boolean) => (u && u.family !== 'prop' ? (UNITS.indexOf(u) + 1) * 2 + (turn ? 1 : 0) : 0);
+    this.unitCode = (this.opts.debug ?? 0) >= 4 ? (it) => codeBits(unitCode(it.unit, it.turn)) : null;
     for (const b of list) {
-      const unit = unitOf.get(b);
-      const geometry: [number, number] = [ids.get(unit ? `${unit.name}_lod0` : meshName(MODELS[b.model], 0))!, ids.get(meshName(MODELS[b.model], 1))!];
-      const id = mesh.addInstance(geometry[1]);
+      const own = unitsOf.get(b);
+      const m = MODELS[b.model];
+      const geometry = STRUCTURES.map((_, si): [number, number] => {
+        const u = own?.units[si];
+        return u ? [ids.get(unitMesh(u, 0))!, ids.get(unitMesh(u, 1))!] : [ids.get(meshName(m, 0))!, ids.get(meshName(m, 1))!];
+      });
+      const id = mesh.addInstance(geometry[0][1]);
       mesh.setVisibleAt(id, false); // until the first pose puts it on the sheet
       // a tone and a warmth per block (about 11 % either way: the brief's stone by stone), and 6 % more per house: seen from
       // far a wall of city is houses of different stone, where one tone made it a band
@@ -442,10 +501,13 @@ export class MorphCity implements Background {
       const warm = prop ? (rTint() - 0.5) * 0.05 : (h2 - Math.floor(h2) - 0.5) * 0.1 + (rTint() - 0.5) * 0.02;
       // the alpha carries the number of the building's block: with it the building goes into the far haze when its block does (atmosphere.ts, bgFar)
       mesh.setColorAt(id, tint.set(v * (1 + warm), v, v * (1 - warm), b.lot.cell >= 0 ? Math.round(cell * 255) / 255 : 0.5));
-      this.items.push({
-        b, id, geometry, lod: 1, unit, foot: footprint(MODELS[b.model], b.lot.scale, b.lot.swap, b.lot.stretch), p: new THREE.Vector3(), x: new THREE.Vector3(1, 0, 0), n: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1),
+      const item: Item = {
+        b, id, geometry, shown: geometry[0][1], units: own?.units, unit: own?.units[0], turn: own?.turn ?? false, foot: footprint(MODELS[b.model], b.lot.scale, b.lot.swap, b.lot.stretch), p: new THREE.Vector3(), x: new THREE.Vector3(1, 0, 0), n: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1),
         h: 0, sink: 0.5, angle: 0, axis: new THREE.Vector3(1, 0, 0),
-      });
+      };
+      this.items.push(item);
+      this.itemOf.set(b, item);
+      if (this.unitCode) mesh.setColorAt(id, tint.set(...this.unitCode(item), tint.w));
     }
     // the far skyline: upright on the flat far end of the open canyon's sheet, sunk a little, each in its row's haze (the
     // instance colour's alpha from 2 on says so: atmosphere.ts, bgSkyline)
@@ -455,15 +517,19 @@ export class MorphCity implements Background {
     const up = new THREE.Vector3(0, 1, 0);
     for (const mass of masses) {
       const m = MODELS[mass.model];
-      const id = mesh.addInstance(ids.get(meshName(m, 1))!);
+      const u = massUnit.get(mass);
+      const id = mesh.addInstance(ids.get(u ? unitMesh(u, 1) : meshName(m, 1))!);
+      // (a unit is fitted to the model's box, as in the city)
+      const k: [number, number, number] = u ? [m.w / u.w, m.h / u.h, m.d / u.d] : [1, 1, 1];
       sheetAt(open, mass.a, mass.b, at);
       q.setFromAxisAngle(up, (mass.turn * Math.PI) / 2);
-      this.m4.compose(at.setY(at.y - 6), q, this.tmp.set(mass.scale, mass.scale * mass.sy, mass.scale));
+      this.m4.compose(at.setY(at.y - 6), q, this.tmp.set(mass.scale * k[0], mass.scale * mass.sy * k[1], mass.scale * k[2]));
       // (the model's own centre stays where it is: a metre or two at this distance)
       mesh.setMatrixAt(id, this.m4);
       const v = 0.9 + rTint() * 0.1;
       mesh.setColorAt(id, tint.set(v, v, v, 2 + mass.layer));
-      this.sky.push({ id, mass, open: this.m4.clone() });
+      if (this.unitCode) mesh.setColorAt(id, tint.set(...codeBits(unitCode(u, false)), 2 + mass.layer));
+      this.sky.push({ id, mass, k, open: this.m4.clone() });
     }
     this.stats.instances = list.length + masses.length;
     this.mesh = mesh;
@@ -593,7 +659,7 @@ export class MorphCity implements Background {
         this.t1.copy(along).multiplyScalar(s.mass.turn >= 2 ? -1 : 1);
         this.t3.crossVectors(this.t1, f.n);
         const sy = Math.min(s.mass.sy, (0.8 * RING_RADIUS) / (m.h * s.mass.scale));
-        this.m4.makeBasis(this.t1.multiplyScalar(s.mass.scale), this.t2.copy(f.n).multiplyScalar(s.mass.scale * sy), this.t3.multiplyScalar(s.mass.scale));
+        this.m4.makeBasis(this.t1.multiplyScalar(s.mass.scale * s.k[0]), this.t2.copy(f.n).multiplyScalar(s.mass.scale * sy * s.k[1]), this.t3.multiplyScalar(s.mass.scale * s.k[2]));
         this.m4.setPosition(this.tmp.copy(f.p).addScaledVector(f.n, -6));
         this.mesh.setMatrixAt(s.id, this.m4);
       }
@@ -611,10 +677,19 @@ export class MorphCity implements Background {
         it.h = 0;
         continue;
       }
-      const lod = still ? b.lod[at] : b.lod[fwd < 0.5 ? ti : ti + 1];
-      if (lod !== it.lod) {
-        this.mesh.setGeometryIdAt(it.id, it.geometry[lod]);
-        it.lod = lod;
+      // (its level of detail and its unit are those of the structure it is nearer to: they change half-way through a fold)
+      const si = still ? at : fwd < 0.5 ? ti : ti + 1;
+      const shown = it.geometry[si][b.lod[si]];
+      if (shown !== it.shown) {
+        this.mesh.setGeometryIdAt(it.id, shown);
+        it.shown = shown;
+      }
+      if (it.units && it.unit !== it.units[si]) {
+        it.unit = it.units[si];
+        if (this.unitCode) {
+          this.mesh.getColorAt(it.id, this.c4);
+          this.mesh.setColorAt(it.id, this.c4.set(...this.unitCode(it), this.c4.w));
+        }
       }
       if (it.h <= 0) this.mesh.setVisibleAt(it.id, true);
       it.h = h;
@@ -645,11 +720,21 @@ export class MorphCity implements Background {
   private startShadowJob(si: number) {
     const state = restState(STRUCTURES[si]);
     this.heightScratch ??= new Uint8Array(MAP_WIDTH * MAP_HEIGHT);
-    bakeHeights(this.heightScratch, this.modelH, this.plan!.buildings, si, EXTRA_SINK);
+    bakeHeights(this.heightScratch, this.modelH, this.plan!.buildings, si, EXTRA_SINK, this.unitH.size ? (b, k) => this.shadowFit(b, k) : undefined);
     const out = new Uint8Array(MAP_WIDTH * MAP_HEIGHT);
     // (the heights are copied: the next structure's job draws over the scratch)
     const steps = castShadows(this.heightScratch.slice(), out, (a, d) => headingAt(state, a, d), { slope: Math.tan(KEY_ELEVATION), sun: LOOK.sunDir }, [PLAY_CENTER.x - SHADOW_REACH, PLAY_CENTER.x + SHADOW_REACH], Math.min(state.cut, SHADOW_REACH + 150), 4);
     return { si, out, steps };
+  }
+
+  /** The unit that stands in a building's box in structure `si`, for the shadows (shadow.ts): its height field and how it is fitted. */
+  private shadowFit(b: MorphBuilding, si: number): ShadowFit | undefined {
+    const it = this.itemOf.get(b);
+    const u = it?.units?.[si];
+    const mh = u && this.unitH.get(u.name);
+    if (!u || !mh) return undefined;
+    const m = MODELS[b.model];
+    return { mh, kx: m.w / u.w, ky: m.h / u.h, kz: m.d / u.d, cx: u.cx, cz: u.cz, turn: it!.turn };
   }
 
   /**
@@ -689,14 +774,15 @@ export class MorphCity implements Background {
     const m = MODELS[it.b.model];
     const s = it.b.lot.scale;
     const sx = s * (it.b.lot.stretch ?? 1);
-    // (a textured unit as the near level fills the model's footprint and height: the lot, the plan and the shadows stay the model's)
-    const u = it.lod === 0 ? it.unit : undefined;
+    // (a textured unit fills the model's box: the lot, the plan and the shadows stay the model's; `turn` stands it a half turn round)
+    const u = it.unit ?? undefined;
+    const t = it.turn ? -1 : 1;
     const kx = u ? m.w / u.w : 1;
     const ky = u ? m.h / u.h : 1;
     const kz = u ? m.d / u.d : 1;
-    this.m4.makeBasis(this.t1.copy(it.x).multiplyScalar(sx * kx), this.t2.copy(it.n).multiplyScalar(s * it.h * ky), this.t3.copy(it.z).multiplyScalar(s * kz));
+    this.m4.makeBasis(this.t1.copy(it.x).multiplyScalar(sx * kx * t), this.t2.copy(it.n).multiplyScalar(s * it.h * ky), this.t3.copy(it.z).multiplyScalar(s * kz * t));
     // (the model's own centre: a unit's centre lies where its mesh has it, the lot's centre where the model's was)
-    this.tmp.set(0, 0, 0).addScaledVector(it.x, -(u ? u.cx * kx : m.cx) * sx).addScaledVector(it.z, -(u ? u.cz * kz : m.cz) * s).addScaledVector(it.n, -(it.sink + EXTRA_SINK));
+    this.tmp.set(0, 0, 0).addScaledVector(it.x, -(u ? u.cx * kx : m.cx) * sx * t).addScaledVector(it.z, -(u ? u.cz * kz : m.cz) * s * t).addScaledVector(it.n, -(it.sink + EXTRA_SINK));
     this.m4.setPosition(this.tmp);
     if (it.angle !== 0) {
       this.m5.makeRotationAxis(it.axis, it.angle).multiply(this.m4);

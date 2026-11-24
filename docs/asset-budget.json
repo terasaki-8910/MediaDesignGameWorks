@@ -90,11 +90,11 @@
       "maxTextureSize": 512,
       "maxTextureBytes": 1000
     },
-    "citytex.glb": {
-      "maxFileBytes": 700000,
-      "maxTriangles": 5200,
-      "maxDrawCalls": 16,
-      "maxMaterials": 8,
+    "buildings.glb": {
+      "maxFileBytes": 6200000,
+      "maxTriangles": 68000,
+      "maxDrawCalls": 170,
+      "maxMaterials": 11,
       "maxTextureSize": 512,
       "maxTextureBytes": 300000
     }

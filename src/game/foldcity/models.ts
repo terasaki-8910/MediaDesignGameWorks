@@ -50,36 +50,74 @@ export const MODEL_INDEX = new Map(MODELS.map((m, i) => [m.name, i]));
 export const meshName = (m: ModelInfo, lod: 0 | 1) => (m.single ? m.name : `${m.name}_lod${lod}`);
 
 /**
- * The textured building units of citytex.glb (art/blender/gen_citytex.py), a look test shown with `?bldg=tex`: footprint,
- * height and centre as measured from the near meshes. They are not part of the layout: a unit stands in for the near
- * model of a lot and is scaled to that model's footprint and height (morphcity.ts), so the city is the same with and
- * without them.
+ * A textured building of buildings.glb (art/blender/gen_buildings.py; the table is units.ts, written by that script):
+ * footprint, height and centre as measured from its near mesh. The layout and the plan know only MODELS: a lot is a
+ * model's box (its length stretched, its height scaled). What stands in the box is the unit of the model's family whose
+ * own proportions come nearest (pickUnit), fitted to it, so a house keeps the proportions of its windows and storeys
+ * whatever the lot asks for; the city's plan, shadows and tests are the same with these and with the old models
+ * (`?bldg=old`).
  */
-export interface TexUnit {
+export interface UnitInfo {
   name: string;
+  /** 'H' a row of Haussmann houses, 'T' a tower house, 'D' an Art Deco mass; a landmark's own name; 'prop'. */
+  family: string;
   w: number;
   d: number;
-  /** The height that is fitted to the model's: its roofs and the stacks on them, not the tallest pot (`top`, the mesh's own height). */
+  /** The height that is fitted to the box: its roofs, not the stacks and pots on them (`top`, the mesh's own height). */
   h: number;
   top: number;
   cx: number;
   cz: number;
   tris: [number, number];
 }
-export const TEX_UNITS: readonly TexUnit[] = [
-  { name: 'tx_corner', w: 47.5, d: 21.2, h: 29.5, top: 32.4, cx: -0.05, cz: 0, tris: [1070, 606] },
-  { name: 'tx_mid', w: 46, d: 21, h: 34, top: 37.8, cx: 0, cz: 0, tris: [818, 532] },
-  { name: 'tx_end', w: 32, d: 20, h: 27.5, top: 30.6, cx: 0, cz: 0, tris: [514, 330] },
-  { name: 'tx_deco', w: 26.8, d: 18.8, h: 46.2, top: 46.2, cx: 0, cz: 0, tris: [420, 324] },
-];
-/** Which units may stand in for a model's near level (one is picked per lot); models not listed keep their own. */
-export const TEX_FOR: Readonly<Record<string, readonly string[]>> = {
-  haussmann_a: ['tx_corner', 'tx_mid'],
-  haussmann_corner: ['tx_corner'],
-  haussmann_step: ['tx_mid'],
-  haussmann_tall: ['tx_mid'],
-  haussmann_low: ['tx_end'],
-  haussmann_short: ['tx_end'],
-  tower_house: ['tx_deco'],
-  deco_block: ['tx_deco'],
+
+/**
+ * The family of units that stands in for each model (a prop of buildings.glb stands in for the one of its own name).
+ * The plan fits the Art Deco block and the tower house into many lots by their length alone; `unitFamily` gives part of
+ * those lots to rows of houses instead, so a wall of the city is not a third Art Deco slabs.
+ */
+export const UNIT_FAMILY: Readonly<Record<string, string>> = {
+  haussmann_a: 'H', haussmann_corner: 'H', haussmann_step: 'H', haussmann_low: 'H', haussmann_tall: 'H', haussmann_short: 'H',
+  tower_house: 'T', deco_block: 'D',
+  belfry: 'belfry', deco_hall: 'deco_hall', deco_tower: 'deco_tower', dome: 'dome', cathedral: 'cathedral',
+  monument: 'prop', fountain: 'prop', pier_foot: 'prop',
 };
+
+/** The family for a lot of `model`; `pick` (0 to 1) is the lot's own. */
+export function unitFamily(model: ModelInfo, pick: number): string | undefined {
+  const family = UNIT_FAMILY[model.name];
+  if (model.name === 'deco_block' && pick < 0.45) return 'H';
+  if (model.name === 'tower_house' && pick < 0.3) return 'H';
+  return family;
+}
+
+/** How a unit fits a box `w` long, `h` high and `d` deep: its factors along the three, and how far its proportions are from the box's (0 = alike). */
+export function unitFit(u: UnitInfo, w: number, h: number, d: number): { kx: number; ky: number; kz: number; err: number } {
+  const kx = w / u.w;
+  const ky = h / u.h;
+  const kz = d / u.d;
+  return { kx, ky, kz, err: Math.abs(Math.log(kx / kz)) + Math.abs(Math.log(ky / kz)) };
+}
+
+/** Units within this much of the best fit are as good as it: one of them is taken, by `pick` (0 to 1), never `avoid` if another will do. */
+export const UNIT_SLACK = 0.07;
+
+/**
+ * The unit for a box of a model: of the model's family, among those whose proportions fit about as well as the best
+ * (`UNIT_SLACK`), the one `pick` chooses; `avoid` (the neighbour's unit) is left out when there is another. `keep` (the
+ * unit this lot shows in another structure) stays if it fits within the slack. `family` is the lot's (unitFamily); null
+ * for a model with no family (a tree).
+ */
+export function pickUnit(
+  units: readonly UnitInfo[], model: ModelInfo, w: number, h: number, pick: number, avoid?: UnitInfo | null, keep?: UnitInfo | null, family: string | undefined = UNIT_FAMILY[model.name],
+): UnitInfo | null {
+  if (!family) return null;
+  if (family === 'prop') return units.find((u) => u.name === model.name) ?? null;
+  const pool = units.filter((u) => u.family === family).map((u) => ({ u, err: unitFit(u, w, h, model.d).err })).sort((a, b) => a.err - b.err);
+  if (!pool.length) return null;
+  const good = pool.filter((c) => c.err <= pool[0].err + UNIT_SLACK);
+  if (keep && good.some((c) => c.u === keep)) return keep;
+  const free = good.filter((c) => c.u !== avoid);
+  const from = free.length ? free : good;
+  return from[Math.min(from.length - 1, Math.floor(pick * from.length))].u;
+}

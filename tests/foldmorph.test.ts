@@ -8,7 +8,7 @@ import { CompiledStage } from '../src/core/compile.ts';
 import type { StageFile } from '../src/core/types.ts';
 import { pierKeepOut } from '../src/game/foldcity/keepout.ts';
 import { footprint } from '../src/game/foldcity/layout.ts';
-import { MODELS } from '../src/game/foldcity/models.ts';
+import { MODELS, UNIT_FAMILY, unitFit } from '../src/game/foldcity/models.ts';
 import { boxAt, heightAt, lipBlocks, NEAR_STRETCH, nearLandmarks, planMorph, presenceAt, SAMPLES, shownSurface, SPIRE_CLEAR, SPIRE_FAR, type MorphBuilding } from '../src/game/foldcity/morphplan.ts';
 import { cutsSheet, overlaps, PLAY, PLAY_CENTER, SheetPoints, type Obb } from '../src/game/foldcity/plan.ts';
 import { parseFreeze, SECTION_STRUCTURE } from '../src/game/foldcity/progression.ts';
@@ -18,6 +18,8 @@ import {
   type SheetState, type StructureName,
 } from '../src/game/foldcity/sheet.ts';
 import { skyline, SKYLINE_CLEAR } from '../src/game/foldcity/skyline.ts';
+import { chooseUnits } from '../src/game/foldcity/unitpick.ts';
+import { UNITS } from '../src/game/foldcity/units.ts';
 import { frameAt, makeFrame } from '../src/game/foldcity/surfaces.ts';
 import { VARIANTS } from '../src/game/foldcity/variants.ts';
 import { pierFeet, planSlabs } from '../src/game/kitLayout.ts';
@@ -474,4 +476,56 @@ test('the far skyline stands upright beyond the far end of the open canyon, the 
   // every row has peaks, and the rows part: some towers and domes among the long roofs
   const peaks = masses.filter((m) => ['deco_tower', 'dome', 'cathedral', 'belfry'].includes(MODELS[m.model].name));
   assert.ok(peaks.length >= 8 && peaks.length < masses.length / 2, `${peaks.length} peaks of ${masses.length}`);
+});
+
+test('the textured units: every building has one whose proportions fit its box, and no unit stands twice in a row the same way', () => {
+  const list = plan.buildings.filter((b) => b.alive.some(Boolean));
+  const chosen = chooseUnits(list, SEED);
+  const again = chooseUnits(list, SEED);
+  // every model with a family has units, and the props stand in for themselves at their own size
+  for (const m of MODELS) {
+    const family = UNIT_FAMILY[m.name];
+    if (!family) continue;
+    if (family === 'prop') {
+      const u = UNITS.find((x) => x.name === m.name);
+      assert.ok(u && Math.abs(u.w - m.w) + Math.abs(u.d - m.d) + Math.abs(u.top - m.h) < 1, `${m.name} of buildings.glb is the prop's size`);
+    } else assert.ok(UNITS.some((u) => u.family === family), `units of family ${family}`);
+  }
+  const errs: number[] = [];
+  let rows = 0;
+  let before: { b: MorphBuilding; c: NonNullable<ReturnType<typeof chosen.get>> } | null = null;
+  const used = new Set<string>();
+  for (const b of list) {
+    const m = MODELS[b.model];
+    const c = chosen.get(b);
+    if (!UNIT_FAMILY[m.name]) {
+      assert.equal(c, undefined, `${m.name} has no unit`);
+      continue;
+    }
+    assert.ok(c, `${m.name} has a unit`);
+    assert.deepEqual(c.units.map((u) => u?.name), again.get(b)!.units.map((u) => u?.name));
+    assert.equal(c.turn, again.get(b)!.turn);
+    for (const [si] of STRUCTURES.entries()) {
+      const u = c.units[si];
+      assert.ok(u, `${m.name}: a unit in every structure`);
+      if (!b.alive[si] || m.kind === 'prop') continue;
+      used.add(u.name);
+      errs.push(unitFit(u, m.w * (b.lot.stretch ?? 1), m.h * b.sy[si], m.d).err);
+    }
+    if (m.kind === 'prop') continue;
+    // the lot before it in the same block: not the same unit the same way round, in any structure where both stand
+    if (before && before.b.lot.cell === b.lot.cell && b.lot.cell >= 0) {
+      rows++;
+      for (const [si] of STRUCTURES.entries())
+        if (b.alive[si] && before.b.alive[si]) assert.ok(c.units[si] !== before.c.units[si] || c.turn !== before.c.turn, `${c.units[si]!.name} twice in a row in block ${b.lot.cell}`);
+    }
+    before = { b, c };
+  }
+  assert.ok(rows > 500, `${rows} neighbours checked`);
+  // the fit: how far a unit's proportions are from its box's (the sum over length and height of |ln| of the two ratios)
+  errs.sort((p, q) => p - q);
+  const at = (q: number) => errs[Math.min(errs.length - 1, Math.floor(q * errs.length))];
+  assert.ok(at(0.5) < 0.1, `median misfit ${at(0.5).toFixed(3)}`);
+  assert.ok(at(0.9) < 0.2, `90th percentile misfit ${at(0.9).toFixed(3)}`);
+  assert.ok(used.size >= 50, `${used.size} different units stand in the city`);
 });

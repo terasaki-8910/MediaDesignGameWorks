@@ -165,11 +165,11 @@
       "attribution": ""
     },
     {
-      "path": "public/assets/citytex.glb",
+      "path": "public/assets/buildings.glb",
       "license": "own",
-      "source": "art/blender/gen_citytex.py (with art/blender/city_kit.py)",
+      "source": "art/blender/gen_buildings.py (with art/blender/city_kit.py)",
       "author": "terasaki-8910",
-      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py and city_kit.py, run through game3d blender.mjs); a look test shown with ?bldg=tex: four textured building units, each a near and a far model, and seven 512 x 256 images (five tiled layers and their weathering masks) made by the script from the Poly Haven textures listed below (CC0-1.0: sandstone_blocks_08, large_sandstone_blocks, grey_roof_tiles_02, blue_metal_plate) and its own drawing (windows, glazing)",
+      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py and city_kit.py, run through game3d blender.mjs): the background city's buildings, 79 textured units (rows of Haussmann houses, tower houses, Art Deco masses, five landmarks, three props), each a near and a far model, and eleven 512 x 256 images (eight tiled layers and their weathering masks) made by the script from the Poly Haven textures listed below (CC0-1.0: sandstone_blocks_08, large_sandstone_blocks, grey_roof_tiles_02, blue_metal_plate, grey_plaster_03, concrete_wall_003) and its own drawing (windows, shop fronts, glazing)",
       "attribution": ""
     },
     {
@@ -177,7 +177,7 @@
       "license": "CC0-1.0",
       "source": "https://polyhaven.com/a/sandstone_blocks_08",
       "author": "Rob Tuytel",
-      "tool": "Poly Haven 1K diffuse (JPG), fetched by art/fetch-textures.mjs; the limestone ashlar of the textured building units (layers 0 and 1)",
+      "tool": "Poly Haven 1K diffuse (JPG), fetched by art/fetch-textures.mjs; the limestone ashlar of the textured buildings (layers 0, 1, 5 and 7)",
       "attribution": ""
     },
     {
@@ -193,7 +193,7 @@
       "license": "CC0-1.0",
       "source": "https://polyhaven.com/a/grey_roof_tiles_02",
       "author": "Rob Tuytel",
-      "tool": "Poly Haven 1K diffuse (JPG), fetched by art/fetch-textures.mjs; the slate of the textured building units (layer 2)",
+      "tool": "Poly Haven 1K diffuse (JPG), fetched by art/fetch-textures.mjs; the slate of the textured buildings (layer 2)",
       "attribution": ""
     },
     {
@@ -201,7 +201,23 @@
       "license": "CC0-1.0",
       "source": "https://polyhaven.com/a/blue_metal_plate",
       "author": "Rob Tuytel",
-      "tool": "Poly Haven 1K diffuse (JPG), fetched by art/fetch-textures.mjs; taken nearly grey, the zinc sheet of the textured building units (layer 3)",
+      "tool": "Poly Haven 1K diffuse (JPG), fetched by art/fetch-textures.mjs; taken nearly grey, the zinc sheet of the textured buildings (layer 3)",
+      "attribution": ""
+    },
+    {
+      "path": "art/textures/grey_plaster_03/grey_plaster_03_diff_1k.jpg",
+      "license": "CC0-1.0",
+      "source": "https://polyhaven.com/a/grey_plaster_03",
+      "author": "Rob Tuytel",
+      "tool": "Poly Haven 1K diffuse (JPG), fetched by art/fetch-textures.mjs; the render of party walls, gables and chimney stacks of the textured buildings (layer 6)",
+      "attribution": ""
+    },
+    {
+      "path": "art/textures/concrete_wall_003/concrete_wall_003_diff_1k.jpg",
+      "license": "CC0-1.0",
+      "source": "https://polyhaven.com/a/concrete_wall_003",
+      "author": "Dimitrios Savva, Rico Cilliers",
+      "tool": "Poly Haven 1K diffuse (JPG), fetched by art/fetch-textures.mjs; its mould, as part of the weathering masks of stone and render",
       "attribution": ""
     }
   ]

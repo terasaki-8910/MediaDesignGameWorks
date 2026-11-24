@@ -154,16 +154,19 @@ export interface AtmosphereParams {
   /** How much of each row's own tone a front without windows keeps (the rest is the mean of its storey: rowTone). */
   rowBand?: number;
   /**
-   * `?bldg=tex` only (the textured units of citytex.glb). The distance tone (`calm`) takes a unit's layers to one tone
-   * by their mean colours and leaves standing what these set. `texLow`: the broad part of a layer's texture (patches
-   * of weathered slate, the staining of zinc, tone from stone to stone: what is left of it three mip levels down).
-   * `texFine` and `texFineTop`: its fine part (slates, seams, joints) on a building seen from the side and on one seen
-   * roof-on in a closed structure (as `grain` does for the atlas). `texWin` and `texWinFar`: the facade layer, whose
-   * detail is its windows, near the play volume and from `calmFar` on. All as a share of the texture's distance from
-   * the layer's mean. `texDirtBase`: the weathering every wall has, before what the geometry adds under cornices,
-   * sills and eaves; `texDirt`: how dark the weathering is (0 = none). `texTone` and `texRoofTone`: the tone of the
-   * stone layers and of the roof layers, as factors. `texRoofNear`: the roofs' tone before the distance tone, so it
-   * holds near the play volume (the city under the walkways) and is gone where `calm` is whole. `texShade`: all the
+   * The textured buildings (buildings.glb; not with `?bldg=old`). The distance tone (`calm`) takes a unit's layers to
+   * one tone by their mean colours and leaves standing what these set. `texLow`: the broad part of a layer's texture
+   * (patches of weathered slate, the staining of zinc, tone from stone to stone: what is left of it three mip levels
+   * down). `texFine` and `texFineTop`: its fine part (slates, seams, joints) on a building seen from the side and on
+   * one seen roof-on in a closed structure. The fronts (the facade layers) have two parts of their own: their rows
+   * (`texBand`: the mean of each row of the tile, storeys as bands of openings and wall) and their windows within the
+   * rows (`texWin` near the play volume, `texWinFar` from `calmFar` on: with distance a front softens to its bands and
+   * never becomes dots). All as a share of the texture's distance from the layer's mean. `texDirtBase`: the
+   * weathering every wall has, before what the geometry adds under cornices, sills, balconies and eaves and at the
+   * foot of the ground floor; `texDirt`: how dark the weathering is (0 = none); `texDirtOwn`: how far a building's
+   * own broad stains (a mask laid over it at its own place and scale) add to it. `texTone` and `texRoofTone`: the tone
+   * of the stone layers and of the roof layers, as factors. `texRoofNear`: the roofs' tone before the distance tone, so
+   * it holds near the play volume (the city under the walkways) and is gone where `calm` is whole. `texShade`: all the
    * detail above, times this, on a sheet turned away from the sun: in shade the light models little, and a wall's own
    * texture is what it has.
    */
@@ -178,13 +181,25 @@ export interface AtmosphereParams {
   texRoofTone?: number;
   texRoofNear?: number;
   texShade?: number;
+  texBand?: number;
+  texDirtOwn?: number;
+  /**
+   * The darkest a texel of a layer is shown, as a share of the layer's mean, on a sheet that faces the sun and
+   * (`texDarkShade`) on one turned from it; the weathering is that much weaker there too. A window's glass in the shade
+   * of a shaded wall would be black on screen, and the frame has no room for more near-black (tone.py, T6).
+   */
+  texDark?: number;
+  texDarkShade?: number;
+  /** The tone of the stone layers on a sheet turned from the sun, as a factor on `texTone`, and twice as far for the steep slopes of a roof: a front or a mansard in the shade of a shaded wall stays above black. */
+  texToneShade?: number;
 }
 
-/** The layers of the textured units' array texture (art/blender/gen_citytex.py). */
-export const TEX_LAYERS = 5;
+/** The layers of the textured buildings' array texture (art/blender/gen_buildings.py), and the names of their images. */
+export const TEX_LAYERS = 8;
+export const TEX_NAMES = ['limestone', 'facade', 'slate', 'zinc', 'glazing', 'facade_b', 'render', 'grand'] as const;
 
 /** The keys `?bgtune=` may set (a debug parameter: `?bgtune=skyShade:1.8,calm:0.3`). */
-export const TUNABLE = ['density', 'power', 'tail', 'tailPower', 'strength', 'gain', 'saturation', 'lift', 'base', 'sink', 'toe', 'knee', 'winNear', 'winFar', 'winKeep', 'calm', 'calmTone', 'calmNear', 'calmFar', 'slab', 'cars', 'traffic', 'garden', 'joint', 'setts', 'band', 'own', 'grain', 'canyonPave', 'topLo', 'pave', 'ground', 'shadow', 'skyLo', 'skyUp', 'skyShade', 'skySun', 'occ', 'occShade', 'occTop', 'downLift', 'canyon', 'calmBase', 'untoe', 'chroma', 'skyHaze', 'skyHazeFar', 'skyWin', 'skyWinFar', 'winBase', 'rowBand', 'rowEven', 'texLow', 'texFine', 'texFineTop', 'texWin', 'texWinFar', 'texDirtBase', 'texDirt', 'texTone', 'texRoofTone', 'texRoofNear', 'texShade'] as const;
+export const TUNABLE = ['density', 'power', 'tail', 'tailPower', 'strength', 'gain', 'saturation', 'lift', 'base', 'sink', 'toe', 'knee', 'winNear', 'winFar', 'winKeep', 'calm', 'calmTone', 'calmNear', 'calmFar', 'slab', 'cars', 'traffic', 'garden', 'joint', 'setts', 'band', 'own', 'grain', 'canyonPave', 'topLo', 'pave', 'ground', 'shadow', 'skyLo', 'skyUp', 'skyShade', 'skySun', 'occ', 'occShade', 'occTop', 'downLift', 'canyon', 'calmBase', 'untoe', 'chroma', 'skyHaze', 'skyHazeFar', 'skyWin', 'skyWinFar', 'winBase', 'rowBand', 'rowEven', 'texLow', 'texFine', 'texFineTop', 'texWin', 'texWinFar', 'texDirtBase', 'texDirt', 'texTone', 'texRoofTone', 'texRoofNear', 'texShade', 'texBand', 'texDirtOwn', 'texDark', 'texDarkShade', 'texToneShade'] as const;
 
 /** `?bgtune=key:value,...` as overrides of the city's atmosphere; unknown keys and bad numbers are left out with a warning. */
 export function parseTune(text: string | null): Partial<AtmosphereParams> {
@@ -298,13 +313,16 @@ export function atmosphereUniforms(p: AtmosphereParams): AtmosphereUniforms {
     uBgKeyCol: { value: KEY_COLOR.clone() },
     uBgSkyCol: { value: SKY_COLOR.clone() },
     uBgShadeCol: { value: SHADE_COLOR.clone() },
-    // `?bldg=tex` (patchShader, `tex`): the units' layers, their mean colours, the detail (fine seen from the side, fine
-    // seen roof-on, windows near, windows far) and (the weathering's depth, the weathering everywhere, the layers' tone, the broad detail)
+    // the textured buildings (patchShader, `tex`): the units' layers, the mean colour of each and of each of its rows, the
+    // detail (fine seen from the side, fine seen roof-on, windows near, windows far), (the weathering's depth, the weathering
+    // everywhere, the layers' tone, the broad detail), (the roofs' tone, the same near, the detail in shade, the fronts' rows)
     uBgTex: { value: null as THREE.Texture | null },
+    uBgTexRow: { value: null as THREE.Texture | null },
     uBgTexMean: { value: Array.from({ length: TEX_LAYERS }, () => new THREE.Vector3(0.2, 0.2, 0.2)) },
     uBgTexK: { value: new THREE.Vector4(p.texFine ?? 0.15, p.texFineTop ?? 1, p.texWin ?? 0.4, p.texWinFar ?? 0.2) },
     uBgTexW: { value: new THREE.Vector4(p.texDirt ?? 0.5, p.texDirtBase ?? 0.1, p.texTone ?? 0.9, p.texLow ?? 1) },
-    uBgTexR: { value: new THREE.Vector3(p.texRoofTone ?? 1, p.texRoofNear ?? 1, p.texShade ?? 1) },
+    uBgTexR: { value: new THREE.Vector4(p.texRoofTone ?? 1, p.texRoofNear ?? 1, p.texShade ?? 1, p.texBand ?? 1) },
+    uBgTexOwn: { value: new THREE.Vector4(p.texDirtOwn ?? 0.3, p.texDark ?? 0.3, p.texDarkShade ?? 0.6, p.texToneShade ?? 1) },
   };
 }
 
@@ -472,43 +490,61 @@ vec3 bgFacing() {
 	if ( uBgDebug > 1.5 ) c = length( vBgWorld - cameraPosition ) > 200.0 ? vec3( 0.6, 0.0, 0.0 ) : vec3( 0.0, 0.6, 0.0 ); // ?bgdebug=range
 	// ?bgdebug=dist: bands of 100 m as a three-bit code (red 1, green 2, blue 4): 0-100 m red, 100-200 green, ..., 600 m and beyond white
 	if ( uBgDebug > 2.5 ) { float k = min( floor( length( vBgWorld - cameraPosition ) / 100.0 ) + 1.0, 7.0 ); c = 0.6 * vec3( mod( k, 2.0 ), mod( floor( k / 2.0 ), 2.0 ), floor( k / 4.0 ) ); }
+	// ?bgdebug=unit0, unit1, unit2: each building in the colour the game gave it (three bits of its unit's number: morphcity.ts); the ground black
+#ifdef BG_GROUND
+	if ( uBgDebug > 3.5 ) c = vec3( 0.0 );
+#else
+	if ( uBgDebug > 3.5 ) c = vBgRaw;
+#endif
 	if ( bgSkyline > 0.0 && smoothstep( 3.0, 40.0, vBgHigh ) * uBgSkyShow < 0.08 ) return vec3( 0.0 ); // the skyline's feet, gone into the haze
 	return max( max( bgVeil, uBgVeil ), bgFar( length( vBgWorld - cameraPosition ) ) ) > 0.5 ? vec3( 0.0 ) : c;
 }
 `;
 
 /**
- * `?bldg=tex`: a face of a textured unit (vertex colour alpha below 1) shows a layer of uBgTex instead of the atlas. The
- * layer tiles by the face's own UVs, shifted per building (the facade layer by whole bays, the others freely), so no two
- * houses show the same stones. Its detail is its distance from the layer's mean colour, in two parts: the broad part
- * (the layer three mip levels down: uBgTexW.w) and the fine part on top of it (uBgTexK.x seen from the side, .y seen
- * roof-on in a closed structure); the facade layer's, its windows, is one part (.z near the play volume, .w far from
- * it). Each building has its own roof tone and a slight turn of its stone's hue. Weathering: what the vertex says (rain
- * under cornices, sills and eaves, the street's dirt on the ground floor) plus a little everywhere (uBgTexW.y),
- * shown first where the layer's mask (alpha) says dirt gathers, so a streak is never a ruled gradient.
+ * The textured buildings: a face of a unit (vertex colour alpha below 1) shows a layer of uBgTex. The layer tiles by
+ * the face's own UVs, shifted per building (the fronts by whole bays, the others freely), so no two houses show the
+ * same stones. Its detail is its distance from the layer's mean colour, in parts. For stone, render and roofs: the
+ * broad part (the layer three mip levels down: uBgTexW.w) and the fine part on top of it (uBgTexK.x seen from the side,
+ * .y seen roof-on in a closed structure). For the fronts: the rows of the tile (uBgTexRow, the mean of each row: where
+ * the openings of a storey stand it is darker, the string courses and sills are light lines: uBgTexR.w) and the windows
+ * within their rows (uBgTexK.z near the play volume, .w far from it), so a front is rows of openings from near and
+ * bands of storeys from far. Each building has its own roof tone and a slight turn of its stone's hue. Weathering: what
+ * the vertex says (rain under cornices, sills, balconies and eaves, the street's dirt on the ground floor, soot at the
+ * head of a stack; each building takes more or less of it) plus a little everywhere (uBgTexW.y), plus the building's
+ * own broad stains (the stone layer's mask laid over it once, at its own place: uBgTexOwn); shown first where the
+ * layer's mask (alpha) says dirt gathers, so a streak is never a ruled gradient.
  */
 const TEX_FRAGMENT = /* glsl */ `
 	{
-		float bgM = vBgMat * 8.0;
+		float bgM = vBgMat * 16.0;
 		float bgLayer = min( floor( bgM ), ${TEX_LAYERS - 1}.0 );
 		float bgWeather = clamp( ( fract( bgM ) - 0.05 ) / 0.9, 0.0, 1.0 );
 		vec4 bgH = fract( vBgSeed * vec4( 1.0, 7.13, 13.71, 29.37 ) + vec4( 0.0, 0.31, 0.57, 0.11 ) );
-		vec2 bgUv = vMapUv + ( abs( bgLayer - 1.0 ) < 0.5 ? vec2( floor( bgH.x * 4.0 ) * 0.25, 0.0 ) : bgH.xy );
+		bool bgFront = abs( bgLayer - 1.0 ) < 0.5 || abs( bgLayer - 5.0 ) < 0.5 || bgLayer > 6.5;
+		vec2 bgUv = vMapUv + ( bgFront ? vec2( floor( bgH.x * 4.0 ) * 0.25, 0.0 ) : bgH.xy );
 		vec4 bgT = texture( uBgTex, vec3( bgUv, bgLayer ) );
 		vec4 bgTb = texture( uBgTex, vec3( bgUv, bgLayer ), 3.0 );
 		vec3 bgMean = uBgTexMean[ int( bgLayer ) ];
 		float bgTop = smoothstep( uBgTopLo, uBgTopLo + 0.12, abs( dot( normalize( vBgWorld - cameraPosition ), normalize( vBgUp ) ) ) ) * ( 1.0 - uBgFarSky.x );
 		float bgShadeK = mix( uBgTexR.z, 1.0, smoothstep( -0.9, 0.9, vBgKeyDir.y ) );
-		vec3 bgC = abs( bgLayer - 1.0 ) < 0.5
-			? mix( bgMean, bgT.rgb, bgShadeK * mix( uBgTexK.z, uBgTexK.w, smoothstep( uBgCalm.x, uBgCalm.y, bgPlayDist() ) ) )
-			: bgMean + bgShadeK * ( ( bgTb.rgb - bgMean ) * uBgTexW.w + ( bgT.rgb - bgTb.rgb ) * mix( uBgTexK.x, uBgTexK.y, bgTop ) );
+		vec3 bgC;
+		if ( bgFront ) {
+			vec3 bgRow = texture( uBgTexRow, vec2( ( bgLayer + 0.5 ) / ${TEX_LAYERS}.0, bgUv.y ) ).rgb;
+			bgC = bgMean + bgShadeK * ( ( bgRow - bgMean ) * uBgTexR.w + ( bgT.rgb - bgRow ) * mix( uBgTexK.z, uBgTexK.w, smoothstep( uBgCalm.x, uBgCalm.y, bgPlayDist() ) ) );
+		} else bgC = bgMean + bgShadeK * ( ( bgTb.rgb - bgMean ) * uBgTexW.w + ( bgT.rgb - bgTb.rgb ) * mix( uBgTexK.x, uBgTexK.y, bgTop ) );
+		// (1 = lit: the sheet faces the sun and so does the face; a face turned from the sun on a sunlit wall is in shade as well)
+		float bgSunK = smoothstep( -0.9, 0.9, vBgKeyDir.y ) * smoothstep( -0.3, 0.2, dot( normalize( vBgNormal ), normalize( vBgKeyDir ) ) );
+		bgC = max( bgC, bgMean * mix( uBgTexOwn.z, uBgTexOwn.y, bgSunK ) );
 		// a roof's own tone and cast (slate and zinc, layers 2 and 3); the stone's hue turned a little
 		float bgRoof = step( 1.5, bgLayer ) * step( bgLayer, 3.5 );
-		bgC *= mix( uBgTexW.z, uBgTexR.x * uBgTexR.y, bgRoof );
+		// (on a sheet turned from the sun the stone is taken up a little, and a steep slope of slate twice as far: it sees little sky and would be black)
+		bgC *= mix( uBgTexW.z * mix( uBgTexOwn.w, 1.0, bgSunK ), uBgTexR.x * uBgTexR.y * mix( 1.0 + 2.0 * ( uBgTexOwn.w - 1.0 ) * ( 1.0 - smoothstep( 0.3, 0.8, normalize( vBgNormal ).y ) ), 1.0, bgSunK ), bgRoof );
 		vec3 bgCast = vec3( 1.0 + ( bgH.w - 0.5 ), 1.0, 1.0 - ( bgH.w - 0.5 ) );
 		bgC *= mix( mix( vec3( 1.0 ), bgCast, 0.05 ), ( 1.0 + 0.3 * ( bgH.z - 0.5 ) ) * mix( vec3( 1.0 ), bgCast, 0.09 ), bgRoof );
-		float bgD = clamp( uBgTexW.y * ( 0.4 + 1.2 * bgH.y ) + bgWeather, 0.0, 1.0 );
-		bgC *= mix( vec3( 1.0 ), vec3( 0.62, 0.6, 0.56 ), smoothstep( 0.0, 0.5, mix( bgTb.a, bgT.a, 0.35 ) * 0.6 + bgD - 0.5 ) * uBgTexW.x );
+		float bgOwn = texture( uBgTex, vec3( vMapUv * ( bgFront ? vec2( 0.44, 0.41 ) : vec2( 0.23 ) ) + bgH.zw, 0.0 ), 2.0 ).a;
+		float bgD = clamp( uBgTexW.y * ( 0.4 + 1.2 * bgH.y ) + bgWeather * ( 0.65 + 0.7 * bgH.z ) + uBgTexOwn.x * ( bgOwn - 0.45 ) * ( 0.5 + bgH.x ), 0.0, 1.0 );
+		bgC *= mix( vec3( 1.0 ), mix( vec3( 0.6, 0.58, 0.55 ), vec3( 0.62, 0.62, 0.63 ), bgRoof ), smoothstep( 0.0, 0.5, mix( bgTb.a, bgT.a, 0.12 ) * 0.6 + bgD - 0.5 ) * uBgTexW.x * mix( 0.6, 1.0, bgSunK ) );
 		if ( vBgMat < 0.999 ) {
 			sampledDiffuseColor.rgb = bgC;
 			bgCalmRef = dot( bgMean, vec3( 0.2126, 0.7152, 0.0722 ) ) * 0.94 * vBgTint * mix( 1.0, uBgTexR.y, bgRoof );
@@ -531,8 +567,8 @@ export function patchShader(
     /** GLSL statements run last, after the haze (the slot's veil sets its own alpha). */
     fragmentEnd?: string;
     /**
-     * `?bldg=tex`: the batch also holds the textured units (citytex.glb). A vertex's colour alpha below 1 says which layer
-     * of uBgTex its face shows and how weathered it is ((layer + 0.05 + 0.9 * weather) / 8); alpha 1 is the atlas as ever.
+     * The batch holds the textured buildings (buildings.glb). A vertex's colour alpha below 1 says which layer of uBgTex
+     * its face shows and how weathered it is ((layer + 0.05 + 0.9 * weather) / 16); alpha 1 is a plain colour (the map).
      */
     tex?: boolean;
   } = {},
@@ -543,14 +579,14 @@ export function patchShader(
     if (!src.includes(marker)) throw new Error(`shader chunk ${marker} not found`);
     return src.replace(marker, text);
   };
-  shader.vertexShader = swap(shader.vertexShader, '#include <common>', `#include <common>\nvarying vec3 vBgWorld;\nvarying vec3 vBgNormal;\nvarying vec3 vBgKeyDir;\nvarying vec3 vBgSkyUp;\nvarying float vBgHigh;\nvarying float vBgTint;\nvarying vec3 vBgUp;\nvarying vec4 vBgFoot;\nuniform vec3 uBgSun;\n${tex ? 'varying float vBgMat;\nvarying float vBgSeed;\n' : ''}${extra.vertexDecl ?? ''}`);
+  shader.vertexShader = swap(shader.vertexShader, '#include <common>', `#include <common>\nvarying vec3 vBgRaw;\nvarying vec3 vBgWorld;\nvarying vec3 vBgNormal;\nvarying vec3 vBgKeyDir;\nvarying vec3 vBgSkyUp;\nvarying float vBgHigh;\nvarying float vBgTint;\nvarying vec3 vBgUp;\nvarying vec4 vBgFoot;\nuniform vec3 uBgSun;\n${tex ? 'varying float vBgMat;\nvarying float vBgSeed;\n' : ''}${extra.vertexDecl ?? ''}`);
   shader.vertexShader = swap(
     shader.vertexShader, '#include <beginnormal_vertex>',
-    `#include <beginnormal_vertex>\nvBgNormal = objectNormal;\nvBgKeyDir = uBgSun;\nvBgSkyUp = vec3( 0.0, 1.0, 0.0 );\nvBgTint = 1.0;\nvBgHigh = 0.0;\nvBgUp = vec3( 0.0, 1.0, 0.0 );\nvBgFoot = vec4( 0.0 );\n#ifdef USE_BATCHING\nmat3 bgM = mat3( batchingMatrix );\nvBgFoot = vec4( batchingMatrix[ 3 ].xyz, 1.0 );\n#ifdef USE_BATCHING_COLOR\nvec4 bgTint = getBatchingColor( getIndirectIndex( gl_DrawID ) );\nvBgFoot.w = 1.0 + bgTint.a;\nvBgTint = dot( bgTint.rgb, vec3( 0.2126, 0.7152, 0.0722 ) ) / 0.94;\n#endif\nvBgUp = bgM[ 1 ];\nvBgKeyDir = vec3( dot( uBgSun, normalize( bgM[ 0 ] ) ), dot( uBgSun, normalize( bgM[ 1 ] ) ), dot( uBgSun, normalize( bgM[ 2 ] ) ) );\nvBgSkyUp = vec3( normalize( bgM[ 0 ] ).y, normalize( bgM[ 1 ] ).y, normalize( bgM[ 2 ] ).y );\nvBgHigh = position.y * length( bgM[ 1 ] );\n#endif${tex ? '\nvBgMat = 1.0;\nvBgSeed = 0.0;\n#ifdef USE_COLOR_ALPHA\nvBgMat = color.a;\n#endif\n#ifdef USE_BATCHING\nvBgSeed = fract( sin( getIndirectIndex( gl_DrawID ) * 12.9898 ) * 43758.5453 );\n#endif' : ''}`,
+    `#include <beginnormal_vertex>\nvBgNormal = objectNormal;\nvBgKeyDir = uBgSun;\nvBgSkyUp = vec3( 0.0, 1.0, 0.0 );\nvBgTint = 1.0;\nvBgHigh = 0.0;\nvBgUp = vec3( 0.0, 1.0, 0.0 );\nvBgFoot = vec4( 0.0 );\nvBgRaw = vec3( 0.0 );\n#ifdef USE_BATCHING\nmat3 bgM = mat3( batchingMatrix );\nvBgFoot = vec4( batchingMatrix[ 3 ].xyz, 1.0 );\n#ifdef USE_BATCHING_COLOR\nvec4 bgTint = getBatchingColor( getIndirectIndex( gl_DrawID ) );\nvBgRaw = bgTint.rgb;\nvBgFoot.w = 1.0 + bgTint.a;\nvBgTint = dot( bgTint.rgb, vec3( 0.2126, 0.7152, 0.0722 ) ) / 0.94;\n#endif\nvBgUp = bgM[ 1 ];\nvBgKeyDir = vec3( dot( uBgSun, normalize( bgM[ 0 ] ) ), dot( uBgSun, normalize( bgM[ 1 ] ) ), dot( uBgSun, normalize( bgM[ 2 ] ) ) );\nvBgSkyUp = vec3( normalize( bgM[ 0 ] ).y, normalize( bgM[ 1 ] ).y, normalize( bgM[ 2 ] ).y );\nvBgHigh = position.y * length( bgM[ 1 ] );\n#endif${tex ? '\nvBgMat = 1.0;\nvBgSeed = 0.0;\n#ifdef USE_COLOR_ALPHA\nvBgMat = color.a;\n#endif\n#ifdef USE_BATCHING\nvBgSeed = fract( sin( getIndirectIndex( gl_DrawID ) * 12.9898 ) * 43758.5453 );\n#endif' : ''}`,
   );
   if (extra.vertexBegin) shader.vertexShader = swap(shader.vertexShader, '#include <begin_vertex>', `#include <begin_vertex>\n${extra.vertexBegin}`);
   shader.vertexShader = swap(shader.vertexShader, '#include <fog_vertex>', `#include <fog_vertex>\nvBgWorld = cameraPosition + mvPosition.xyz * mat3( viewMatrix );\n${extra.vertexMain ?? ''}`);
-  shader.fragmentShader = swap(shader.fragmentShader, '#include <common>', `#include <common>\n${extra.ground ? '#define BG_GROUND\n' : ''}${tex ? '#define BG_TEX\nvarying float vBgMat;\nvarying float vBgSeed;\nuniform sampler2DArray uBgTex;\nuniform vec3 uBgTexMean[ ' + TEX_LAYERS + ' ];\nuniform vec4 uBgTexK;\nuniform vec4 uBgTexW;\nuniform vec3 uBgTexR;\nfloat bgCalmRef = -1.0; // set for a face of a textured unit: the tone the distance tone goes by (its layer\'s mean, not the texel)\n' : ''}varying vec3 vBgWorld;\nvarying vec3 vBgNormal;\nvarying vec3 vBgKeyDir;\nvarying vec3 vBgSkyUp;\nvarying float vBgHigh;\nvarying float vBgTint;\nvarying vec4 vBgFoot;\nfloat bgFarLen = -1.0; // set by a material: the distance bgFar goes by, instead of the fragment's own\nfloat bgFarShift = 0.0; // and metres added to it (a block's own)\nfloat bgVeil = 0.0; // set by a material: 1 = this fragment has dissolved into the haze\nvec3 bgHazeCol = vec3( 0.0 ); // set by bgAtmosphere: the haze's colour along this ray, and how much of it lies on the fragment
+  shader.fragmentShader = swap(shader.fragmentShader, '#include <common>', `#include <common>\n${extra.ground ? '#define BG_GROUND\n' : ''}${tex ? '#define BG_TEX\nvarying float vBgMat;\nvarying float vBgSeed;\nuniform sampler2DArray uBgTex;\nuniform sampler2D uBgTexRow;\nuniform vec3 uBgTexMean[ ' + TEX_LAYERS + ' ];\nuniform vec4 uBgTexK;\nuniform vec4 uBgTexW;\nuniform vec4 uBgTexR;\nuniform vec4 uBgTexOwn;\nfloat bgCalmRef = -1.0; // set for a face of a textured unit: the tone the distance tone goes by (its layer\'s mean, not the texel)\n' : ''}varying vec3 vBgWorld;\nvarying vec3 vBgNormal;\nvarying vec3 vBgKeyDir;\nvarying vec3 vBgSkyUp;\nvarying float vBgHigh;\nvarying float vBgTint;\nvarying vec4 vBgFoot;\nvarying vec3 vBgRaw;\nfloat bgFarLen = -1.0; // set by a material: the distance bgFar goes by, instead of the fragment's own\nfloat bgFarShift = 0.0; // and metres added to it (a block's own)\nfloat bgVeil = 0.0; // set by a material: 1 = this fragment has dissolved into the haze\nvec3 bgHazeCol = vec3( 0.0 ); // set by bgAtmosphere: the haze's colour along this ray, and how much of it lies on the fragment
 float bgFog = 0.0;
 float bgSkyMix = 0.0; // set by bgAtmosphere: how far the fragment has gone on into the sky behind it
 float bgThin = 1.0; // the haze's depth here, as a share: roofs and towers stand in thinner haze than the streets
