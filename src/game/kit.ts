@@ -4,8 +4,11 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
-/** `materials` holds the tiling stone maps once; the other files only name M_paving and M_stone. */
-export const KIT_FILES = ['materials', 'floor', 'parapet', 'pier', 'pylon', 'console', 'lamp'] as const;
+/**
+ * `materials` holds the tiling stone maps once; the other files only name M_paving and M_stone. The last six are the set
+ * pieces of the puzzles (setPieces.ts): the path cube, its plates and mural, the arm tower, the street's dressing, the gate.
+ */
+export const KIT_FILES = ['materials', 'floor', 'parapet', 'pier', 'pylon', 'console', 'lamp', 'cube', 'plate', 'mural', 'tower', 'street', 'gate'] as const;
 
 export interface KitPart { geometry: THREE.BufferGeometry; material: THREE.MeshStandardMaterial; matrix: THREE.Matrix4 }
 /** A piece at a place: `matrix` takes the piece's own frame (a 4 m cell, see the scripts) to the frame being built. */
@@ -19,6 +22,8 @@ export interface Placement {
 export interface WalkLine { a: THREE.Vector3; b: THREE.Vector3 }
 
 const QUARTER = Math.PI / 2;
+/** Materials that give light: they neither cast nor take shadows. */
+const LIGHTS = new Set(['M_console_glass', 'M_lamp_bulb', 'M_path_glass', 'M_gate_core']);
 
 /** A piece modelled on the north edge (or north-east corner) turned to the side `turns` quarter turns clockwise from north. */
 export function place(piece: string, x: number, y: number, z: number, turns = 0, sx = 1, sz = 1): Placement {
@@ -94,6 +99,12 @@ export class Kit {
               mat.polygonOffsetFactor = -4;
               mat.polygonOffsetUnits = -40;
             }
+            if (mat.name === 'M_path_glass') {
+              // the path lines stand 2 cm proud of the paving they lie on: the same help where the depth buffer is coarse
+              mat.polygonOffset = true;
+              mat.polygonOffsetFactor = -2;
+              mat.polygonOffsetUnits = -20;
+            }
             kit.canonical.set(key, mat);
           }
         }
@@ -148,7 +159,7 @@ export class Kit {
       const mat = opts.own?.includes(material.name) ? material.clone() : material;
       const mesh = new THREE.Mesh(merged, mat);
       mesh.name = `kit:${material.name}`;
-      const light = material.name === 'M_console_glass' || material.name === 'M_lamp_bulb';
+      const light = LIGHTS.has(material.name);
       mesh.castShadow = !light;
       mesh.receiveShadow = !light;
       group.add(mesh);
@@ -194,6 +205,18 @@ export class Kit {
   /** Every gilt material (one per file that has gilt): `giltTakesSky` in look.ts gives them the sky's reflection. */
   giltMaterials(): THREE.MeshStandardMaterial[] {
     return [...this.canonical].filter(([key]) => key.startsWith('M_gilt:')).map(([, mat]) => mat);
+  }
+
+  /** Every material of a name (one per file that bakes its own occlusion into it). */
+  materialsNamed(name: string): THREE.MeshStandardMaterial[] {
+    return [...this.canonical].filter(([key]) => key.startsWith(`${name}:`)).map(([, mat]) => mat);
+  }
+
+  /** Where a piece's node stands in its file (the portal's disc is modelled about its own centre). */
+  origin(piece: string): THREE.Vector3 {
+    const node = this.pieces.get(piece);
+    if (!node) throw new Error(`kit piece "${piece}" is missing`);
+    return new THREE.Vector3().setFromMatrixPosition(node.matrixWorld);
   }
 
   /** A kit material by name (the first one of that name, whichever file it came from). */

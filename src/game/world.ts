@@ -1,5 +1,5 @@
-// Scene graph for a compiled stage: module meshes under group pivots, parapets derived from the walk map,
-// gap plates, consoles, fold animations and Fold Mode previews.
+// Scene graph for a compiled stage: module nodes under group pivots, the kit's pieces hung on them, parapets derived
+// from the walk map, gap plates, consoles, fold animations and Fold Mode previews.
 import * as THREE from 'three';
 import type { CompiledStage, WalkMap } from '../core/compile.ts';
 import { DIRS, SIDES, cellFloor, type Mat3, type Side } from '../core/math.ts';
@@ -7,9 +7,12 @@ import type { Action, CubeFace, Id, PuzzleState } from '../core/types.ts';
 import type { DirName } from '../core/math.ts';
 import type { Kit } from './kit.ts';
 import { RAIL_LINE, edgeKey, planSlabs, sideMatrix } from './kitLayout.ts';
-import { buildModuleMesh, consoleMesh } from './kitMeshes.ts';
+import { buildModuleMesh, consoleMesh, faceArmsUV } from './kitMeshes.ts';
+import { LOOK } from './look.ts';
 import type { Materials } from './materials.ts';
 import { portalMaterial, prepareDisc } from './portal.ts';
+import { MURAL_FACES, cubePlacements, muralPlacements, toneByFacing, towerPlacements } from './setPieces.ts';
+import { muralLetters } from './textures.ts';
 
 export interface EdgeMarker { pos: THREE.Vector3; side: Side; kind: 'open' | 'close' }
 
@@ -19,6 +22,20 @@ interface ConsoleParts { glass: THREE.MeshStandardMaterial | null; beacon: THREE
 /** Emission of a console's glass: at rest, and the mean while the player stands at it. */
 const GLASS_REST = 1.6;
 const GLASS_ACTIVE = 3.2;
+/** Emission of the path lines (the cube's faces, the plates, the tower's ring): under the bloom threshold, like a console at rest. */
+const PATH_GLOW = 1.3;
+/**
+ * The path cube's stone and paving (setPieces.ts toneByFacing; the cube can lie on any face, so nothing of this is baked).
+ * Faces that do not look up: the kit's 0.6 where they face the sun, the stone as it is where they face away. The ashlar is
+ * dressed smooth: its photograph is moved half-way to its mean colour (fc_kit.py ASHLAR, #B9AF9F) and the kit's
+ * normal map is at a fraction of its strength. The paved cells are the kit's paving, a little calmer too: an inlay in the
+ * block, honed like it (mean: PAVING, #CED1D2).
+ */
+const CUBE_STONE = { lit: 0.6, shade: 1, calmUp: 0.5, calmSide: 0.5, mean: new THREE.Color('#B9AF9F') };
+const CUBE_PAVING = { lit: 0.6, shade: 1, calmUp: 0.4, calmSide: 0.5, mean: new THREE.Color('#CED1D2') };
+const CUBE_RELIEF = 0.4;
+/** The paving of the arm tower's deck: honed like the cube's, and without the patches and the worn line of the fixed walkways. */
+const HONED_PAVING = { lit: 1, shade: 1, calmUp: 0.5, calmSide: 0.5, mean: new THREE.Color('#CED1D2') };
 
 const AXIS: Record<'x' | 'y' | 'z', THREE.Vector3> = {
   x: new THREE.Vector3(1, 0, 0),
@@ -67,6 +84,11 @@ export class World {
   private time = 0;
   private kit: Kit | null = null;
   private flushEdges = new Set<string>();
+  /** The plain stand-ins of the kit's set pieces, built only if the kit does not load. */
+  private fallbacks: (() => void)[] = [];
+  private cubeFaces: Partial<Record<CubeFace, DirName[]>> = {};
+  /** The gilt-crowned piers on the arm towers: hidden while their group turns. */
+  private crowns: { group: Id; node: THREE.Object3D }[] = [];
   private readonly moduleById = new Map<Id, CompiledStage['modules'][number]>();
   private readonly portal: THREE.ShaderMaterial;
   private readonly cs: CompiledStage;
@@ -79,6 +101,7 @@ export class World {
     this.state = cs.initialState();
     const cube = cs.modules.find((m) => m.type === 'cube3');
     const ctx = cube && cube.type === 'cube3' ? { cubeFaces: cube.params.faces as Record<CubeFace, DirName[]> } : {};
+    this.cubeFaces = ctx.cubeFaces ?? {};
     for (const g of cs.stage.groups) {
       const p = new THREE.Group();
       p.name = `pivot:${g.id}`;
@@ -100,12 +123,12 @@ export class World {
       }
       v.root.rotation.y = ((m.yaw ?? 0) * Math.PI) / 2;
       this.colliders.push(...v.colliders);
+      if (v.fallback) this.fallbacks.push(v.fallback);
       if (m.type === 'plate') {
         const holder = v.root.children[0];
         holder.scale.z = 0.001;
         this.plates.set(m.id, { holder, cell: m.at.join(','), target: 0 });
       }
-      if (m.type === 'deco' && m.params.kind === 'gate') this.useGateDisc(v.root.getObjectByName('gateDisc'));
     }
     for (const c of cs.stage.interactables) {
       const node = consoleMesh(c, M);
@@ -133,6 +156,7 @@ export class World {
     for (const [id, p] of this.pivots) p.quaternion.copy(this.groupQuaternion(id, s));
     const wm = this.cs.walkMap(s);
     this.buildRails(wm, new Set());
+    for (const c of this.crowns) c.node.visible = true;
     for (const pl of this.plates.values()) {
       pl.target = wm.tiles.get(pl.cell)?.plate ? 1 : 0;
       if (!animatePlates) pl.holder.scale.z = Math.max(0.001, pl.target);
@@ -151,6 +175,7 @@ export class World {
     const pivot = this.pivots.get(a.group)!;
     const moving = new Set(this.cs.modules.filter((m) => m.group === a.group).map((m) => m.id));
     this.buildRails(this.cs.walkMap(this.state), moving);
+    for (const c of this.crowns) if (c.group === a.group) c.node.visible = false;
     for (const pl of this.plates.values()) pl.target = 0;
     this.anim = {
       group: a.group,
@@ -217,8 +242,9 @@ export class World {
   }
 
   /**
-   * The kit has loaded: build what the player sees of the `tile` and `bridge` modules, the piers, the lamps, the
-   * consoles and the parapets from it. Until then (and if it fails to load) only the colliders exist.
+   * The kit has loaded: build what the player sees from it: the slabs of the `tile`, `bridge` and `tower` modules, the
+   * piers, the lamps, the set pieces of the puzzles (path cube, plates, mural, tower, gate), the consoles and the
+   * parapets. Until then (and if it fails to load) only the colliders exist.
    */
   applyKit(kit: Kit) {
     this.kit = kit;
@@ -228,9 +254,17 @@ export class World {
     fixed.name = 'kit:fixed';
     this.root.add(fixed);
     for (const [id, placements] of plan.modules) {
-      const f = cellFloor(this.moduleById.get(id)!.at);
-      this.root.getObjectByName(id)!.add(kit.build(placements, { tintOrigin: new THREE.Vector3(f[0], f[1], f[2]), walk: plan.walkModules.get(id) }));
+      const m = this.moduleById.get(id)!;
+      const f = cellFloor(m.at);
+      if (m.type === 'tower') {
+        // the turntable's deck is honed like the cube's paved cells and the plates: the paving of what turns is calmer
+        const deck = kit.build(placements, { own: ['M_paving'] });
+        const top = deck.getObjectByName('kit:M_paving') as THREE.Mesh | undefined;
+        if (top) toneByFacing(top.material as THREE.MeshStandardMaterial, LOOK.sunDir, HONED_PAVING);
+        this.root.getObjectByName(id)!.add(deck);
+      } else this.root.getObjectByName(id)!.add(kit.build(placements, { tintOrigin: new THREE.Vector3(f[0], f[1], f[2]), walk: plan.walkModules.get(id) }));
     }
+    this.addSetPieces(kit);
     // the bronze and gilt of all consoles are two meshes; each console keeps its own glass, lit by itself
     this.root.updateMatrixWorld(true);
     const stands: { piece: string; matrix: THREE.Matrix4 }[] = [];
@@ -261,29 +295,71 @@ export class World {
     return this.kit?.giltMaterials() ?? [];
   }
 
-  /** The kit could not be loaded: show the plain collider slabs so the game can still be played. */
-  showColliders() {
-    for (const c of this.colliders) c.visible = true;
+  /** The kit's pieces of the cube, the plates, the mural, the tower and the gate, each under its module's node. */
+  private addSetPieces(kit: Kit) {
+    for (const m of this.cs.modules) {
+      const node = this.root.getObjectByName(m.id)!;
+      if (m.type === 'cube3') {
+        // its stone and paving are its own: toned by which way each face looks, whichever face is up
+        const cube = kit.build(cubePlacements(m), { own: ['M_stone', 'M_paving'] });
+        for (const name of ['M_stone', 'M_paving']) {
+          const mesh = cube.getObjectByName(`kit:${name}`) as THREE.Mesh | undefined;
+          if (!mesh) continue;
+          const mat = mesh.material as THREE.MeshStandardMaterial;
+          toneByFacing(mat, LOOK.sunDir, name === 'M_stone' ? CUBE_STONE : CUBE_PAVING);
+          if (name === 'M_stone') mat.normalScale.multiplyScalar(CUBE_RELIEF);
+        }
+        node.add(cube);
+      } else if (m.type === 'tower') {
+        const placed = towerPlacements(m);
+        node.add(kit.build(placed.filter((p) => p.piece !== 'tower_crown')));
+        // the crown stands on a corner of the hub, which sweeps over the neighbours' parapets as the tower turns: like the
+        // tower's own parapets it is put away for the turn
+        const crown = kit.build(placed.filter((p) => p.piece === 'tower_crown'));
+        node.add(crown);
+        if (m.group) this.crowns.push({ group: m.group, node: crown });
+      } else if (m.type === 'plate') {
+        this.plates.get(m.id)!.holder.add(kit.build([{ piece: 'plate', matrix: new THREE.Matrix4() }]));
+      } else if (m.type === 'deco' && m.params.kind === 'mural') {
+        const tablets = kit.slots('mural', 'tablet_').map((t) => new THREE.Vector3().setFromMatrixPosition(t));
+        node.add(kit.build(muralPlacements(tablets, MURAL_FACES.map((f) => faceArmsUV(f.face, this.cubeFaces[f.face] ?? [])))));
+        // the letters under the tablets, on the bronze below each
+        const pitch = tablets[1].x - tablets[0].x;
+        const letters = new THREE.Mesh(
+          new THREE.PlaneGeometry(pitch * tablets.length, pitch / 4),
+          new THREE.MeshStandardMaterial({
+            map: muralLetters(MURAL_FACES.map((f) => f.label)), transparent: true, depthWrite: false, roughness: 0.8,
+            polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -20,
+          }),
+        );
+        letters.position.set((tablets[0].x + tablets[tablets.length - 1].x) / 2, tablets[0].y - 0.87, tablets[0].z - 0.014);
+        letters.receiveShadow = true;
+        node.add(letters);
+      } else if (m.type === 'deco' && m.params.kind === 'gate') {
+        const s = m.params.size ?? 1;
+        const gate = kit.build([{ piece: 'gate', matrix: new THREE.Matrix4() }]);
+        const disc = kit.build([{ piece: 'CoreDisc', matrix: new THREE.Matrix4() }]);
+        disc.name = 'gateDisc';
+        disc.position.copy(kit.origin('CoreDisc')); // it breathes about its own centre
+        const holder = new THREE.Group();
+        holder.scale.setScalar(s);
+        holder.add(gate, disc);
+        node.add(holder);
+        this.useGateDisc(disc);
+      }
+    }
+    for (const glass of kit.materialsNamed('M_path_glass')) {
+      glass.emissive.copy(this.M.accent);
+      glass.emissiveIntensity = PATH_GLOW;
+    }
   }
 
-  /** Swap the procedural gate for the Blender-generated model when public/assets/gate.glb is available. */
-  async loadGateModel(url: string) {
-    const deco = this.cs.modules.find((m) => m.type === 'deco' && m.params.kind === 'gate');
-    const node = deco ? this.root.getObjectByName(deco.id) : undefined;
-    if (!node) return;
-    const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
-    const gltf = await new GLTFLoader().loadAsync(url);
-    gltf.scene.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      if (!mesh.isMesh) return;
-      mesh.castShadow = mesh.receiveShadow = true;
-      // the core material glows at strength 4 in Blender, which blooms to flat white here: keep its colour readable
-      const mat = mesh.material as THREE.MeshStandardMaterial;
-      if (mat.emissiveIntensity > 1.5) mat.emissiveIntensity = 1.5;
-    });
-    node.clear();
-    node.add(gltf.scene);
-    this.useGateDisc(gltf.scene.getObjectByName('CoreDisc'));
+  /** The kit could not be loaded: show the plain collider slabs and the plain stand-ins so the game can still be played. */
+  showColliders() {
+    for (const c of this.colliders) c.visible = true;
+    for (const f of this.fallbacks) f();
+    this.fallbacks = [];
+    this.useGateDisc(this.root.getObjectByName('gateDisc'));
   }
 
   /** The gate's disc pulses and shows the portal shader instead of a flat glow. */
@@ -474,8 +550,8 @@ export class World {
 
   /**
    * Parapets on every closed edge of the walk map, from kit pieces: balustrades on bridges, plazas and the sunny
-   * side of the roads, low ashlar walls where a road only waits for its neighbour, on the shaded side of the roads
-   * and on the parts that are not converted yet, and a post wherever segments meet, turn or end.
+   * side of the roads, low ashlar walls where a road only waits for its neighbour, on the shaded side of the roads,
+   * on the arm tower and on the path cube, and a post wherever segments meet, turn or end.
    */
   private buildRails(wm: WalkMap, hiddenModules: Set<Id>) {
     for (const c of [...this.rails.children]) {

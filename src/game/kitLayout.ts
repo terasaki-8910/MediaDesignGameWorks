@@ -1,5 +1,5 @@
 // Which kit pieces make up the floor slabs of a stage: tops, undersides, moulded or plain edges, corner pieces,
-// lamps and the piers underneath. Visual only; the puzzle's boxes and walk map stay in src/core.
+// lamps, the street's dressing and the piers underneath. Visual only; the puzzle's boxes and walk map stay in src/core.
 import * as THREE from 'three';
 import type { CompiledStage } from '../core/compile.ts';
 import { SLAB } from '../core/kit.ts';
@@ -26,8 +26,12 @@ const PYLON_DEPTH = 3.6;
 type EdgeKind = 'none' | 'flush' | 'cornice';
 interface Cell { gx: number; gz: number; y: number; x0: number; x1: number; z0: number; z1: number; module: ModuleInstance }
 
-/** A walkway one cell wide (a road or a bridge), as against a plaza. */
-const isRoad = (m: ModuleInstance) => m.type === 'bridge' || (m.type === 'tile' && Math.min(...(m.params.size ?? [1, 1])) === 1);
+/** A walkway one cell wide (a road, a bridge, the arm tower's deck), as against a plaza. */
+const isRoad = (m: ModuleInstance) => m.type === 'bridge' || m.type === 'tower' || (m.type === 'tile' && Math.min(...(m.params.size ?? [1, 1])) === 1);
+/** A lamped bridge of four cells or more is a piece of street: kerbs, pavements and bollards on its deck, an archway at its far end. */
+export const isStreet = (m: ModuleInstance) => m.type === 'bridge' && !!m.params.lamps && m.params.length >= 4;
+/** The archway stands this far beyond the middle of the street's last cell. */
+const ARCH_AT = 1.2;
 interface AABB { min: Vec3; max: Vec3 }
 
 export interface SlabPlan {
@@ -64,6 +68,18 @@ function cellsOf(cs: CompiledStage, m: ModuleInstance, world: boolean): Cell[] {
   const f = world ? cellFloor(m.at) : [0, 0, 0];
   const inset = m.type === 'bridge' ? (m.params.inset ?? 0) : 0;
   const tiles = cs.kits.get(m.id)!.tiles;
+  if (m.type === 'tower') {
+    // the hub, and arms that stop short of the cell's far edge (src/core/kit.ts)
+    const short = m.params.inset ?? 0.4;
+    return tiles.map((t) => {
+      const d = t.key.startsWith('arm_') ? DIRS[t.key.slice(4) as Side] : [0, 0, 0];
+      return {
+        gx: f[0] + t.p[0], gz: f[2] + t.p[2], y: f[1] + t.p[1],
+        x0: f[0] + t.p[0] - H + (d[0] < 0 ? short : 0), x1: f[0] + t.p[0] + H - (d[0] > 0 ? short : 0),
+        z0: f[2] + t.p[2] - H + (d[2] < 0 ? short : 0), z1: f[2] + t.p[2] + H - (d[2] > 0 ? short : 0), module: m,
+      };
+    });
+  }
   return tiles.map((t, i) => ({
     gx: f[0] + t.p[0], gz: f[2] + t.p[2], y: f[1] + t.p[1],
     x0: f[0] + t.p[0] - H + (i === 0 ? inset : 0), x1: f[0] + t.p[0] + H - (i === tiles.length - 1 ? inset : 0),
@@ -72,7 +88,7 @@ function cellsOf(cs: CompiledStage, m: ModuleInstance, world: boolean): Cell[] {
 }
 
 export function planSlabs(cs: CompiledStage): SlabPlan {
-  const kitModules = cs.modules.filter((m) => m.type === 'tile' || m.type === 'bridge');
+  const kitModules = cs.modules.filter((m) => m.type === 'tile' || m.type === 'bridge' || m.type === 'tower');
   const fixed = kitModules.filter((m) => !m.group && !m.yaw);
   const states = allStates(cs);
   // plates have no box in the core (they are thin), but an edge next to one must stay plain
@@ -200,9 +216,19 @@ export function planSlabs(cs: CompiledStage): SlabPlan {
     return out;
   };
 
+  const street = (m: ModuleInstance, f: Vec3): Placement[] => {
+    if (m.type !== 'bridge' || !isStreet(m)) return [];
+    const open = new Set((m.params.sidePorts ?? []).map((p) => `${p.i}${p.side}`));
+    const out: Placement[] = [];
+    for (let i = 0; i < m.params.length; i++)
+      for (const side of ['N', 'S'] as const) if (!open.has(`${i}${side}`)) out.push(place('street_side', f[0] + i * CELL, f[1], f[2], TURNS[side]));
+    out.push(place('street_arch', f[0] + (m.params.length - 1) * CELL + ARCH_AT, f[1], f[2], 1));
+    return out;
+  };
+
   const walkWorld: WalkLine[] = [];
   const world = slabs(fixed.flatMap((m) => cellsOf(cs, m, true)), null, walkWorld);
-  for (const m of fixed) world.push(...lamps(m, cellFloor(m.at)));
+  for (const m of fixed) world.push(...lamps(m, cellFloor(m.at)), ...street(m, cellFloor(m.at)));
 
   // pylons before the gate too: beside the two corners of the goal's plaza that are nearest to the last checkpoint
   const goal = cellFloor(cs.stage.goal.at);
@@ -261,7 +287,7 @@ export function planSlabs(cs: CompiledStage): SlabPlan {
   for (const m of kitModules) {
     if (fixed.includes(m)) continue;
     const walk: WalkLine[] = [];
-    modules.set(m.id, [...slabs(cellsOf(cs, m, false), m, walk), ...lamps(m, [0, 0, 0])]);
+    modules.set(m.id, [...slabs(cellsOf(cs, m, false), m, walk), ...lamps(m, [0, 0, 0]), ...street(m, [0, 0, 0])]);
     walkModules.set(m.id, walk);
   }
 

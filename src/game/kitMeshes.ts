@@ -1,8 +1,8 @@
-// Meshes for each module type, built in the same module-local frame as src/core/kit.ts. `tile` and `bridge` modules get
-// only their camera collider here: what the player sees of them comes from the Blender kit (kit.ts, kitLayout.ts).
-// The other types are still procedural.
+// What every module type needs before the Blender kit has loaded, in the same module-local frame as src/core/kit.ts:
+// the hidden colliders the camera's rays hit, and the nodes the kit's pieces are hung on. What the player sees comes
+// from the kit (kit.ts, kitLayout.ts, setPieces.ts). `fallback` builds the old plain meshes instead; it is called only
+// when the kit could not be loaded, so the game can still be played.
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CUBE_FACE_NORMAL, SLAB } from '../core/kit.ts';
 import { DIRS, type DirName } from '../core/math.ts';
 import type { CubeFace, Interactable, ModuleInstance } from '../core/types.ts';
@@ -32,23 +32,6 @@ function slabMesh(M: Materials, w: number, d: number, cellsU: number, cellsV: nu
   return m;
 }
 
-function arch(M: Materials, span: number, height: number) {
-  const g = new THREE.Group();
-  const r = span / 2;
-  for (const x of [-r, r]) {
-    const p = mesh(box(0.5, height, 0.5), M.parapet);
-    p.position.set(x, height / 2, 0);
-    g.add(p);
-  }
-  const ring = mesh(new THREE.TorusGeometry(r, 0.25, 8, 24, Math.PI), M.parapet);
-  ring.position.y = height;
-  g.add(ring);
-  const key = mesh(box(0.6, 0.6, 0.6), M.brass);
-  key.position.y = height + r;
-  g.add(key);
-  return g;
-}
-
 /** Texture-space offset of an arm on a BoxGeometry face (u right, v down), see BoxGeometry's buildPlane. */
 const FACE_UV: Record<CubeFace, { u: readonly number[]; v: readonly number[]; material: number }> = {
   east: { u: [0, 0, -1], v: [0, -1, 0], material: 0 },
@@ -71,6 +54,14 @@ export interface ModuleVisual {
   root: THREE.Object3D;
   /** Meshes that should block the camera. */
   colliders: THREE.Object3D[];
+  /** Builds the plain stand-in for the kit's pieces (the kit failed to load). */
+  fallback?: () => void;
+}
+
+/** A collider that is never drawn: the camera's rays still hit it. */
+function hidden<T extends THREE.Object3D>(o: T): T {
+  o.visible = false;
+  return o;
 }
 
 export interface BuildContext { cubeFaces?: Record<CubeFace, DirName[]> }
@@ -94,70 +85,45 @@ export function buildModuleMesh(m: ModuleInstance, M: Materials, ctx: BuildConte
       s.position.set((L - 1) * 2, -SLAB / 2, 0);
       s.visible = false;
       root.add(s);
-      if (m.params.lamps) {
-        if (L >= 4) {
-          const a = arch(M, 4.2, 4.2);
-          a.rotation.y = Math.PI / 2;
-          a.position.set((L - 1) * 4 + 1.2, 0, 0);
-          root.add(a);
-        }
-      }
       return { root, colliders: [s] };
     }
     case 'cube3': {
       const faces = m.params.faces;
-      const mats: THREE.Material[] = new Array(6);
-      (Object.keys(FACE_UV) as CubeFace[]).forEach((face, k) => {
-        const { map, emissive } = cubeFaceTextures(faceArmsUV(face, faces[face] ?? []), '#7ff6ff', 30 + k);
-        mats[FACE_UV[face].material] = new THREE.MeshStandardMaterial({
-          map, emissiveMap: emissive, emissive: new THREE.Color(1, 1, 1), emissiveIntensity: 2.2, roughness: 0.42, metalness: 0.05,
-        });
-      });
-      const c = mesh(box(12, 12, 12), mats);
+      const c = hidden(mesh(box(12, 12, 12), M.parapet));
       c.position.set(4, 6, 4);
       c.userData.collider = true;
       root.add(c);
-      // brass edges, as one mesh (twelve separate ones were 24 draw calls with their shadows)
-      const e = 6.05;
-      const edges: THREE.BufferGeometry[] = [];
-      for (const [sx, sy, sz, px, py, pz] of [
-        [12.3, 0.3, 0.3, 0, e, e], [12.3, 0.3, 0.3, 0, -e, e], [12.3, 0.3, 0.3, 0, e, -e], [12.3, 0.3, 0.3, 0, -e, -e],
-        [0.3, 12.3, 0.3, e, 0, e], [0.3, 12.3, 0.3, -e, 0, e], [0.3, 12.3, 0.3, e, 0, -e], [0.3, 12.3, 0.3, -e, 0, -e],
-        [0.3, 0.3, 12.3, e, e, 0], [0.3, 0.3, 12.3, -e, e, 0], [0.3, 0.3, 12.3, e, -e, 0], [0.3, 0.3, 12.3, -e, -e, 0],
-      ]) {
-        edges.push(box(sx, sy, sz).translate(4 + px, 6 + py, 4 + pz));
-      }
-      root.add(mesh(mergeGeometries(edges), M.brass));
-      for (const g of edges) g.dispose();
-      return { root, colliders: [c] };
+      const fallback = () => {
+        const mats: THREE.Material[] = new Array(6);
+        (Object.keys(FACE_UV) as CubeFace[]).forEach((face, k) => {
+          const { map, emissive } = cubeFaceTextures(faceArmsUV(face, faces[face] ?? []), '#7ff6ff', 30 + k);
+          mats[FACE_UV[face].material] = new THREE.MeshStandardMaterial({
+            map, emissiveMap: emissive, emissive: new THREE.Color(1, 1, 1), emissiveIntensity: 2.2, roughness: 0.42, metalness: 0.05,
+          });
+        });
+        c.material = mats;
+        c.visible = true;
+      };
+      return { root, colliders: [c], fallback };
     }
     case 'tower': {
       const depth = m.params.depth ?? 40;
       const inset = m.params.inset ?? 0.4;
-      const top = slabMesh(M, 4, 4, 1, 1);
+      const top = hidden(slabMesh(M, 4, 4, 1, 1));
       root.add(top);
       const colliders: THREE.Object3D[] = [top];
       for (const a of m.params.arms) {
         const d = DIRS[a];
         const along = Math.abs(d[0]) > 0;
         const len = 4 - inset;
-        const s = slabMesh(M, along ? len : 4, along ? 4 : len, along ? 1 : 1, 1);
+        const s = hidden(slabMesh(M, along ? len : 4, along ? 4 : len, along ? 1 : 1, 1));
         s.position.set(d[0] * (2 + len / 2), -SLAB / 2, d[2] * (2 + len / 2));
         root.add(s);
         colliders.push(s);
-        const strut = mesh(box(along ? len : 0.6, 1.2, along ? 0.6 : len), M.brass);
-        strut.position.set(d[0] * (2 + len / 2), -SLAB - 0.6, d[2] * (2 + len / 2));
-        root.add(strut);
       }
-      const col = mesh(new THREE.CylinderGeometry(1.6, 1.9, depth, 20), M.slate);
+      const col = hidden(mesh(new THREE.CylinderGeometry(1.6, 1.9, depth, 20), M.slate));
       col.position.y = -SLAB - depth / 2;
-      const gear = mesh(new THREE.TorusGeometry(2.1, 0.22, 8, 32), M.brass);
-      gear.rotation.x = Math.PI / 2;
-      gear.position.y = -SLAB - 0.4;
-      const ring = mesh(new THREE.TorusGeometry(1.2, 0.06, 6, 32), M.glow, false, false);
-      ring.rotation.x = Math.PI / 2;
-      ring.position.y = 0.03;
-      root.add(col, gear, ring);
+      root.add(col);
       colliders.push(col);
       return { root, colliders };
     }
@@ -167,51 +133,59 @@ export function buildModuleMesh(m: ModuleInstance, M: Materials, ctx: BuildConte
       const holder = new THREE.Group();
       holder.position.set(-d[0] * 2, 0, -d[2] * 2);
       holder.rotation.y = Math.atan2(d[0], d[2]);
-      const p = mesh(box(3.8, 0.25, 4), [M.slabSide, M.slabSide, M.floor, M.slabSide, M.slabSide, M.slabSide]);
-      p.geometry.translate(0, -0.125, 2);
-      const lip = mesh(box(3.9, 0.1, 0.25), M.glow, false, false);
-      lip.geometry.translate(0, -0.02, 3.9);
-      holder.add(p, lip);
       holder.userData.plate = true;
       root.add(holder);
-      return { root, colliders: [] };
+      const fallback = () => {
+        const p = mesh(box(3.8, 0.25, 4), [M.slabSide, M.slabSide, M.floor, M.slabSide, M.slabSide, M.slabSide]);
+        p.geometry.translate(0, -0.125, 2);
+        const lip = mesh(box(3.9, 0.1, 0.25), M.glow, false, false);
+        lip.geometry.translate(0, -0.02, 3.9);
+        holder.add(p, lip);
+      };
+      return { root, colliders: [], fallback };
     }
     case 'deco': {
-      if (m.params.kind === 'gate') {
-        const s = m.params.size ?? 1;
-        const g = new THREE.Group();
-        const ring = mesh(new THREE.TorusGeometry(4.2 * s, 0.45 * s, 16, 64), M.brass);
-        ring.position.y = 5 * s;
-        const inner = mesh(new THREE.TorusGeometry(3.4 * s, 0.12 * s, 8, 64), M.glow, false, false);
-        inner.position.y = 5 * s;
-        const disc = mesh(new THREE.CircleGeometry(3.3 * s, 48), M.glowSoft, false, false);
-        disc.position.y = 5 * s;
-        disc.name = 'gateDisc';
-        const base = mesh(box(9 * s, 0.6, 2.2 * s), M.parapet);
-        base.position.y = 0.3;
-        g.add(ring, inner, disc, base);
-        root.add(g);
-      } else if (m.params.kind === 'mural') {
-        const panel = mesh(box(9, 3.2, 0.25), [M.parapet, M.parapet, M.parapet, M.parapet, M.parapet,
-          new THREE.MeshStandardMaterial({
-            map: muralTexture(
-              (['top', 'north', 'east', 'south', 'west', 'bottom'] as CubeFace[]).map((f) => ({
-                name: { top: '上', north: '北', east: '東', south: '南', west: '西', bottom: '底' }[f],
-                arms: faceArmsUV(f, ctx.cubeFaces?.[f] ?? []),
-              })),
-              '#7ff6ff',
-            ),
-            roughness: 0.6,
-          })]);
-        panel.position.set(0, 1.9, 1.7);
-        panel.rotation.y = Math.PI;
-        root.add(panel);
-      } else {
-        const ob = mesh(new THREE.CylinderGeometry(0.4, 0.8, 8, 4), M.parapet);
-        ob.position.y = 4;
-        root.add(ob);
+      const fallback = () => {
+        if (m.params.kind === 'gate') {
+          const s = m.params.size ?? 1;
+          const g = new THREE.Group();
+          const ring = mesh(new THREE.TorusGeometry(4.2 * s, 0.45 * s, 16, 64), M.brass);
+          ring.position.y = 5 * s;
+          const inner = mesh(new THREE.TorusGeometry(3.4 * s, 0.12 * s, 8, 64), M.glow, false, false);
+          inner.position.y = 5 * s;
+          const disc = mesh(new THREE.CircleGeometry(3.3 * s, 48), M.glowSoft, false, false);
+          disc.position.y = 5 * s;
+          disc.name = 'gateDisc';
+          const base = mesh(box(9 * s, 0.6, 2.2 * s), M.parapet);
+          base.position.y = 0.3;
+          g.add(ring, inner, disc, base);
+          root.add(g);
+        } else if (m.params.kind === 'mural') {
+          const panel = mesh(box(9, 3.2, 0.25), [M.parapet, M.parapet, M.parapet, M.parapet, M.parapet,
+            new THREE.MeshStandardMaterial({
+              map: muralTexture(
+                (['top', 'north', 'east', 'south', 'west', 'bottom'] as CubeFace[]).map((f) => ({
+                  name: { top: '上', north: '北', east: '東', south: '南', west: '西', bottom: '底' }[f],
+                  arms: faceArmsUV(f, ctx.cubeFaces?.[f] ?? []),
+                })),
+                '#7ff6ff',
+              ),
+              roughness: 0.6,
+            })]);
+          panel.position.set(0, 1.9, 1.7);
+          panel.rotation.y = Math.PI;
+          root.add(panel);
+        } else {
+          const ob = mesh(new THREE.CylinderGeometry(0.4, 0.8, 8, 4), M.parapet);
+          ob.position.y = 4;
+          root.add(ob);
+        }
+      };
+      if (m.params.kind !== 'gate' && m.params.kind !== 'mural') {
+        fallback(); // no kit piece for it: the plain mesh is all there is
+        return { root, colliders: [] };
       }
-      return { root, colliders: [] };
+      return { root, colliders: [], fallback };
     }
   }
 }

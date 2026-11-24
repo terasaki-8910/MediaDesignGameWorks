@@ -394,6 +394,53 @@ def finish(ob, bevel=0.0, segments=2, smooth_angle=38.0):
     return ob
 
 
+def face_up(ob, axis=(0.0, 0.0, 1.0)):
+    """Turn an open sheet so that it looks along `axis` (recalculating normals can leave a sheet face-down, and a
+    single-sided face that looks away is not drawn)."""
+    me = ob.data
+    total = sum(p.normal.dot(Vector(axis)) * p.area for p in me.polygons)
+    if total < 0:
+        me.flip_normals()
+        me.update()
+    return ob
+
+
+def inset(pts, d):
+    """A convex counter-clockwise outline [(x, y), ...] moved inwards by `d` on every side."""
+    out = []
+    n = len(pts)
+    for i in range(n):
+        p0, p1, p2 = Vector(pts[i - 1]), Vector(pts[i]), Vector(pts[(i + 1) % n])
+        a, b = (p1 - p0).normalized(), (p2 - p1).normalized()
+        na, nb = Vector((-a.y, a.x)), Vector((-b.y, b.x))
+        m = (na + nb).normalized()
+        q = p1 + m * (d / max(m.dot(na), 0.2))
+        out.append((q.x, q.y))
+    return out
+
+
+def slab_outline(bm, pts, z0, z1, cut=0.0, material_index=0, top=True, bottom=True):
+    """A flat body over the convex counter-clockwise outline `pts` from z0 up to z1; its upper edge is cut back by `cut`."""
+    a = [bm.verts.new((x, y, z0)) for x, y in pts]
+    rings = [a]
+    if cut > 0:
+        rings.append([bm.verts.new((x, y, z1 - cut)) for x, y in pts])
+        rings.append([bm.verts.new((x, y, z1)) for x, y in inset(pts, cut)])
+    else:
+        rings.append([bm.verts.new((x, y, z1)) for x, y in pts])
+    n = len(pts)
+    faces = []
+    for lo, hi in zip(rings, rings[1:]):
+        faces += [bm.faces.new((lo[i], lo[(i + 1) % n], hi[(i + 1) % n], hi[i])) for i in range(n)]
+    if bottom:
+        faces.append(bm.faces.new(list(reversed(a))))
+    if top:
+        faces.append(bm.faces.new(rings[-1]))
+    for f in faces:
+        f.material_index = material_index
+    return faces
+
+
 def world_uv(ob, offset=(0.0, 0.0, 0.0)):
     """UV0: box projection at world scale, one repeat per the material's `uv_size` metres (constant texel density)."""
     me = ob.data

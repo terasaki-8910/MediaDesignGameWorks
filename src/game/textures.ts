@@ -140,7 +140,19 @@ export function cubeFaceTextures(arms: { u: number; v: number }[], accent: strin
   return { map: tex(c), emissive: tex(e) };
 }
 
-/** Mural that shows the six cube faces, as a diegetic hint. */
+/** The letters under the mural's tablets, one per tablet from the left: pale, as if let into the bronze, on a clear ground. */
+export function muralLetters(labels: string[]): THREE.CanvasTexture {
+  const q = 256;
+  const [c, ctx] = canvas(q * labels.length, q / 4);
+  ctx.fillStyle = '#e6dcc8';
+  ctx.font = `${Math.round(q * 0.21)}px serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  labels.forEach((label, i) => ctx.fillText(label, i * q + q / 2, q / 8 + 1));
+  return tex(c);
+}
+
+/** Mural that shows the six cube faces, as a diegetic hint (the stand-in when the kit does not load). */
 export function muralTexture(faces: { name: string; arms: { u: number; v: number }[] }[], accent: string) {
   const [c, ctx] = canvas(1024, 512);
   ctx.fillStyle = '#2b2a35';
