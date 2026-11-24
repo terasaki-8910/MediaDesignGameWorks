@@ -17,7 +17,17 @@ Pieces (nodes):
                  the north-east corner; it encloses the parapet's post there), crowned with the pylons' gilt winged
                  finial at 0.42 of its size, 3.2 m over the deck (brief: towers crowned in gilt). The game hides it
                  while the tower turns, as it does the parapets: the corner sweeps over the neighbours' parapets.
-  tower_ring     the mark of the turntable on the hub's paving: a ring of cyan glass (M_path_glass), 2 cm proud
+  tower_ring     the mark of the turntable on the hub's paving: a ring of cyan glass (M_path_glass) between two
+                 bevelled rims of bronze, like the path lines of the cube
+  tower_edge     the edge of the deck (modelled on the north edge of a cell, like the kit's edge pieces; the game uses
+                 it where the kit would put its plain edge): the kit's cornice cut into the slab, so that nothing
+                 passes the cell's edge and the deck can turn past its neighbours. The kit's plain edge is baked
+                 against a neighbour and is black wherever it shows; this one is lit like any upright stone.
+  tower_sill     the threshold at the end of an arm (modelled on the north arm): a sill of bronze (M_bronze_trim) over
+                 the 0.4 m between the arm's end and the neighbour's edge, and under it a block of stone that fills
+                 the joint to the slab's full depth; a stone respond closes the end of each of the arm's parapets
+                 against its post. Its corners pass the neighbours' edges as the tower turns, so the
+                 game puts it away for the turn with the crown.
 The tower only turns about the vertical, so its upright faces are toned and its foot weathered like the kit's.
 """
 import math
@@ -46,7 +56,9 @@ K.reset()
 STONE = K.stone_material("M_stone", dict(K.ASHLAR))
 GILT = K.plain_material("M_gilt", "#E3C16F", metallic=1.0, roughness=0.26)
 GLASS = K.plain_material("M_path_glass", "#0B2A30", metallic=0.0, roughness=0.2, emission="#5FF2FF", strength=1.0)
-MATS = [STONE, GILT, GLASS]
+BRONZE = K.bronze_trim_material(opts)
+MATS = [STONE, GILT, GLASS, BRONZE]
+AO_STRENGTH = float(opts.get("ao", "0.45"))  # (0.85 drew the joints of the band courses and the pilasters' caps as black lines)
 
 # capital and foot (the mouldings), with the bearing ring
 bm = bmesh.new()
@@ -75,10 +87,18 @@ for k in range(4):
     a = k * math.pi / 2
     c, s = round(math.cos(a)), round(math.sin(a))
     for lo, hi in (((-0.5, HALF - 0.05, SHAFT[1] + 0.5), (0.5, HALF + 0.07, SHAFT[0] - 0.35)),  # the strip
-                   ((-0.58, HALF - 0.05, SHAFT[0] - 0.35), (0.58, HALF + 0.11, SHAFT[0] - 0.1)),  # its cap
                    ((-0.58, HALF - 0.05, SHAFT[1] + 0.2), (0.58, HALF + 0.11, SHAFT[1] + 0.5))):  # its foot
         pts = [(c * x - s * y, s * x + c * y, z) for x, y, z in (lo, hi)]
         K.box(bm, [min(p[i] for p in pts) for i in range(3)], [max(p[i] for p in pts) for i in range(3)], 0)
+    # its cap, weathered: the top slopes back to the shaft (a level top under the capital is a black ledge from above)
+    z0, z1 = SHAFT[0] - 0.35, SHAFT[0] - 0.1
+    for f in K.prism(bm, [(HALF - 0.05, z0), (HALF + 0.11, z0), (HALF + 0.11, z1 - 0.1), (HALF + 0.02, z1), (HALF - 0.05, z1)], -0.58, 0.58, 0):
+        for v in f.verts:
+            v.tag = True
+    for v in bm.verts:
+        if v.tag:
+            v.co.x, v.co.y = c * v.co.x - s * v.co.y, s * v.co.x + c * v.co.y
+            v.tag = False
 run = K.finish(K.new_object("tower_shaft_run", bm, materials=MATS), bevel=0.02, smooth_angle=30)
 
 # the console under an arm: a cavetto from the shaft out to the arm's end, with a fillet at the tip
@@ -119,18 +139,35 @@ for sx in (-1, 1):  # the wings, across the corner's diagonal
         face.material_index = 1
 crown = K.finish(K.new_object("tower_crown", bm, materials=MATS), smooth_angle=35)
 
-# the turntable's ring on the paving
+# the turntable's ring on the paving: glass between two rims of bronze
 bm = bmesh.new()
 SEG = 48
-R0, R1, H0, H1 = 1.16, 1.34, 0.012, 0.02
-rows = [(R0, 0.0), (R0, H0), (R0 + 0.008, H1), (R1 - 0.008, H1), (R1, H0), (R1, 0.0)]
-loops = [[bm.verts.new((r * math.cos(2 * math.pi * i / SEG), r * math.sin(2 * math.pi * i / SEG), z)) for i in range(SEG)] for r, z in rows]
-for a, b in zip(loops, loops[1:] + loops[:1]):
-    for i in range(SEG):
-        bm.faces.new((a[i], a[(i + 1) % SEG], b[(i + 1) % SEG], b[i])).material_index = 2
+R0, R1 = 1.17, 1.33
+K.annulus(bm, R0, R1, 0.014, SEG, 2, cut=0.004)
+K.annulus(bm, R0 - 0.07, R0 + 0.004, 0.026, SEG, 3, cut=0.01)
+K.annulus(bm, R1 - 0.004, R1 + 0.07, 0.026, SEG, 3, cut=0.01)
 ring = K.finish(K.new_object("tower_ring", bm, materials=MATS), smooth_angle=40)
 
-parts = [detail, run, bracket, crown, ring]
+# the deck's edge
+bm = bmesh.new()
+K.sunk_edge(bm, K.CELL / 2, K.SLAB)
+edge = K.finish(K.new_object("tower_edge", bm, materials=MATS), smooth_angle=30)
+
+# the sill at an arm's end, from the arm (5.6 m from the axis) to 1 cm short of the neighbour's edge at 6 m
+ARM_END, SILL_END, SILL_HALF = 5.6, 5.99, 1.97
+bm = bmesh.new()
+K.slab_outline(bm, [(-SILL_HALF, ARM_END - 0.03), (SILL_HALF, ARM_END - 0.03), (SILL_HALF, SILL_END), (-SILL_HALF, SILL_END)], -0.07, 0.008, 0.014, 3)
+# the stone under it fills the joint from the arm's end (into the hollows of its moulding) to the neighbour's edge, the full
+# depth of the slab: seen along the joint from either side there is stone, not the gap between two slabs
+K.slab_outline(bm, [(-SILL_HALF, ARM_END - 0.065), (SILL_HALF, ARM_END - 0.065), (SILL_HALF, SILL_END - 0.005), (-SILL_HALF, SILL_END - 0.005)], -K.SLAB, -0.071, 0.0, 0)
+# a respond at the end of each of the arm's parapets, between its plinth and its coping. The last 16 cm of a parapet segment
+# have no baluster: a post stands there. Where the neighbour's walkway turns the corner the post stands 16 cm further on, in
+# the corner, and that stretch was a hole on to the joint through which the post showed the face it is baked to hide
+for sx in (-1, 1):
+    K.box(bm, (sx * LINE - 0.15, 5.79, 0.17), (sx * LINE + 0.15, 5.955, 0.845), 0)
+sill = K.finish(K.new_object("tower_sill", bm, materials=MATS), smooth_angle=30)
+
+parts = [detail, run, bracket, crown, ring, edge, sill]
 for k, ob in enumerate(parts):
     K.world_uv(ob, offset=(0.4 * k, 0.9 * k, 0.55 * k))
     print(f"{ob.name}: {K.triangles(ob)} triangles")
@@ -141,6 +178,8 @@ K.box(bm, (-2, -2, -K.SLAB), (2, 2, 0))
 K.box(bm, (-2, 2, -K.SLAB), (2, 5.6, 0))
 K.box(bm, (-5.6, -2, -K.SLAB), (-2, 2, 0))
 deck = K.new_object("bake_deck", bm)
+edge.location = (40.0, 0, 0)  # (not inside its own deck: it is the deck's face)
+sill.location = (0, 40.0, 0)
 for ob in (run, detail):
     for vert in ob.data.vertices:
         if vert.co.z < -3.0:
@@ -153,15 +192,22 @@ for ob in (run, detail):
             vert.co.z = -3.0 + (vert.co.z + 3.0) / SQUASH
     ob.data.update()
 bpy.context.view_layer.update()
-ao = K.bake_ao(parts, "tower_ao", 512, occluders=[deck], distance=1.5, strength=0.85)
-K.grime_vertex_colours(parts, ao, amount=0.5, skip=("M_gilt", "M_path_glass"))
+ao = K.bake_ao(parts, "tower_ao", 512, occluders=[deck], distance=1.5, strength=AO_STRENGTH)
+K.grime_vertex_colours(parts, ao, amount=0.5, skip=("M_gilt", "M_path_glass", "M_bronze_trim"))
 K.depth_weathering([detail, run, bracket], -0.6, -4.0, tint="#7C7E78")  # under the deck: damp, never in the sun (as the piers)
 K.course_tint([run], COURSE, 0.07)
-K.face_weathering([crown], vertical=UPRIGHT_TONE, skip=("M_gilt",))
+K.face_weathering([crown, edge, sill], vertical=UPRIGHT_TONE, skip=("M_gilt", "M_bronze_trim"))
 bpy.data.objects.remove(deck)
+edge.location = sill.location = (0, 0, 0)
 for ob in parts:
     K.check_mesh(ob, closed=True)
 bpy.context.view_layer.update()
+out = max(v.co.y for v in edge.data.vertices)
+if out > K.CELL / 2 + 1e-4:
+    raise RuntimeError(f"the deck's edge stands {out - K.CELL / 2:.3f} m out of its cell: the deck turns past its neighbours")
+far = max(v.co.y for v in sill.data.vertices)
+if far > 5.995:
+    raise RuntimeError(f"the sill reaches {far:.3f} m from the axis: the neighbour's edge is at 6 m")
 lo = min(v.co.z for v in detail.data.vertices)
 hi = max(v.co.z for ob in (detail, bracket) for v in ob.data.vertices)
 if abs(lo + DEPTH) > 1e-3 or abs(hi - TOP) > 1e-4:
@@ -173,4 +219,4 @@ shaft = bpy.data.objects.new("tower_shaft", None)
 bpy.context.collection.objects.link(shaft)
 detail.parent = run.parent = shaft
 bpy.context.view_layer.update()
-K.export(OUT, [shaft, *parts])
+K.export(OUT, [shaft, *parts])  # (the shaft's two meshes are among the parts)

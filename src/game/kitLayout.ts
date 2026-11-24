@@ -30,6 +30,12 @@ interface Cell { gx: number; gz: number; y: number; x0: number; x1: number; z0: 
 const isRoad = (m: ModuleInstance) => m.type === 'bridge' || m.type === 'tower' || (m.type === 'tile' && Math.min(...(m.params.size ?? [1, 1])) === 1);
 /** A lamped bridge of four cells or more is a piece of street: kerbs, pavements and bollards on its deck, an archway at its far end. */
 export const isStreet = (m: ModuleInstance) => m.type === 'bridge' && !!m.params.lamps && m.params.length >= 4;
+/**
+ * The edge piece where another slab can stand against this one. The kit's `edge_flush` is a plain face that is hidden by
+ * its neighbour (and baked so: it is black where it shows). The arm tower's deck and the street show theirs for most of
+ * the game (the tower turns, the street hangs), so they have their own: the cornice cut into the slab.
+ */
+const flushEdge = (m: ModuleInstance) => (m.type === 'tower' ? 'tower_edge' : isStreet(m) ? 'street_edge' : 'edge_flush');
 /** The archway stands this far beyond the middle of the street's last cell. */
 const ARCH_AT = 1.2;
 interface AABB { min: Vec3; max: Vec3 }
@@ -172,7 +178,7 @@ export function planSlabs(cs: CompiledStage): SlabPlan {
       out.push({ ...place('slab_top', cx, c.y, cz, 0, sx, sz), uvTurn: turn });
       put('slab_bottom');
       SIDES.forEach((s, k) => {
-        if (kind[s] !== 'none') put(kind[s] === 'cornice' ? 'edge_cornice' : 'edge_flush', TURNS[s]);
+        if (kind[s] !== 'none') put(kind[s] === 'cornice' ? 'edge_cornice' : flushEdge(c.module), TURNS[s]);
         // the walking line: along roads, on to the edge where another slab joins, and from a road to the plaza's middle
         const n = neighbour(c, s);
         if (n && (s === 'E' || s === 'S') && (isRoad(c.module) || isRoad(n.module))) walk.push({ a: v(c.gx, c.y, c.gz), b: v(n.gx, n.y, n.gz) });

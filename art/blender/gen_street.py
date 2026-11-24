@@ -11,6 +11,10 @@ The deck, the cornices, the parapets and the lamps are the kit's. This file adds
                stand alternately proud, and a gilt keystone. Modelled across X; the origin is on the deck under its
                crown. It keeps inside the old arch's envelope (2.35 m to each side, 6.6 m high, 0.3 m deep): the
                solver knows nothing of it.
+  street_edge  the edge of the deck (modelled on the north edge of a cell, like the kit's edge pieces; the game uses it
+               where the kit would put its plain edge, which is baked against a neighbour and is a dark blank strip when
+               the street hangs and is seen edge-on): the kit's kerb and cornice cut into the slab, so that nothing
+               passes the cell's edge and the street can lie against its neighbours.
 The street folds down from hanging, so nothing here knows which way is up: no ground under the bake, one tone for
 every face of a piece.
 """
@@ -79,21 +83,29 @@ for k in range(VOUSSOIRS):
         f.material_index = 2 if key else 0
 ring = K.finish(K.new_object("street_arch_ring", bm, materials=MATS), bevel=0.015, smooth_angle=30)
 
-parts = [side, piers, ring]
+# the deck's edge
+bm = bmesh.new()
+K.sunk_edge(bm, H, K.SLAB)
+edge = K.finish(K.new_object("street_edge", bm, materials=MATS), smooth_angle=30)
+
+parts = [side, piers, ring, edge]
 for k, ob in enumerate(parts):
     K.world_uv(ob, offset=(0.7 * k, 0.3 * k, 0.45 * k))
     print(f"{ob.name}: {K.triangles(ob)} triangles")
 for ob in (piers, ring):
     ob.location = (20.0, 0, 0)
+edge.location = (0, 20.0, 0)
 bpy.context.view_layer.update()
 K.unwrap_atlas(parts, "UV1", margin=0.008)
 ao = K.bake_ao(parts, "street_ao", 256, distance=0.8, strength=1.2)
 K.grime_vertex_colours(parts, ao, amount=0.6, skip=("M_gilt",))
-K.face_weathering([piers, ring], vertical=ARCH_TONE, top=ARCH_TONE, skip=("M_gilt",))
+K.face_weathering([piers, ring, edge], vertical=ARCH_TONE, top=ARCH_TONE, skip=("M_gilt",))
 K.face_weathering([side], vertical=KERB_TONE, top=KERB_TONE)
-for ob in (piers, ring):
+for ob in (piers, ring, edge):
     ob.location = (0, 0, 0)
 bpy.context.view_layer.update()
+if max(v.co.y for v in edge.data.vertices) > H + 1e-4:
+    raise RuntimeError("the street's edge stands out of its cell: the street lies against its neighbours")
 for ob in parts:
     K.check_mesh(ob, closed=True)
 verts = [v.co for ob in (piers, ring) for v in ob.data.vertices]
@@ -106,4 +118,4 @@ arch = bpy.data.objects.new("street_arch", None)
 bpy.context.collection.objects.link(arch)
 piers.parent = ring.parent = arch
 bpy.context.view_layer.update()
-K.export(OUT, [side, arch, piers, ring])
+K.export(OUT, [side, arch, piers, ring, edge])

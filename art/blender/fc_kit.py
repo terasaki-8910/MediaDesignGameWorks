@@ -213,6 +213,20 @@ def plain_material(name, colour, metallic=0.0, roughness=0.5, emission=None, str
     return m
 
 
+# The bronze of the set pieces' beads, channels, thresholds and saddles (M_bronze_trim). The kit's dark bronze (#3D3A2E,
+# all metal) is right for a lamp post, but in the shade it has nothing but the sky's reflection and renders under L* 20;
+# these parts lie on stone in the shade as often as in the sun, so the trim is a patinated bronze, part metal, a shade
+# lighter and warm, which keeps a body colour there.
+BRONZE_TRIM = {"colour": "#423624", "metallic": 0.25, "roughness": 0.6}
+
+
+def bronze_trim_material(opts=None):
+    """M_bronze_trim; `--bronze-colour`, `--bronze-metallic` and `--bronze-roughness` override it (comparison builds)."""
+    o = opts or {}
+    return plain_material("M_bronze_trim", o.get("bronze-colour", BRONZE_TRIM["colour"]), metallic=float(o.get("bronze-metallic", BRONZE_TRIM["metallic"])),
+                          roughness=float(o.get("bronze-roughness", BRONZE_TRIM["roughness"])))
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # Geometry
 
@@ -241,6 +255,16 @@ def prism(bm, profile, x0, x1, material_index=0):
     for f in faces:
         f.material_index = material_index
     return faces
+
+
+def sunk_edge(bm, half, slab, material_index=0):
+    """The edge of a slab where a neighbour can stand against it, on the north edge of a cell (the plane y = `half`): the
+    kit's cornice cut into the slab instead of standing out of it, so nothing passes the plane. From the paving down: the
+    kerb's face, a fillet, a cavetto, the fascia set back 6 cm, and a plinth course that comes out to the plane again."""
+    profile = ([(0.0, 0.0), (0.0, -0.15), (-0.02, -0.165), (-0.02, -0.19)]
+               + [(-0.02 - 0.04 * (1 - math.cos(math.radians(a))), -0.19 - 0.1 * math.sin(math.radians(a))) for a in (30, 60, 90)]
+               + [(-0.06, -0.31), (-0.06, -slab + 0.09), (-0.03, -slab + 0.07), (0.0, -slab + 0.07), (0.0, -slab), (-0.24, -slab), (-0.24, 0.0)])
+    return prism(bm, [(half + o, z) for o, z in profile], -half, half, material_index)
 
 
 def box(bm, lo, hi, material_index=0):
@@ -334,6 +358,20 @@ def tube(bm, path, radius, segments=6, material_index=0, side=(0, 1, 0)):
             faces.append(bm.faces.new((rings[k][i], rings[k][j], rings[k + 1][j], rings[k + 1][i])))
     faces.append(bm.faces.new(list(reversed(rings[0]))))
     faces.append(bm.faces.new(rings[-1]))
+    for f in faces:
+        f.material_index = material_index
+    return faces
+
+
+def annulus(bm, r0, r1, height, segments, material_index=0, cut=0.008, centre=(0.0, 0.0)):
+    """A flat closed ring on the plane z = 0, from radius r0 to r1 and `height` high, its two upper edges cut by `cut`."""
+    rows = [(r0, 0.0), (r0, height - cut), (r0 + cut, height), (r1 - cut, height), (r1, height - cut), (r1, 0.0)]
+    loops = [[bm.verts.new((centre[0] + r * math.cos(2 * math.pi * i / segments), centre[1] + r * math.sin(2 * math.pi * i / segments), z))
+              for i in range(segments)] for r, z in rows]
+    faces = []
+    for a, b in zip(loops, loops[1:] + loops[:1]):
+        for i in range(segments):
+            faces.append(bm.faces.new((a[i], b[i], b[(i + 1) % segments], a[(i + 1) % segments])))
     for f in faces:
         f.material_index = material_index
     return faces

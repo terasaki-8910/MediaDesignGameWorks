@@ -99,8 +99,9 @@ export class Kit {
               mat.polygonOffsetFactor = -4;
               mat.polygonOffsetUnits = -40;
             }
-            if (mat.name === 'M_path_glass') {
-              // the path lines stand 2 cm proud of the paving they lie on: the same help where the depth buffer is coarse
+            if (mat.name === 'M_path_glass' || mat.name === 'M_bronze_trim') {
+              // the path lines and their bronze rims stand 1 to 3 cm proud of the paving they lie on: the same help where
+              // the depth buffer is coarse
               mat.polygonOffset = true;
               mat.polygonOffsetFactor = -2;
               mat.polygonOffsetUnits = -20;

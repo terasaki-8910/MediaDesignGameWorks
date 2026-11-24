@@ -100,33 +100,33 @@
     },
     "cube.glb": {
       "maxFileBytes": 150000,
-      "maxTriangles": 2000,
-      "maxDrawCalls": 7,
-      "maxMaterials": 4,
+      "maxTriangles": 2200,
+      "maxDrawCalls": 8,
+      "maxMaterials": 5,
       "maxTextureSize": 256,
       "maxTextureBytes": 10000
     },
     "plate.glb": {
       "maxFileBytes": 60000,
       "maxTriangles": 700,
-      "maxDrawCalls": 4,
-      "maxMaterials": 4,
+      "maxDrawCalls": 6,
+      "maxMaterials": 5,
       "maxTextureSize": 128,
       "maxTextureBytes": 8000
     },
     "mural.glb": {
-      "maxFileBytes": 650000,
-      "maxTriangles": 6000,
+      "maxFileBytes": 800000,
+      "maxTriangles": 7500,
       "maxDrawCalls": 9,
       "maxMaterials": 5,
       "maxTextureSize": 512,
       "maxTextureBytes": 80000
     },
     "tower.glb": {
-      "maxFileBytes": 450000,
-      "maxTriangles": 6000,
-      "maxDrawCalls": 8,
-      "maxMaterials": 3,
+      "maxFileBytes": 500000,
+      "maxTriangles": 7200,
+      "maxDrawCalls": 11,
+      "maxMaterials": 4,
       "maxTextureSize": 512,
       "maxTextureBytes": 70000
     },
@@ -139,10 +139,10 @@
       "maxTextureBytes": 15000
     },
     "gate.glb": {
-      "maxFileBytes": 560000,
-      "maxTriangles": 10500,
-      "maxDrawCalls": 5,
-      "maxMaterials": 4,
+      "maxFileBytes": 640000,
+      "maxTriangles": 13200,
+      "maxDrawCalls": 6,
+      "maxMaterials": 5,
       "maxTextureSize": 512,
       "maxTextureBytes": 70000
     }

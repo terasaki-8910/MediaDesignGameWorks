@@ -10,9 +10,12 @@ Pieces (nodes):
   mural       an empty with mural_body (plinth, die, cornice, end piers, corbels, the relief and the tablets),
               mural_gilt (the fillets of the two frames, the sun of the relief, the cresting and the piers' finials)
               and six empties tablet_0 .. tablet_5 in the middle of the tablets' faces.
-              North face, the one the player sees: a relief of the folded city in a raised frame (a street of stepped
-              blocks along the ground, a second city standing on the right-hand edge, a third hanging from the top,
-              a gilt sun between them).
+              North face, the one the player sees: a relief of the folded city, carved in a warm limestone (the
+              stone's own colour is held warm in the vertex colours: this face is in the shade all day, lit by the
+              sky alone, and the kit's stone goes grey-blue there) inside a frame 14 cm proud. Three cities, each in
+              three planes 5, 10 and 15 cm proud with ledges, set-backs and pitched roofs that take the sky's light
+              from above: one along the ground on a quay, a second standing on the right-hand edge, a third hanging
+              from the top; a gilt sun between them. The field behind them is a shade darker.
               South face, seen from outside: a dark bronze plaque with six pale tablets, one for each face of the
               path cube. The game inlays each face's path on its tablet from the stage's data (below) and letters them.
   mural_hub   the middle of a tablet's path, in the cyan glass of the cube's own path lines (M_path_glass)
@@ -77,29 +80,54 @@ def raised(x0, x1, z0, z1, proud, face, material_index=0):
 # north: the frame of the relief
 x0, x1, z0, z1 = FIELD
 B = 0.09
+FRAME_PROUD = 0.14
 for a in ((x0 - B, x1 + B, z0 - B, z0), (x0 - B, x1 + B, z1, z1 + B), (x0 - B, x0, z0 - 0.003, z1 + 0.003), (x1, x1 + B, z0 - 0.003, z1 + 0.003)):
-    raised(*a, 0.06, 1)
-# the city on the ground: (left edge, width, height, setback top or 0)
-GROUND = [(-3.8, 0.42, 0.55, 0), (-3.34, 0.36, 0.8, 0.16), (-2.94, 0.5, 0.62, 0), (-2.4, 0.3, 1.05, 0.2), (-2.06, 0.46, 0.7, 0.12),
-          (-1.56, 0.34, 0.5, 0), (-1.18, 0.4, 0.88, 0.18), (-0.74, 0.3, 0.6, 0), (-0.4, 0.36, 0.42, 0), (0.0, 0.42, 0.64, 0.14),
-          (0.46, 0.3, 0.4, 0), (0.8, 0.44, 0.52, 0)]
-for left, w, h, top in GROUND:
-    raised(left, left + w, z0 + 0.003, z0 + h, 0.05, 1)
+    raised(*a, FRAME_PROUD, 1)
+raised(x0 - 0.002, x1 + 0.002, z0 - 0.002, z1 + 0.002, 0.012, 1)  # the field (its own faces: it takes its own tone)
+PLANES = (0.05, 0.1, 0.15)  # how far the far, the middle and the near buildings stand out of the die
+
+
+def building(a0, a1, b0, b1, plane, top=0.0, roof=0.0):
+    """A block of the city on the ground, from a0 to a1 and from its foot b0 up to its eaves b1, with a cornice at the
+    eaves, a narrower set-back `top` high on it and a pitched roof `roof` high on that. Each step is a ledge, and the
+    roof a slope, that looks up at the sky."""
+    w = a1 - a0
+    raised(a0, a1, b0, b1, plane, 1)
+    raised(a0 - 0.012, a1 + 0.012, b1 - 0.035, b1, plane + 0.014, 1)
     if top:
-        raised(left + w * 0.28, left + w * 0.72, z0 + h - 0.01, z0 + h + top, 0.035, 1)
-# the city standing on the right-hand edge: (lower edge, width, how far it reaches into the field, setback)
-WALL = [(z0 + 0.06, 0.34, 0.6, 0), (z0 + 0.44, 0.3, 0.95, 0.2), (z0 + 0.78, 0.4, 0.7, 0.14), (z0 + 1.22, 0.28, 1.15, 0.22), (z0 + 1.54, 0.38, 0.62, 0)]
-for low, w, reach, top in WALL:
-    raised(x1 - reach, x1 - 0.003, low, low + w, 0.05, 1)
+        raised(a0 + w * 0.22, a1 - w * 0.22, b1 - 0.01, b1 + top, plane - 0.02, 1)
+    if roof:
+        base = b1 + top
+        lo, hi = a0 + w * (0.22 if top else 0.0), a1 - w * (0.22 if top else 0.0)
+        d = plane - (0.02 if top else 0.0)
+        K.prism(bm, [(NORTH - 0.02, base - 0.005), (NORTH + d, base - 0.005), (NORTH - 0.02, base + roof)], lo, hi, 0)
+
+
+# the city on the ground, on a quay: (left edge, width, height, plane, set-back, roof)
+raised(x0 + 0.003, x1 - 0.9, z0 + 0.003, z0 + 0.09, PLANES[2] + 0.02, 1)
+QUAY = z0 + 0.085
+GROUND = [(-3.8, 0.5, 0.62, 0, 0.0, 0.12), (-3.42, 0.42, 0.5, 2, 0.14, 0.0), (-2.96, 0.4, 0.86, 1, 0.16, 0.1), (-2.62, 0.46, 0.46, 2, 0.0, 0.12),
+          (-2.2, 0.36, 1.08, 0, 0.2, 0.0), (-1.9, 0.5, 0.66, 1, 0.12, 0.1), (-1.46, 0.4, 0.4, 2, 0.0, 0.1), (-1.1, 0.42, 0.9, 0, 0.18, 0.08),
+          (-0.74, 0.44, 0.56, 2, 0.1, 0.0), (-0.34, 0.36, 0.74, 1, 0.0, 0.12), (0.0, 0.46, 0.42, 2, 0.12, 0.0), (0.42, 0.34, 0.6, 0, 0.14, 0.08),
+          (0.72, 0.42, 0.36, 2, 0.0, 0.1)]
+for left, w, h, k, top, roof in GROUND:
+    building(left, left + w, QUAY, QUAY + h, PLANES[k], top, roof)
+# the city standing on the right-hand edge: (lower edge, width, how far it reaches into the field, plane, set-back)
+WALL = [(z0 + 0.14, 0.36, 0.56, 2, 0.0), (z0 + 0.42, 0.34, 0.98, 0, 0.2), (z0 + 0.7, 0.4, 0.66, 1, 0.14), (z0 + 1.04, 0.3, 0.44, 2, 0.0),
+        (z0 + 1.26, 0.3, 1.14, 0, 0.22), (z0 + 1.5, 0.4, 0.6, 1, 0.0)]
+for low, w, reach, k, top in WALL:
+    raised(x1 - reach, x1 - 0.003, low, low + w, PLANES[k], 1)
+    raised(x1 - reach, x1 - reach + 0.035, low - 0.012, low + w + 0.012, PLANES[k] + 0.014, 1)
     if top:
-        raised(x1 - reach - top, x1 - reach + 0.01, low + w * 0.28, low + w * 0.72, 0.035, 1)
+        raised(x1 - reach - top, x1 - reach + 0.01, low + w * 0.22, low + w * 0.78, PLANES[k] - 0.02, 1)
 # and the one hanging from the top
-ROOF = [(-1.5, 0.36, 0.34, 0), (-1.08, 0.3, 0.52, 0.12), (-0.72, 0.44, 0.3, 0), (-0.22, 0.32, 0.46, 0.1), (0.16, 0.4, 0.36, 0), (0.62, 0.3, 0.58, 0.14),
-        (0.98, 0.42, 0.32, 0), (1.46, 0.34, 0.44, 0), (1.86, 0.4, 0.28, 0), (2.3, 0.3, 0.36, 0)]
-for left, w, h, top in ROOF:
-    raised(left, left + w, z1 - h, z1 - 0.003, 0.05, 1)
+ROOF = [(-1.5, 0.4, 0.34, 2, 0.0), (-1.16, 0.34, 0.56, 0, 0.12), (-0.78, 0.46, 0.3, 1, 0.0), (-0.3, 0.36, 0.46, 2, 0.1), (0.1, 0.42, 0.62, 0, 0.14),
+        (0.46, 0.4, 0.34, 1, 0.0), (0.9, 0.44, 0.48, 2, 0.12), (1.4, 0.36, 0.3, 0, 0.0), (1.72, 0.42, 0.42, 1, 0.1), (2.2, 0.36, 0.3, 2, 0.0)]
+for left, w, h, k, top in ROOF:
+    raised(left, left + w, z1 - h, z1 - 0.003, PLANES[k], 1)
+    raised(left - 0.012, left + w + 0.012, z1 - h, z1 - h + 0.035, PLANES[k] + 0.014, 1)
     if top:
-        raised(left + w * 0.28, left + w * 0.72, z1 - h - top, z1 - h + 0.01, 0.035, 1)
+        raised(left + w * 0.22, left + w * 0.78, z1 - h - top, z1 - h + 0.01, PLANES[k] - 0.02, 1)
 # south: a dark bronze plaque in a raised stone frame, and on it six tablets of pale stone
 S0, S1 = -HALF + 0.7, HALF - 0.7
 raised(S0 + 0.004, S1 - 0.004, 1.024, 2.996, 0.02, -1, 3)
@@ -118,11 +146,11 @@ for face, (a0, a1, b0, b1) in ((1, (x0 + 0.02, x1 - 0.02, z0 + 0.02, z1 - 0.02))
     for lo, hi in (((a0, b0), (a1, b0 + F)), ((a0, b1 - F), (a1, b1)), ((a0, b0 + F + 0.002), (a0 + F, b1 - F - 0.002)), ((a1 - F, b0 + F + 0.002), (a1, b1 - F - 0.002))):
         if face > 0 and lo[1] == b0:
             continue  # the relief's ground line is stone
-        near, far = (0.004, 0.02) if face > 0 else (0.024, 0.04)  # (on the south it lies on the plaque)
+        near, far = (0.014, 0.032) if face > 0 else (0.024, 0.04)  # (on the field, and on the south on the plaque)
         K.box(bm, (lo[0], min(y + near * face, y + far * face), lo[1]), (hi[0], max(y + near * face, y + far * face), hi[1]), 2)
 # the sun: a low dome between the three cities
-SUN = (1.75, z0 + 0.62, 0.3)
-rings = [(SUN[2] * math.cos(math.radians(a)), 0.004 + 0.05 * math.sin(math.radians(a))) for a in (0, 30, 60)] + [(0.0, 0.058)]
+SUN = (1.6, z0 + 0.82, 0.3)
+rings = [(SUN[2] * math.cos(math.radians(a)), 0.014 + 0.07 * math.sin(math.radians(a))) for a in (0, 30, 60)] + [(0.0, 0.088)]
 verts = []
 for r, d in rings:
     verts.append([bm.verts.new((SUN[0] + r * math.cos(2 * math.pi * i / 24), NORTH + d, SUN[1] + r * math.sin(2 * math.pi * i / 24))) for i in range(24)]
@@ -165,10 +193,22 @@ for k, ob in enumerate((hub, arm)):
     ob.location = (30.0 * (k + 1), 0, 0)
 bpy.context.view_layer.update()
 K.unwrap_atlas(parts, "UV1", margin=0.006)
-ao = K.bake_ao(parts, "mural_ao", 512, occluders=[slab], distance=0.3, strength=1.0)
+ao = K.bake_ao(parts, "mural_ao", 512, occluders=[slab], distance=0.3, strength=float(opts.get("ao", "0.7")))
 K.grime_vertex_colours(parts, ao, amount=0.4, skip=("M_gilt", "M_bronze_dark", "M_path_glass"))
 K.course_tint([body], 0.675, 0.05, skip=("M_gilt", "M_paving", "M_bronze_dark"))
 K.face_weathering([body], vertical=UPRIGHT_TONE, skip=("M_bronze_dark",))
+# the relief's own stone: a warm limestone, its field a shade darker than what stands on it
+WARM = tuple(float(v) for v in opts.get("warm", "1.0,0.9,0.74").split(","))
+FIELD_TONE = float(opts.get("field", "0.8"))
+colours = body.data.color_attributes.active_color
+for poly in body.data.polygons:
+    c = poly.center
+    if c.y < NORTH - 0.001 or not (x0 - B - 0.02 < c.x < x1 + B + 0.02 and z0 - B - 0.02 < c.z < z1 + B + 0.3):
+        continue
+    tone = FIELD_TONE if c.y < NORTH + 0.02 and x0 < c.x < x1 and z0 < c.z < z1 else 1.0
+    for li in poly.loop_indices:
+        r, g, b_, a_ = colours.data[li].color
+        colours.data[li].color = (r * WARM[0] * tone, g * WARM[1] * tone, b_ * WARM[2] * tone, a_)
 bpy.data.objects.remove(slab)
 for ob in (hub, arm):
     ob.location = (0, 0, 0)

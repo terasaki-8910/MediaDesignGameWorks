@@ -82,9 +82,12 @@ const TOWER_DEPTH = 30;
 const SLAB = 0.6;
 
 /**
- * What carries and crowns the arm tower (its deck comes from kitLayout.ts): the shaft, a console under each arm, the
- * turntable's ring on the hub, and a gilt-crowned pier on each corner of the hub that has no arm on either side.
+ * What carries and crowns the arm tower (its deck comes from kitLayout.ts): the shaft, a console under each arm and a
+ * bronze sill at its end, the turntable's ring on the hub, and a gilt-crowned pier on each corner of the hub that has no
+ * arm on either side. `TOWER_PUT_AWAY` names the pieces that are hidden while the tower turns (the game also hides the
+ * sill of an arm that ends in the air).
  */
+export const TOWER_PUT_AWAY: readonly string[] = ['tower_crown', 'tower_sill'];
 export function towerPlacements(m: Tower): Placement[] {
   const arms = m.params.arms;
   const shaft = place('tower_shaft', 0, 0, 0);
@@ -96,7 +99,7 @@ export function towerPlacements(m: Tower): Placement[] {
   }
   const out = [shaft, place('tower_ring', 0, 0, 0)];
   SIDES.forEach((s, k) => {
-    if (arms.includes(s)) out.push(place('tower_bracket', 0, 0, 0, k));
+    if (arms.includes(s)) out.push(place('tower_bracket', 0, 0, 0, k), place('tower_sill', 0, 0, 0, k));
     else if (!arms.includes(SIDES[(k + 1) % 4])) out.push(place('tower_crown', 0, 0, 0, k));
   });
   return out;

@@ -6,12 +6,12 @@ import { DIRS, SIDES, cellFloor, type Mat3, type Side } from '../core/math.ts';
 import type { Action, CubeFace, Id, PuzzleState } from '../core/types.ts';
 import type { DirName } from '../core/math.ts';
 import type { Kit } from './kit.ts';
-import { RAIL_LINE, edgeKey, planSlabs, sideMatrix } from './kitLayout.ts';
+import { RAIL_LINE, edgeKey, isStreet, planSlabs, sideMatrix } from './kitLayout.ts';
 import { buildModuleMesh, consoleMesh, faceArmsUV } from './kitMeshes.ts';
 import { LOOK } from './look.ts';
 import type { Materials } from './materials.ts';
 import { portalMaterial, prepareDisc } from './portal.ts';
-import { MURAL_FACES, cubePlacements, muralPlacements, toneByFacing, towerPlacements } from './setPieces.ts';
+import { MURAL_FACES, TOWER_PUT_AWAY, cubePlacements, muralPlacements, toneByFacing, towerPlacements } from './setPieces.ts';
 import { muralLetters } from './textures.ts';
 
 export interface EdgeMarker { pos: THREE.Vector3; side: Side; kind: 'open' | 'close' }
@@ -22,16 +22,23 @@ interface ConsoleParts { glass: THREE.MeshStandardMaterial | null; beacon: THREE
 /** Emission of a console's glass: at rest, and the mean while the player stands at it. */
 const GLASS_REST = 1.6;
 const GLASS_ACTIVE = 3.2;
-/** Emission of the path lines (the cube's faces, the plates, the tower's ring): under the bloom threshold, like a console at rest. */
-const PATH_GLOW = 1.3;
+/**
+ * Emission of the path lines (the cube's faces, the plates, the tower's ring): they render at about L* 70, some 15 L* over
+ * the paving they lie on in the shade, and stay under the bloom threshold. (At 1.3 they were flat strips at L* 86.)
+ */
+const PATH_GLOW = 0.5;
 /**
  * The path cube's stone and paving are the kit's ashlar and paving as on every slab; only their tone by facing is the
  * cube's own (setPieces.ts toneByFacing; the cube can lie on any face, so nothing of this is baked). Faces that do not
  * look up: the kit's 0.6 where they face the sun, the stone as it is where they face away.
  */
 const CUBE_TONE = { lit: 0.6, shade: 1 };
-/** How much of the sky's reflection the gate's ring takes (1 = like stone; the small gilt ornaments take look.ts giltEnv, 2.4). */
-const RING_SKY = 0.45;
+/**
+ * How much of the sky's reflection the gate's ring takes: as much as stone does (the small gilt ornaments take look.ts
+ * giltEnv, 2.4, which on a ring 9 m across is a white disc). At 0.45 the ring had little but the low warm sun on it and
+ * rendered far more saturated than the kit's gilt.
+ */
+const RING_SKY = 1;
 
 const AXIS: Record<'x' | 'y' | 'z', THREE.Vector3> = {
   x: new THREE.Vector3(1, 0, 0),
@@ -83,8 +90,10 @@ export class World {
   /** The plain stand-ins of the kit's set pieces, built only if the kit does not load. */
   private fallbacks: (() => void)[] = [];
   private cubeFaces: Partial<Record<CubeFace, DirName[]>> = {};
-  /** The gilt-crowned piers on the arm towers: hidden while their group turns. */
+  /** The gilt-crowned piers and the sills of the arm towers: hidden while their group turns. */
   private crowns: { group: Id; node: THREE.Object3D }[] = [];
+  /** The sills at the ends of the towers' arms: shown where the arm meets a walkway, hidden while their group turns. */
+  private sills: { group: Id | undefined; node: THREE.Object3D; out: THREE.Vector3 }[] = [];
   private readonly moduleById = new Map<Id, CompiledStage['modules'][number]>();
   private readonly portal: THREE.ShaderMaterial;
   private readonly cs: CompiledStage;
@@ -153,6 +162,7 @@ export class World {
     const wm = this.cs.walkMap(s);
     this.buildRails(wm, new Set());
     for (const c of this.crowns) c.node.visible = true;
+    this.showSills(wm);
     for (const pl of this.plates.values()) {
       pl.target = wm.tiles.get(pl.cell)?.plate ? 1 : 0;
       if (!animatePlates) pl.holder.scale.z = Math.max(0.001, pl.target);
@@ -172,6 +182,7 @@ export class World {
     const moving = new Set(this.cs.modules.filter((m) => m.group === a.group).map((m) => m.id));
     this.buildRails(this.cs.walkMap(this.state), moving);
     for (const c of this.crowns) if (c.group === a.group) c.node.visible = false;
+    for (const c of this.sills) if (c.group === a.group) c.node.visible = false;
     for (const pl of this.plates.values()) pl.target = 0;
     this.anim = {
       group: a.group,
@@ -279,15 +290,32 @@ export class World {
     this.setState(this.state, false);
   }
 
+  /**
+   * A sill bridges the joint between an arm's end and the walkway it meets: it is shown where a walkway stands there at
+   * the arm's level, and not on an arm that ends in the air.
+   */
+  private showSills(wm: WalkMap) {
+    if (!this.sills.length) return;
+    this.root.updateMatrixWorld(true);
+    const p = new THREE.Vector3();
+    for (const sill of this.sills) {
+      sill.node.parent!.localToWorld(p.copy(sill.out));
+      sill.node.visible = false;
+      for (const t of wm.tiles.values()) {
+        const f = cellFloor(t.cell);
+        if (Math.abs(f[0] - p.x) < 2 && Math.abs(f[2] - p.z) < 2 && Math.abs(t.floorY - p.y) < 0.05) sill.node.visible = true;
+      }
+    }
+  }
+
   /** The gilt materials of the kit (none until it has loaded). */
   giltMaterials(): THREE.MeshStandardMaterial[] {
     return this.kit?.giltMaterials() ?? [];
   }
 
   /**
-   * The gate's ring takes less of the sky than any other material: `RING_SKY` of the scene's. A ring of polished metal
-   * 9 m across mirrors a sky that is bright all round, and is then one flat yellow; held down, its body is a deep gold and
-   * the low sun draws the lines of light on its beads, its flutes and its rays. Call once the sky is in, as for the gilt.
+   * The gate's ring takes `RING_SKY` of the scene's sky, not the 2.4 times of the small gilt ornaments: a ring of polished
+   * metal 9 m across mirrors a sky that is bright all round. Call once the sky is in, as for the gilt.
    */
   ringTakesSky(scene: THREE.Scene) {
     if (!scene.environment) return;
@@ -313,10 +341,16 @@ export class World {
         node.add(cube);
       } else if (m.type === 'tower') {
         const placed = towerPlacements(m);
-        node.add(kit.build(placed.filter((p) => p.piece !== 'tower_crown')));
-        // the crown stands on a corner of the hub, which sweeps over the neighbours' parapets as the tower turns: like the
-        // tower's own parapets it is put away for the turn
+        node.add(kit.build(placed.filter((p) => !TOWER_PUT_AWAY.includes(p.piece))));
+        // the crown stands on a corner of the hub, which sweeps over the neighbours' parapets as the tower turns, and the
+        // sills at the arms' ends pass the neighbours' edges: like the tower's own parapets they are put away for the turn
         const crown = kit.build(placed.filter((p) => p.piece === 'tower_crown'));
+        for (const p of placed.filter((q) => q.piece === 'tower_sill')) {
+          const sill = kit.build([p]);
+          node.add(sill);
+          // (a point just beyond the arm's end, in the tower's frame: the piece is modelled on the north arm, -Z)
+          this.sills.push({ group: m.group, node: sill, out: new THREE.Vector3(0, 0, -6.5).applyMatrix4(p.matrix) });
+        }
         node.add(crown);
         if (m.group) this.crowns.push({ group: m.group, node: crown });
       } else if (m.type === 'plate') {
@@ -586,7 +620,12 @@ export class World {
         for (const a of [SIDES[(k + 1) % 4], SIDES[(k + 3) % 4]]) {
           const u = DIRS[a];
           const next = wm.tiles.get(step(t.cell, a));
-          const reach = !t.open[a] ? RAIL_LINE : next && next.open[s] && Math.abs(next.floorY - t.floorY) < 0.01 ? 2.16 : 2;
+          // where the neighbour's walkway turns the corner the post stands 16 cm further on, in the corner. On the pieces that
+          // move (the street, the arm tower) it stays on the cell's edge as at a straight joint: in the corner it leaves the
+          // end of their parapet open, and shows the end face that is baked to be hidden
+          const moves = !!m?.group && (m.type === 'tower' || isStreet(m));
+          const corner = !moves && next && next.open[s] && Math.abs(next.floorY - t.floorY) < 0.01;
+          const reach = !t.open[a] ? RAIL_LINE : corner ? 2.16 : 2;
           const x = f[0] + d[0] * RAIL_LINE + u[0] * reach;
           const z = f[2] + d[2] * RAIL_LINE + u[2] * reach;
           posts.set(`${x.toFixed(2)},${t.floorY.toFixed(2)},${z.toFixed(2)}`, new THREE.Matrix4().makeTranslation(x, t.floorY, z));
