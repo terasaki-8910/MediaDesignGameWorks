@@ -9,7 +9,7 @@ import type { StageFile } from '../src/core/types.ts';
 import { pierKeepOut } from '../src/game/foldcity/keepout.ts';
 import { footprint } from '../src/game/foldcity/layout.ts';
 import { MODELS } from '../src/game/foldcity/models.ts';
-import { boxAt, heightAt, lipBlocks, planMorph, presenceAt, SAMPLES, shownSurface, type MorphBuilding } from '../src/game/foldcity/morphplan.ts';
+import { boxAt, heightAt, lipBlocks, NEAR_STRETCH, nearLandmarks, planMorph, presenceAt, SAMPLES, shownSurface, SPIRE_CLEAR, SPIRE_FAR, type MorphBuilding } from '../src/game/foldcity/morphplan.ts';
 import { cutsSheet, overlaps, PLAY, PLAY_CENTER, SheetPoints, type Obb } from '../src/game/foldcity/plan.ts';
 import { parseFreeze, SECTION_STRUCTURE } from '../src/game/foldcity/progression.ts';
 import { bakeHeights, castShadows, CELL, MAP_HEIGHT, MAP_WIDTH, modelHeights } from '../src/game/foldcity/shadow.ts';
@@ -17,6 +17,7 @@ import {
   A0, A1, B0, B1, blendState, CEILING_Y, CREASE2, CREASE3, FLAT, GROUND_Y, makeState, restState, RING_HALF, SHEET_SIGN, sheetAt, sheetFrame, SLOT, STRUCTURES, veilAt, W0, Z0,
   type SheetState, type StructureName,
 } from '../src/game/foldcity/sheet.ts';
+import { skyline, SKYLINE_CLEAR } from '../src/game/foldcity/skyline.ts';
 import { frameAt, makeFrame } from '../src/game/foldcity/surfaces.ts';
 import { VARIANTS } from '../src/game/foldcity/variants.ts';
 import { pierFeet, planSlabs } from '../src/game/kitLayout.ts';
@@ -408,4 +409,69 @@ test('the cast shadows: each model lies in the height map where the city draws i
   assert.equal(out[at(-60, 0)], 0, 'beyond the shadow');
   assert.equal(out[at(20, 0)], 0, 'towards the light');
   assert.equal(out[at(-20, 30)], 0, 'beside the shadow');
+});
+
+test("each wall's near stretch holds its landmark in every structure: the stepped tower on one side, the dome on the other, whole and in the near model", () => {
+  const forced = nearLandmarks(plan.lattice);
+  assert.deepEqual([...forced.values()].sort(), ['deco_tower', 'dome']);
+  for (const [cell, name] of forced) {
+    const b = houses.find((h) => h.lot.cell === cell && MODELS[h.model].name === name);
+    assert.ok(b, `${name} stands in its block`);
+    assert.equal(Math.sign(b.lot.v), name === 'deco_tower' ? -1 : 1);
+    assert.ok(Math.abs(b.lot.u - NEAR_STRETCH) < 60, `${name} at ${Math.round(b.lot.u)} m along the axis`);
+    STRUCTURES.forEach((structure, si) => {
+      assert.ok(b.alive[si], `${name} stands in ${structure}`);
+      assert.ok(b.sy[si] >= 0.99 * b.lot.sy, `${name} keeps its height in ${structure}`);
+      assert.equal(b.lod[si], 0, `${name} is the near model in ${structure}`);
+    });
+  }
+  // and no stone spire lies on its side along the stretch of wall the play cameras look down
+  for (const b of houses)
+    if (['belfry', 'cathedral'].includes(MODELS[b.model].name)) assert.ok(b.lot.u < PLAY.min.x - SPIRE_CLEAR || b.lot.u > PLAY.max.x + SPIRE_FAR, `${MODELS[b.model].name} at ${Math.round(b.lot.u)}`);
+});
+
+test('the trees along a kerb are not a ruled row: their gaps and their sizes vary', () => {
+  const trees = plan.buildings.filter((b) => b.prop && MODELS[b.model].name.startsWith('tree_'));
+  // rows: trees of one block that share (to a metre and a half) one coordinate; the gaps between neighbours along the other
+  const gaps: number[] = [];
+  const rows = new Map<string, number[]>();
+  for (const t of trees) {
+    for (const [key, along] of [[`u${t.lot.cell}:${Math.round(t.lot.u / 3)}`, t.lot.v], [`v${t.lot.cell}:${Math.round(t.lot.v / 3)}`, t.lot.u]] as const) {
+      if (!rows.has(key)) rows.set(key, []);
+      rows.get(key)!.push(along);
+    }
+  }
+  for (const list of rows.values()) {
+    if (list.length < 4) continue;
+    list.sort((a, b) => a - b);
+    for (let i = 1; i < list.length; i++) gaps.push(list[i] - list[i - 1]);
+  }
+  assert.ok(gaps.length > 200, `${gaps.length} gaps`);
+  const mean = gaps.reduce((s, g) => s + g, 0) / gaps.length;
+  const sd = Math.sqrt(gaps.reduce((s, g) => s + (g - mean) ** 2, 0) / gaps.length);
+  assert.ok(sd / mean > 0.35, `gaps vary by ${(sd / mean).toFixed(2)} of their mean`);
+  assert.ok(gaps.some((g) => g > 26), 'a stretch of kerb has no tree');
+  const sizes = trees.map((t) => t.lot.scale);
+  assert.ok(Math.min(...sizes) < 0.62 && Math.max(...sizes) > 1.4, `sizes ${Math.min(...sizes).toFixed(2)} to ${Math.max(...sizes).toFixed(2)}`);
+});
+
+test('the far skyline stands upright beyond the far end of the open canyon, the same every time, and never near the play volume', () => {
+  const masses = skyline(SEED);
+  assert.deepEqual(masses, skyline(SEED));
+  assert.ok(masses.length >= 40 && masses.length <= 110, `${masses.length} masses`);
+  const open = restState('horizon');
+  const f = makeFrame();
+  for (const m of masses) {
+    assert.ok(m.a - PLAY.max.x >= SKYLINE_CLEAR, `a mass ${Math.round(m.a - PLAY.max.x)} m beyond the play volume`);
+    assert.ok(m.a < A1 - 100 && Math.abs(m.b) < B1 - 100, 'on the sheet');
+    assert.ok(m.layer >= 0 && m.layer <= 1);
+    // the sheet under it lies nearly flat there (the canyon's walls have leaned back): a mass that stands upright stands on it
+    sheetFrame(open, m.a, m.b, f);
+    assert.ok(f.n.y > 0.985, `the sheet at ${Math.round(m.a)}, ${Math.round(m.b)} tilts ${(Math.acos(f.n.y) * 180 / Math.PI).toFixed(0)} degrees`);
+    const top = f.p.y + MODELS[m.model].h * m.scale * m.sy;
+    assert.ok(top < 380, `a mass ${Math.round(top)} m high`);
+  }
+  // every row has peaks, and the rows part: some towers and domes among the long roofs
+  const peaks = masses.filter((m) => ['deco_tower', 'dome', 'cathedral', 'belfry'].includes(MODELS[m.model].name));
+  assert.ok(peaks.length >= 8 && peaks.length < masses.length / 2, `${peaks.length} peaks of ${masses.length}`);
 });

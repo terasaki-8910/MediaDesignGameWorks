@@ -51,11 +51,11 @@ def plane_tree(trunk, crowns, lean=(0.0, 0.0)):
 
 
 # The canopies are several small masses that run into each other (a cloud of leaves, never one ball on a stick), a little
-# greyed olive like a plane tree's at dusk: the key light and the sky reach a crown from above, so seen from the play area a
+# greyed olive like a plane tree's at dusk (no more chroma than the stone around it: the play area keeps the colour): the key light and the sky reach a crown from above, so seen from the play area a
 # tree is a lit mass, dark only underneath.
-LEAF_D = K.srgb("#88916F")
-LEAF_E = K.srgb("#939A77")
-LEAF_F = K.srgb("#7D876A")
+LEAF_D = K.srgb("#8A8B84")
+LEAF_E = K.srgb("#93948C")
+LEAF_F = K.srgb("#82837E")
 
 
 def tree_a():

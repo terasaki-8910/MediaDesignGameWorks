@@ -6,6 +6,7 @@
 // the colours of look.ts stand in.) Materials here set `fog: false` and call `bgAtmosphere` last.
 import * as THREE from 'three';
 import { LOOK } from '../look.ts';
+import { PLAY } from './plan.ts';
 
 export interface AtmosphereParams {
   /**
@@ -16,6 +17,14 @@ export interface AtmosphereParams {
    */
   density: number;
   power: number;
+  /**
+   * Beyond `tail` metres the haze thickens by the power `tailPower` instead (continuous at `tail`): with 470 m and 2.2 there
+   * is 34 % on 470 m, 51 % on 600 m, 63 % on 700 m, 82 % on 900 m and 93 % on 1100 m. The far end of a closed structure is
+   * a long gradient, where the fifth power alone ended it in 200 m, as a disc with a rim. Only the closed structures (the
+   * channel, the tube) have this tail; the open canyon keeps the fifth power and dissolves into the sky behind it.
+   */
+  tail?: number;
+  tailPower?: number;
   /** How strongly the haze takes the colour of the thing it covers: 1 = the plain haze. */
   strength: number;
   /** The city's own light, before the haze: brightness and saturation (1 = as the lighting gives it). */
@@ -27,6 +36,66 @@ export interface AtmosphereParams {
   base?: number;
   /** How much deeper below the walkways (from about 30 m down to 110 m) the haze gets, as a share of full haze: the piers' feet sink into it. */
   sink: number;
+  /**
+   * The floor of the city's darks, as a luminance (linear, scene units): a face darker than this is drawn towards the haze
+   * colour at this luminance, and one above it is left as it is (lum' = (lum^knee + toe^knee)^(1/knee), a sharp knee). The tone
+   * mapping (Khronos Neutral) squares what lies under 0.08, so 0.078 here is L* 23 on screen and 0.095 is L* 28: deep
+   * shade, slate and glass end between the two. The frame keeps real darks and none of them is a black hole.
+   */
+  toe?: number;
+  knee?: number;
+  /**
+   * The fronts lose their windows between `winNear` and `winFar` metres from the play volume (plan.ts, PLAY; the cameras
+   * ride inside it): `winKeep` of the way to the tone of each of their rows (soft bands of storeys). The city under the
+   * walkways, which the overviews look down on, keeps its windows; the walls the play cameras look along, 120 to 250 m
+   * ahead of them, are bands of storeys.
+   */
+  winNear?: number;
+  winFar?: number;
+  winKeep?: number;
+  /**
+   * With distance from the play volume the city's own tones draw together: between `calmNear` and `calmFar` metres a face's colour goes up to
+   * `calm` of the way to the city's middle tone (stone in half shade), so slate, glass, dormers and stone stand less
+   * apart on the walls beside the play area than they do under it.
+   */
+  calm?: number;
+  /** The middle tone they draw to, as an albedo (linear): under the stone's, so the far fronts darken a little and the darks stay dark. */
+  calmTone?: number;
+  calmNear?: number;
+  calmFar?: number;
+  /** How much the tone of the ground's slabs and setts differs from one to the next (1 = as round 3 had it). */
+  slab?: number;
+  /** The cars parked along the kerbs (ground.ts): 1 = there, 0 = none. */
+  cars?: number;
+  /** Extra strength of the ground's patches of a couple of metres (0 = as round 3 had them). */
+  grain?: number;
+  /** The far skyline (skyline.ts): the least and the most haze its masses stand in, nearest to furthest; and how far its fronts go to the tone of their rows (its windows are its texture in the haze). */
+  skyHaze?: number;
+  skyHazeFar?: number;
+  skyWin?: number;
+  skyWinFar?: number;
+  /** Even under the walkways a front goes this far to the tone of its rows: its windows are there, and soft. */
+  winBase?: number;
+  /** How far the storeys of a front without windows go to one tone, the front's own (0 = each storey its own mean: bands). */
+  rowEven?: number;
+  /** How much of each row's own tone a front without windows keeps (the rest is the mean of its storey: rowTone). */
+  rowBand?: number;
+}
+
+/** The keys `?bgtune=` may set (a debug parameter: `?bgtune=toe:0.05,calm:0.3`). */
+export const TUNABLE = ['density', 'power', 'tail', 'tailPower', 'strength', 'gain', 'saturation', 'lift', 'base', 'sink', 'toe', 'knee', 'winNear', 'winFar', 'winKeep', 'calm', 'calmTone', 'calmNear', 'calmFar', 'slab', 'cars', 'grain', 'skyHaze', 'skyHazeFar', 'skyWin', 'skyWinFar', 'winBase', 'rowBand', 'rowEven'] as const;
+
+/** `?bgtune=key:value,...` as overrides of the city's atmosphere; unknown keys and bad numbers are left out with a warning. */
+export function parseTune(text: string | null): Partial<AtmosphereParams> {
+  const out: Record<string, number> = {};
+  for (const part of (text ?? '').split(',')) {
+    if (!part) continue;
+    const [key, value] = part.split(':');
+    const v = Number(value);
+    if (!(TUNABLE as readonly string[]).includes(key) || value === undefined || !Number.isFinite(v)) console.warn(`cannot read ?bgtune=${part} (keys: ${TUNABLE.join(', ')})`);
+    else out[key] = v;
+  }
+  return out as Partial<AtmosphereParams>;
 }
 
 export type AtmosphereUniforms = Record<string, THREE.IUniform>;
@@ -59,7 +128,7 @@ const SHADE_COLOR = new THREE.Color(0.86, 0.84, 0.86);
 /** (key on a face turned away from the sun, key on one turned to it, sky light away, sky light towards). */
 const EXPOSE = new THREE.Vector4(0.42, 1.12, 0.8, 0.9);
 
-/** `?farwin=1`: the fronts keep this share of the way to their rows' tone from 135-200 m out to about 400 m (the default takes 0.78 of it at once), and the rest by 520 m. */
+/** `?farwin=1`: the fronts go only this share of the way to their rows' tone where the default takes nearly all of it, and the rest some 300 m further from the play volume. */
 export const FAR_WINDOWS = 0.4;
 /** The instance colour's alpha is free (the key's direction comes from the instance's matrix): FoldCity's studies leave it at 1. */
 export const keyTurn = (_swap: boolean, _flip: boolean): number => 1;
@@ -73,6 +142,21 @@ export function atmosphereUniforms(p: AtmosphereParams): AtmosphereUniforms {
     uBgGain: { value: p.gain },
     uBgSat: { value: p.saturation },
     uBgLift: { value: p.lift },
+    uBgToe: { value: p.toe ?? 0 },
+    uBgKnee: { value: p.knee ?? 4 },
+    uBgTail: { value: new THREE.Vector2(p.tail ?? 1e6, p.tailPower ?? 2.2) },
+    uBgCalm: { value: new THREE.Vector3(p.calmNear ?? 90, p.calmFar ?? 260, p.calm ?? 0) },
+    uBgSlab: { value: p.slab ?? 1 },
+    uBgCars: { value: p.cars ?? 1 },
+    uBgGrain: { value: p.grain ?? 0 },
+    uBgSkyWin: { value: new THREE.Vector2(p.skyWin ?? 0.45, p.skyWinFar ?? p.skyWin ?? 0.45) },
+    uBgWinBase: { value: p.winBase ?? 0 },
+    uBgCalmTone: { value: p.calmTone ?? 0.26 },
+    uBgSkyHaze: { value: new THREE.Vector2(p.skyHaze ?? 0.5, p.skyHazeFar ?? 0.8) },
+    uBgWinK: { value: p.winKeep ?? 0.78 },
+    uBgSkyShow: { value: 1 },
+    uBgPlayMin: { value: PLAY.min.clone() },
+    uBgPlayMax: { value: PLAY.max.clone() },
     uBgSink: { value: p.sink },
     uBgBase: { value: p.base ?? 0 },
     uBgHaze: { value: LOOK.hazeColor.clone() },
@@ -92,7 +176,7 @@ export function atmosphereUniforms(p: AtmosphereParams): AtmosphereUniforms {
     uBgFarSky: { value: new THREE.Vector2(0, 1e6) },
     uBgRowTone: { value: null as THREE.Texture | null },
     uBgRowOn: { value: 0 },
-    uBgWin: { value: new THREE.Vector4(135, 200, 0, 0) },
+    uBgWin: { value: new THREE.Vector4(p.winNear ?? 135, p.winFar ?? 200, 0, 0) },
     uBgKeyCol: { value: KEY_COLOR.clone() },
     uBgSkyCol: { value: SKY_COLOR.clone() },
     uBgShadeCol: { value: SHADE_COLOR.clone() },
@@ -106,6 +190,16 @@ uniform float uBgStrength;
 uniform float uBgGain;
 uniform float uBgSat;
 uniform float uBgLift;
+uniform float uBgToe;
+uniform float uBgKnee;
+uniform vec2 uBgTail;
+uniform vec3 uBgCalm;
+uniform vec2 uBgSkyHaze;
+uniform float uBgWinK;
+uniform float uBgSkyShow;
+uniform vec2 uBgSkyWin;
+uniform float uBgWinBase;
+uniform float uBgCalmTone;
 uniform float uBgSink;
 uniform float uBgBase;
 uniform vec3 uBgHaze;
@@ -149,23 +243,37 @@ vec2 bgCanyon( vec3 n, float high ) {
 // how far a thing at this distance, which the haze has all but taken, has gone on into the sky behind it (0 to 1). Only
 // where the sky is behind it: all of the open canyon (uBgFarSky.x = 1), and what stands above the ceiling of the channel
 // (uBgFarSky.y, the walls of its slot). Under a ceiling the far end stays haze (the caps of morphcity.ts close it).
+// the haze's depth over a distance: the fifth power out to uBgTail.x metres and, in the closed structures, a gentler power
+// (uBgTail.y) beyond, so the far end of a channel or a tube goes into the haze over several hundred metres and has no rim.
+// The open canyon (uBgFarSky.x = 1) keeps the fifth power all the way: its far end goes on into the sky (bgFar)
+float bgTau( float len ) {
+	float d = min( len, uBgTail.x );
+	return pow( uBgDensity * d, uBgPower ) * pow( max( len / uBgTail.x, 1.0 ), mix( uBgTail.y, uBgPower, uBgFarSky.x ) );
+}
 float bgFar( float len ) {
+	if ( bgSkyline > 0.0 ) return 0.0;
 	// (a building is taken whole, by the distance of its foot: bgFarLen; a block of ground by its own shift)
 	len = max( ( bgFarLen > 0.0 ? bgFarLen : len ) + bgFarShift, 0.0 );
-	return smoothstep( 0.80, 0.985, 1.0 - exp( - pow( uBgDensity * len, uBgPower ) ) ) * max( uBgFarSky.x, smoothstep( uBgFarSky.y, uBgFarSky.y + 40.0, vBgWorld.y ) );
+	return smoothstep( 0.80, 0.985, 1.0 - exp( - bgTau( len ) ) ) * max( uBgFarSky.x, smoothstep( uBgFarSky.y, uBgFarSky.y + 40.0, vBgWorld.y ) );
 }
 vec3 bgAtmosphere( vec3 col ) {
 	col = mix( vec3( dot( col, vec3( 0.2126, 0.7152, 0.0722 ) ) ), col, uBgSat ) * uBgGain + uBgLift * uBgHaze;
+	// the toe: what is darker than uBgToe goes towards the haze colour at that luminance (deep shade, slate, glass: dark, never black)
+	float bgLum = dot( col, vec3( 0.2126, 0.7152, 0.0722 ) );
+	col += uBgHaze * ( ( pow( pow( max( bgLum, 1e-5 ), uBgKnee ) + pow( max( uBgToe, 1e-5 ), uBgKnee ), 1.0 / uBgKnee ) - bgLum ) / dot( uBgHaze, vec3( 0.2126, 0.7152, 0.0722 ) ) );
 	vec3 ray = vBgWorld - cameraPosition;
 	float len = max( length( ray ), 1e-4 );
 	vec3 dir = ray / len;
 	// the haze: one colour, the horizon's in the direction looked in (read from the sky map), thickening with distance alone
-	float tau = pow( uBgDensity * len, uBgPower );
+	float tau = bgTau( len );
 	// (roofs and towers stand in thinner haze, but only this side of where the haze takes everything: nothing is left standing
 	// alone in the sky when the ground under it has gone)
 	float thin = mix( bgThin, 1.0, smoothstep( 220.0, 380.0, len ) );
 	float f = ( 1.0 - exp( - tau * thin ) ) * uBgStrength;
 	f = max( f, ( 1.0 - smoothstep( -110.0, -30.0, vBgWorld.y ) ) * uBgSink );
+	// the far skyline stands in a haze of its own: layer behind layer, each paler, none gone (bgSkyline = 1 nearest to 2 furthest)
+	// (and all of them lose their feet in it; uBgSkyShow takes them away as the canyon closes)
+	if ( bgSkyline > 0.0 ) f = mix( 1.0, mix( uBgSkyHaze.x, uBgSkyHaze.y, pow( clamp( bgSkyline - 1.0, 0.0, 1.0 ), 2.0 ) ), smoothstep( 3.0, 40.0, vBgHigh ) * uBgSkyShow );
 	vec3 haze = mix( uBgHaze, uBgHazeSun, pow( max( dot( dir, uBgSunH ), 0.0 ), 5.0 ) * 0.85 );
 #ifdef ENVMAP_TYPE_CUBE_UV
 	// (the ray keeps its own height within a degree of the horizon, so the far end of the channel cannot be told from the sky beside it)
@@ -204,6 +312,7 @@ vec3 bgFacing() {
 	if ( uBgDebug > 1.5 ) c = length( vBgWorld - cameraPosition ) > 200.0 ? vec3( 0.6, 0.0, 0.0 ) : vec3( 0.0, 0.6, 0.0 ); // ?bgdebug=range
 	// ?bgdebug=dist: bands of 100 m as a three-bit code (red 1, green 2, blue 4): 0-100 m red, 100-200 green, ..., 600 m and beyond white
 	if ( uBgDebug > 2.5 ) { float k = min( floor( length( vBgWorld - cameraPosition ) / 100.0 ) + 1.0, 7.0 ); c = 0.6 * vec3( mod( k, 2.0 ), mod( floor( k / 2.0 ), 2.0 ), floor( k / 4.0 ) ); }
+	if ( bgSkyline > 0.0 && smoothstep( 3.0, 40.0, vBgHigh ) * uBgSkyShow < 0.08 ) return vec3( 0.0 ); // the skyline's feet, gone into the haze
 	return max( max( bgVeil, uBgVeil ), bgFar( length( vBgWorld - cameraPosition ) ) ) > 0.5 ? vec3( 0.0 ) : c;
 }
 `;
@@ -239,28 +348,39 @@ export function patchShader(
   shader.vertexShader = swap(shader.vertexShader, '#include <fog_vertex>', `#include <fog_vertex>\nvBgWorld = cameraPosition + mvPosition.xyz * mat3( viewMatrix );\n${extra.vertexMain ?? ''}`);
   shader.fragmentShader = swap(shader.fragmentShader, '#include <common>', `#include <common>\n${extra.ground ? '#define BG_GROUND\n' : ''}varying vec3 vBgWorld;\nvarying vec3 vBgNormal;\nvarying vec3 vBgKeyDir;\nvarying float vBgHigh;\nvarying vec4 vBgFoot;\nfloat bgFarLen = -1.0; // set by a material: the distance bgFar goes by, instead of the fragment's own\nfloat bgFarShift = 0.0; // and metres added to it (a block's own)\nfloat bgVeil = 0.0; // set by a material: 1 = this fragment has dissolved into the haze\nvec3 bgHazeCol = vec3( 0.0 ); // set by bgAtmosphere: the haze's colour along this ray, and how much of it lies on the fragment
 float bgFog = 0.0;
-float bgThin = 1.0; // the haze's depth here, as a share: roofs and towers stand in thinner haze than the streets\n${extra.fragmentDecl ?? ''}`);
+float bgThin = 1.0; // the haze's depth here, as a share: roofs and towers stand in thinner haze than the streets
+float bgSkyline = 0.0; // set for a mass of the far skyline (skyline.ts): 1 = its nearest layer to 2 = its furthest
+uniform vec3 uBgPlayMin;
+uniform vec3 uBgPlayMax;
+// metres from the play volume (0 inside it): the fronts' windows and the city's contrasts fade by this, not by the camera's distance
+float bgPlayDist() { return length( max( max( uBgPlayMin - vBgWorld, vBgWorld - uBgPlayMax ), 0.0 ) ); }\n${extra.fragmentDecl ?? ''}`);
   // the city's own light replaces the scene's sun, fill and sky light
   shader.fragmentShader = swap(
     shader.fragmentShader, '#include <opaque_fragment>',
-    `bgThin = mix( 1.0, 0.6, smoothstep( 14.0, 60.0, vBgHigh ) );\nif ( vBgFoot.w > 0.5 ) { bgFarLen = length( vBgFoot.xyz - cameraPosition ); bgFarShift = ( vBgFoot.w - 1.5 ) * ${FAR_JITTER.toFixed(1)}; }\noutgoingLight = diffuseColor.rgb * ( ${extra.light ?? 'bgLight( normalize( vBgNormal ), vBgKeyDir, bgCanyon( normalize( vBgNormal ), vBgHigh ).x, bgCanyon( normalize( vBgNormal ), vBgHigh ).y )'} );\n#include <opaque_fragment>`,
+    `bgThin = mix( 1.0, 0.6, smoothstep( 14.0, 60.0, vBgHigh ) );\nif ( vBgFoot.w > 2.5 ) bgSkyline = vBgFoot.w - 2.0;\nelse if ( vBgFoot.w > 0.5 ) { bgFarLen = length( vBgFoot.xyz - cameraPosition ); bgFarShift = ( vBgFoot.w - 1.5 ) * ${FAR_JITTER.toFixed(1)}; }\noutgoingLight = diffuseColor.rgb * ( ${extra.light ?? 'bgLight( normalize( vBgNormal ), vBgKeyDir, bgCanyon( normalize( vBgNormal ), vBgHigh ).x, bgCanyon( normalize( vBgNormal ), vBgHigh ).y )'} );\n#include <opaque_fragment>`,
   );
   shader.fragmentShader = swap(shader.fragmentShader, '#include <envmap_physical_pars_fragment>', `#include <envmap_physical_pars_fragment>\n${DECL}`);
-  // far facades lose their windows: beyond about 200 m a front is the mean tone of each of its rows (soft horizontal bands
-  // of storeys and cornices) with a fifth of its windows' contrast left, read from a one-pixel-wide copy of the atlas; nearer
-  // than 135 m it is the atlas itself (uBgWin.xy). `?farwin=1` (FAR_WINDOWS) keeps the windows further out at reduced
-  // contrast: uBgWin.z of the way to the rows' tone from there on, the rest between uBgWin.x + 265 and + 385 m
+  // fronts away from the play volume lose their windows (AtmosphereParams.winNear..): there a front is the mean tone of each
+  // of its rows (soft horizontal bands of storeys and cornices), read from a one-pixel-wide copy of the atlas; under the
+  // walkways it is the atlas itself, uBgWinBase of the way to those tones. `?farwin=1` (FAR_WINDOWS) keeps the windows
+  // further out at reduced contrast: uBgWin.z of the way to the rows' tone, the rest between uBgWin.x + 265 and + 385 m.
+  // The far skyline keeps part of its windows (uBgSkyWin): they are its only texture in the haze
   if (shader.fragmentShader.includes('#include <map_fragment>'))
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <map_fragment>',
       `#ifdef USE_MAP
 	vec4 sampledDiffuseColor = texture2D( map, vMapUv );
 	// (only the strips that hold windows, rows 96 to 456 of the atlas from its foot: slate, zinc, ashlar and glazing keep their grain)
-	if ( uBgRowOn > 0.5 && vMapUv.y > 0.1094 && vMapUv.y < 0.8125 ) sampledDiffuseColor.rgb = mix( sampledDiffuseColor.rgb, textureLod( uBgRowTone, vec2( 0.5, vMapUv.y ), 0.0 ).rgb, mix( 0.78, uBgWin.z, uBgWin.w ) * smoothstep( uBgWin.x, uBgWin.y, length( vBgWorld - cameraPosition ) ) + uBgWin.w * ( 0.78 - uBgWin.z ) * smoothstep( uBgWin.x + 265.0, uBgWin.x + 385.0, length( vBgWorld - cameraPosition ) ) );
+	if ( uBgRowOn > 0.5 && vMapUv.y > 0.1094 && vMapUv.y < 0.8125 ) sampledDiffuseColor.rgb = mix( sampledDiffuseColor.rgb, textureLod( uBgRowTone, vec2( 0.5, vMapUv.y ), 0.0 ).rgb, vBgFoot.w > 2.5 ? mix( uBgSkyWin.x, uBgSkyWin.y, clamp( vBgFoot.w - 3.0, 0.0, 1.0 ) ) : mix( uBgWinBase, mix( uBgWinK, uBgWin.z, uBgWin.w ), smoothstep( uBgWin.x, uBgWin.y, bgPlayDist() ) ) + uBgWin.w * ( uBgWinK - uBgWin.z ) * smoothstep( uBgWin.x + 265.0, uBgWin.x + 385.0, bgPlayDist() ) );
 	diffuseColor *= sampledDiffuseColor;
 #endif`,
     );
+  // with distance from the play volume the buildings' tones draw together (AtmosphereParams.calm); the ground keeps its
+  // own, and so does the far skyline (it has its haze)
   if (extra.fragmentColor) shader.fragmentShader = swap(shader.fragmentShader, '#include <color_fragment>', `#include <color_fragment>\n${extra.fragmentColor}`);
+  else
+    shader.fragmentShader = swap(shader.fragmentShader, '#include <color_fragment>', `#include <color_fragment>
+diffuseColor.rgb = mix( diffuseColor.rgb, uBgCalmTone * vec3( 1.04, 0.98, 0.9 ), vBgFoot.w > 2.5 ? 0.0 : uBgCalm.z * smoothstep( uBgCalm.x, uBgCalm.y, bgPlayDist() ) );`);
   if (extra.fragmentRough) shader.fragmentShader = swap(shader.fragmentShader, '#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\n${extra.fragmentRough}`);
   shader.fragmentShader = swap(shader.fragmentShader, '#include <fog_fragment>', `#include <fog_fragment>\ngl_FragColor.rgb = uBgDebug > 0.5 ? bgFacing() : bgAtmosphere( gl_FragColor.rgb );
 ${extra.fragmentEnd ?? ''}`);
@@ -270,7 +390,7 @@ ${extra.fragmentEnd ?? ''}`);
  * The mean colour of every row of the facade atlas, as a texture one pixel wide: what a front looks like from too far to
  * tell its windows (patchShader). Null when the image cannot be read.
  */
-export function rowTone(map: THREE.Texture): THREE.DataTexture | null {
+export function rowTone(map: THREE.Texture, band = 0.25, even = 0): THREE.DataTexture | null {
   const image = map.image as (CanvasImageSource & { width: number; height: number }) | undefined;
   if (!image || typeof document === 'undefined') return null;
   const canvas = document.createElement('canvas');
@@ -288,14 +408,22 @@ export function rowTone(map: THREE.Texture): THREE.DataTexture | null {
   for (let y = 0; y < h; y++)
     for (let x = 0; x < image.width; x++) for (let c = 0; c < 3; c++) rows[y * 3 + c] += lin(px[(y * image.width + x) * 4 + c] / 255) / image.width;
   // within each strip of the atlas (art/blender/city_kit.py, STRIPS: rows from the bottom of a 512 px image) the rows are
-  // smoothed and drawn three quarters of the way to the strip's mean: soft bands of storeys, not the stripes of a blind
+  // smoothed and drawn most of the way (1 - band) to the strip's mean: soft bands of storeys, not the stripes of a blind
   const STRIPS = [0, 16, 64, 80, 96, 208, 288, 368, 456, 512];
   const k = h / 512;
+  // (the three strips of storeys with windows, rows 96 to 368: `even` draws their means to the mean of all three)
+  const front = [0, 0, 0];
+  {
+    const y0 = h - Math.round(368 * k);
+    const y1 = h - Math.round(96 * k);
+    for (let y = y0; y < y1; y++) for (let c = 0; c < 3; c++) front[c] += rows[y * 3 + c] / (y1 - y0);
+  }
   for (let s = 0; s + 1 < STRIPS.length; s++) {
     const y1 = h - Math.round(STRIPS[s] * k); // image rows run from the top
     const y0 = h - Math.round(STRIPS[s + 1] * k);
     const mean = [0, 0, 0];
     for (let y = y0; y < y1; y++) for (let c = 0; c < 3; c++) mean[c] += rows[y * 3 + c] / (y1 - y0);
+    if (STRIPS[s] >= 96 && STRIPS[s + 1] <= 368) for (let c = 0; c < 3; c++) mean[c] += (front[c] - mean[c]) * even;
     const radius = Math.round(9 * k);
     for (let y = y0; y < y1; y++) {
       for (let c = 0; c < 3; c++) {
@@ -307,7 +435,7 @@ export function rowTone(map: THREE.Texture): THREE.DataTexture | null {
           sum += rows[yy * 3 + c] * g;
           w += g;
         }
-        out[y * 4 + c] = Math.round(enc(0.25 * (sum / w) + 0.75 * mean[c]) * 255);
+        out[y * 4 + c] = Math.round(enc(band * (sum / w) + (1 - band) * mean[c]) * 255);
       }
       out[y * 4 + 3] = 255;
     }

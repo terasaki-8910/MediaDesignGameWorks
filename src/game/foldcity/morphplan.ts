@@ -4,7 +4,7 @@
 // through nothing) and how tall. In a transition a building rides the sheet; one that cannot stand in the next structure
 // sinks away before it would touch anything, one that only stands there rises once it can. Pure: no GLB, no DOM.
 import * as THREE from 'three';
-import { footprint, latticeFrom, layoutLots, layoutProps, lines, type Lattice, type Lot } from './layout.ts';
+import { BLOCK_LANDMARK, BLOCK_PLAIN, footprint, latticeFrom, layoutLots, layoutProps, lines, type Lattice, type Lot } from './layout.ts';
 import { MODEL_INDEX, MODELS } from './models.ts';
 import {
   boxObb, cutsSheet, facesPlayArea, GAP, Hash, MAX_BURY, MAX_GAP, MAX_TILT, overlaps, PLAY, PLAY_CENTER, PLAY_MARGIN, SheetPoints, type Obb,
@@ -23,8 +23,11 @@ export const SCALE = 1.25;
 export const REACH = 1000;
 /** Trees, lamps and fountains stand only this near: further off they are smaller than a pixel. */
 export const PROP_REACH = 540;
-/** The detailed model of a building stands within this distance of the play volume. */
-export const NEAR_PLAY = 200;
+/**
+ * The detailed model of a building stands within this distance of the play volume: the walls the play cameras look along
+ * (120 to 250 m ahead of them, up to 300 m from the volume's far end) show their roofs' dormers, stacks and cornices.
+ */
+export const NEAR_PLAY = 340;
 /** From FAR_LOW[0] to FAR_LOW[1] metres from the play volume the buildings' height comes down to FAR_HEIGHT metres at most. */
 export const FAR_LOW: readonly [number, number] = [300, 430];
 export const FAR_HEIGHT = 38;
@@ -85,7 +88,43 @@ export function sharedLattice(seed: number): Lattice {
   const r = rng(seed * 31 + 7);
   const a = lines([A0, A1], CREASES_A, PITCH[0], false, r, 4);
   const b = lines([B0, B1], CREASES_B, PITCH[1], false, r, 3);
-  return latticeFrom(a, b, seed);
+  const lattice = latticeFrom(a, b, seed);
+  // (the blocks of nearLandmarks are landmark blocks whatever the seed drew: the ground paves them as such)
+  for (const cell of nearLandmarks(lattice).keys()) lattice.cells[cell].type = BLOCK_LANDMARK;
+  return lattice;
+}
+
+/**
+ * The walls' near stretch is what the play cameras look along: the sheet's walls (between its first two creases on either
+ * side) some 200 to 350 m along the play axis. By rule, not by the seed's luck, one block of each wall there holds a
+ * landmark that reads by its outline against the far haze: the stepped Art Deco tower on one wall, the dome on the other
+ * (both end blunt: neither aims a point at the walkways). The block is the one whose middle lies nearest to NEAR_STRETCH
+ * along the axis and to the middle of the wall across it, among the building blocks.
+ */
+export const NEAR_STRETCH = 270;
+export function nearLandmarks(lattice: Lattice): Map<number, string> {
+  const out = new Map<number, string>();
+  const nu = lattice.u.length - 1;
+  const mid = (CREASES_B[CREASES_B.length / 2] + CREASES_B[CREASES_B.length / 2 + 1]) / 2;
+  for (const [sign, name] of [[-1, 'deco_tower'], [1, 'dome']] as const) {
+    let best = -1;
+    let err = Infinity;
+    for (let j = 0; j + 1 < lattice.v.length; j++)
+      for (let i = 0; i < nu; i++) {
+        const type = lattice.cells[i + j * nu].type;
+        if (type !== BLOCK_PLAIN && type !== BLOCK_LANDMARK) continue;
+        const u = (lattice.u[i].c + lattice.u[i + 1].c) / 2;
+        const v = (lattice.v[j].c + lattice.v[j + 1].c) / 2;
+        // (a block deep enough for the landmark's footprint, between the wall's two creases)
+        if (Math.sign(v) !== sign || lattice.v[j + 1].c - lattice.v[j].c < 58 || lattice.u[i + 1].c - lattice.u[i].c < 58) continue;
+        if (Math.abs(lattice.v[j].c) < CREASES_B[CREASES_B.length / 2] - 1 || Math.abs(lattice.v[j + 1].c) < CREASES_B[CREASES_B.length / 2] - 1) continue;
+        if (Math.abs(lattice.v[j].c) > CREASES_B[CREASES_B.length / 2 + 1] + 1 || Math.abs(lattice.v[j + 1].c) > CREASES_B[CREASES_B.length / 2 + 1] + 1) continue;
+        const e = Math.abs(u - NEAR_STRETCH) + 0.5 * Math.abs(Math.abs(v) - mid);
+        if (e < err) [best, err] = [i + j * nu, e];
+      }
+    if (best >= 0) out.set(best, name);
+  }
+  return out;
 }
 
 /** The surface a structure shows: the sheet beyond the tube's seam is cut away, and where it dissolves nothing stands. */
@@ -136,15 +175,19 @@ function treeKept(lot: Lot, d: number): boolean {
 /**
  * A building that ends in a point stands on its wall of the folded city with that point aimed at the play area. Along the
  * play area's own length (and SPIRE_CLEAR beyond each end) such a lot gets the blunt building named here instead, fitted
- * into the same footprint, so no spire points at a camera head-on; further along the canyon the spires stand and are seen
- * from their side.
+ * into the same footprint, so no spire points at a camera head-on. The two with stone spires (the belfry, the cathedral)
+ * keep SPIRE_FAR of distance ahead of the play area as well, the stretch of wall the play cameras look along: there a
+ * spire is a spike lying on its side. Further along the canyon the spires stand and are seen small, in the haze. The
+ * tower house, the Art Deco tower and the dome end blunt (art/blender/gen_city.py); the tower house stands anywhere.
  */
 export const SPIRE_CLEAR = 120;
-const BLUNT: Readonly<Record<string, string>> = { tower_house: 'haussmann_short', belfry: 'haussmann_step', deco_tower: 'deco_block', dome: 'deco_block', cathedral: 'deco_hall' };
+export const SPIRE_FAR = 360;
+const BLUNT: Readonly<Record<string, string>> = { belfry: 'haussmann_step', deco_tower: 'deco_block', dome: 'deco_block', cathedral: 'deco_hall' };
+const SPIRED: readonly string[] = ['belfry', 'cathedral'];
 export function blunt(lot: Lot): Lot {
   const old = MODELS[lot.model];
   const to = BLUNT[old.name];
-  if (!to || lot.u < PLAY.min.x - SPIRE_CLEAR || lot.u > PLAY.max.x + SPIRE_CLEAR) return lot;
+  if (!to || lot.u < PLAY.min.x - SPIRE_CLEAR || lot.u > PLAY.max.x + (SPIRED.includes(old.name) ? SPIRE_FAR : SPIRE_CLEAR)) return lot;
   const model = MODEL_INDEX.get(to)!;
   const m = MODELS[model];
   const length = old.w * lot.scale * (lot.stretch ?? 1);
@@ -199,7 +242,11 @@ export function* planSteps(seed: number, keepOut: readonly KeepOut[] = []): Gene
     const [fu, fv] = footprint(MODELS[lot.model], lot.scale, lot.swap, lot.stretch);
     return !keepOut.some((k) => Math.abs(lot.u - k.a) < fu / 2 + k.r && Math.abs(lot.v - k.b) < fv / 2 + k.r);
   };
-  const lots = layoutLots(lattice, seed, SCALE, true, curlsTightly, byCrease).filter(clear).map(blunt);
+  const forced = nearLandmarks(lattice);
+  const lots = layoutLots(lattice, seed, SCALE, true, curlsTightly, byCrease, forced).filter(clear).map(blunt);
+  // (the walls' landmarks of nearLandmarks take their place before anything else does: their neighbours fit around them)
+  const firsts = new Set(lots.filter((lot) => forced.get(lot.cell) === MODELS[lot.model].name));
+  const first = (lot: Lot) => firsts.has(lot);
   const foot = MODEL_INDEX.get('pier_foot')!;
   const feet: Lot[] = keepOut.map((k) => ({ model: foot, u: k.a, v: k.b, swap: false, flip: false, scale: k.foot, sy: 1, cell: -1 }));
   const entry = (lot: Lot, prop: boolean): MorphBuilding => ({
@@ -219,7 +266,7 @@ export function* planSteps(seed: number, keepOut: readonly KeepOut[] = []): Gene
     const order = buildings
       .map((b) => ({ b, d: surface.at(b.lot.u, b.lot.v, T).distanceTo(PLAY_CENTER) }))
       .filter((o) => o.d <= (o.b.prop ? PROP_REACH : REACH) && (!o.b.prop || treeKept(o.b.lot, PLAY.distanceToPoint(surface.at(o.b.lot.u, o.b.lot.v, T)))))
-      .sort((p, q) => p.d - q.d);
+      .sort((p, q) => Number(first(q.b.lot)) - Number(first(p.b.lot)) || p.d - q.d);
     const hash = new Hash();
     let standing = 0;
     let props = 0;
@@ -293,7 +340,7 @@ export function* planSteps(seed: number, keepOut: readonly KeepOut[] = []): Gene
       const order = live
         .filter((b) => presenceAt(b.presence[ti], at) > 0.02)
         .map((b) => ({ b, d: surface.at(b.lot.u, b.lot.v, T).distanceTo(PLAY_CENTER) }))
-        .sort((p, q) => p.d - q.d);
+        .sort((p, q) => Number(first(q.b.lot)) - Number(first(p.b.lot)) || p.d - q.d);
       for (const { b } of order) {
         if (b.model === foot) continue;
         if (seat(surface, b.lot, f) < 0) {

@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { VisualTheme } from '../../core/types.ts';
-import { atmosphereUniforms, bindSky, FAR_WINDOWS, KEY_ELEVATION, patchShader, rowTone, type AtmosphereUniforms } from './atmosphere.ts';
+import { atmosphereUniforms, bindSky, FAR_WINDOWS, KEY_ELEVATION, patchShader, rowTone, type AtmosphereParams, type AtmosphereUniforms } from './atmosphere.ts';
 import { LOOK } from '../look.ts';
 import { ATMOSPHERE, type Background, type Prepare } from './foldcity.ts';
 import { buildSheetGround, type SheetGround } from './ground.ts';
@@ -15,7 +15,8 @@ import { PLAY_CENTER } from './plan.ts';
 import { SECTION_STRUCTURE, type Freeze } from './progression.ts';
 import { rng } from './rng.ts';
 import { bakeHeights, castShadows, MAP_HEIGHT, MAP_WIDTH, modelHeights, shadowTexture, type ModelHeights } from './shadow.ts';
-import { A0, A1, blendState, BEND, CEILING_Y, headingAt, SLOT, copyState, GROUND_Y, makeState, restState, sheetFrame, STRUCTURES, Z0, type SheetState, type StructureName } from './sheet.ts';
+import { A0, A1, blendState, BEND, CEILING_Y, headingAt, SLOT, copyState, GROUND_Y, makeState, restState, sheetAt, sheetFrame, STRUCTURES, Z0, type SheetState, type StructureName } from './sheet.ts';
+import { skyline, type SkyMass } from './skyline.ts';
 import { makeFrame } from './surfaces.ts';
 
 /** A fold from one structure into the next takes this long; with reduced motion the city fades out and back in instead. */
@@ -92,10 +93,12 @@ export interface MorphCityOptions {
   loop?: boolean;
   /** `?bgdebug=facing`: paint the background by class instead of lighting it (atmosphere.ts, bgFacing). */
   debug?: 0 | 1 | 2 | 3;
-  /** `?farwin=1`: keep the fronts' windows out to about 400 m at reduced contrast (atmosphere.ts, FAR_WINDOWS). */
+  /** `?farwin=1`: keep the fronts' windows further from the play volume at reduced contrast (atmosphere.ts, FAR_WINDOWS). */
   farWindows?: boolean;
   /** `?bgdebug=notrees`: leave the trees out of the batch (their shadows stay). */
   noTrees?: boolean;
+  /** `?bgtune=key:value,...`: numbers of the city's atmosphere to try without a build (atmosphere.ts, parseTune). */
+  tune?: Partial<AtmosphereParams>;
 }
 
 export class MorphCity implements Background {
@@ -104,9 +107,13 @@ export class MorphCity implements Background {
   stats = { instances: 0, groundTriangles: 0 };
   /** How long the folds' warm-up took at load, in ms. */
   warmMs = 0;
+  /** Where the load's time went, in ms (read through the debug hook when the load is measured). */
+  timings: Record<string, number> = {};
   private readonly theme: VisualTheme;
   private readonly opts: MorphCityOptions;
   private items: Item[] = [];
+  /** The far skyline of the open canyon (skyline.ts): instances of the same batch, standing where they stand for good. */
+  private sky: { id: number; mass: SkyMass }[] = [];
   private mesh: THREE.BatchedMesh | null = null;
   private ground: SheetGround | null = null;
   private atm: AtmosphereUniforms | null = null;
@@ -128,6 +135,7 @@ export class MorphCity implements Background {
   private readonly caps: THREE.Mesh[] = [];
   private readonly slotOn = { value: new THREE.Vector2(1, 0) };
   private waves: Wave[] = [];
+  private skyShown = true;
   private time = 0;
   /** What is shown: structure `from` at rest, or a fraction `f` of the way to `to`. */
   private from = 0;
@@ -164,9 +172,15 @@ export class MorphCity implements Background {
     const stage = new THREE.Group();
     // the buildings, and beside them the props (trees, fountains, the piers' feet): one batch, the buildings' material
     const loader = new GLTFLoader();
+    let t0 = performance.now();
+    const lap = (name: string) => {
+      this.timings[name] = Math.round(performance.now() - t0);
+      t0 = performance.now();
+    };
     const [gltf, props] = await Promise.all([loader.loadAsync(url), loader.loadAsync(url.replace(/city\.glb$/, 'cityprops.glb'))]);
     // planned in slices of about 50 ms, so the page keeps drawing while it loads (a few longer frames rather than one for
     // each of the plan's forty-odd steps)
+    lap('assets');
     const steps = planSteps(this.theme.city.seed, this.opts.keepOut);
     let step = steps.next();
     let slice = performance.now();
@@ -179,10 +193,14 @@ export class MorphCity implements Background {
     }
     const plan = step.value;
     this.plan = plan;
-    const atm = atmosphereUniforms(ATMOSPHERE);
+    lap('plan');
+    const atm = atmosphereUniforms({ ...ATMOSPHERE, ...this.opts.tune });
     this.atm = atm;
     if (this.opts.debug) atm.uBgDebug.value = this.opts.debug;
-    if (this.opts.farWindows) (atm.uBgWin.value as THREE.Vector4).set(135, 200, FAR_WINDOWS, 1);
+    if (this.opts.farWindows) {
+      const win = atm.uBgWin.value as THREE.Vector4;
+      win.set(win.x, win.y, FAR_WINDOWS, 1);
+    }
 
     const modelH = this.modelH;
     const ground = buildSheetGround(plan.lattice, atm, this.shadows);
@@ -255,6 +273,18 @@ export class MorphCity implements Background {
         vertices += src.geometry.getAttribute('position').count;
         indices += src.geometry.index!.count;
       }
+    // the far skyline is made of far models, some of which may stand nowhere in the city itself
+    const masses = skyline(this.theme.city.seed);
+    for (const mass of masses) {
+      const m = MODELS[mass.model];
+      const key = meshName(m, 1);
+      if (sources.has(key)) continue;
+      const src = (m.props ? props : gltf).scene.getObjectByName(key) as THREE.Mesh | undefined;
+      if (!src?.isMesh) throw new Error(`${m.props ? 'cityprops.glb' : 'city.glb'} has no mesh "${key}"`);
+      sources.set(key, src);
+      vertices += src.geometry.getAttribute('position').count;
+      indices += src.geometry.index!.count;
+    }
     for (const [i, m] of MODELS.entries()) {
       const far = sources.get(meshName(m, 1));
       if (far) modelH.set(i, modelHeights(far.geometry));
@@ -269,7 +299,8 @@ export class MorphCity implements Background {
     const material = (gltf.scene.getObjectByName(meshName(MODELS[0], 0)) as THREE.Mesh).material as THREE.MeshStandardMaterial;
     material.fog = false;
     if (material.map) material.map.anisotropy = 4;
-    const tone = material.map ? rowTone(material.map) : null;
+    const tuned = { ...ATMOSPHERE, ...this.opts.tune };
+    const tone = material.map ? rowTone(material.map, tuned.rowBand, tuned.rowEven) : null;
     if (tone) {
       atm.uBgRowTone.value = tone;
       atm.uBgRowOn.value = 1;
@@ -277,7 +308,7 @@ export class MorphCity implements Background {
     material.onBeforeCompile = (shader) => patchShader(shader, atm);
     material.customProgramCacheKey = () => 'foldcity-buildings';
 
-    const mesh = new THREE.BatchedMesh(list.length, vertices, indices, material);
+    const mesh = new THREE.BatchedMesh(list.length + masses.length, vertices, indices, material);
     mesh.sortObjects = false;
     mesh.frustumCulled = false; // its instances move with the sheet; each is still culled on its own
     mesh.name = 'foldcity-buildings';
@@ -304,13 +335,34 @@ export class MorphCity implements Background {
         h: 0, sink: 0.5, angle: 0, axis: new THREE.Vector3(1, 0, 0),
       });
     }
-    this.stats.instances = list.length;
+    // the far skyline: upright on the flat far end of the open canyon's sheet, sunk a little, each in its row's haze (the
+    // instance colour's alpha from 2 on says so: atmosphere.ts, bgSkyline)
+    const open = restState('horizon');
+    const at = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    const up = new THREE.Vector3(0, 1, 0);
+    for (const mass of masses) {
+      const m = MODELS[mass.model];
+      const id = mesh.addInstance(ids.get(meshName(m, 1))!);
+      sheetAt(open, mass.a, mass.b, at);
+      q.setFromAxisAngle(up, (mass.turn * Math.PI) / 2);
+      this.m4.compose(at.setY(at.y - 6), q, this.tmp.set(mass.scale, mass.scale * mass.sy, mass.scale));
+      // (the model's own centre stays where it is: a metre or two at this distance)
+      mesh.setMatrixAt(id, this.m4);
+      const v = 0.9 + rTint() * 0.1;
+      mesh.setColorAt(id, tint.set(v, v, v, 2 + mass.layer));
+      this.sky.push({ id, mass });
+    }
+    this.stats.instances = list.length + masses.length;
     this.mesh = mesh;
     stage.add(mesh);
     // (the shadow map of the structure shown is made by the first pose; those of the others a little later: shadowWork)
+    lap('build');
     this.warm();
     this.pose();
+    lap('pose');
     if (prepare) await prepare(stage).catch(() => {});
+    lap('compile');
     // and its parts enter one at a time, each once the one before has been drawn: the graphics driver finishes a shader the
     // first time something is drawn with it (the ground's takes about 0.6 s, the far ends' 0.15 s, the buildings' 0.1 s on the
     // PC this was measured on), so the wait is three shorter frames, all before the game says it is ready, and not one of
@@ -320,6 +372,7 @@ export class MorphCity implements Background {
       this.group.add(o);
       if (live && o.visible) live = await drawn(o, 400);
     }
+    lap('enter');
   }
 
   /**
@@ -402,6 +455,13 @@ export class MorphCity implements Background {
     if (this.atm) (this.atm.uBgFarSky.value as THREE.Vector2).set(open, CEILING_Y);
     // (in the open canyon the caps are all sky: not drawn)
     for (const cap of this.caps) cap.visible = open < 1;
+    // the far skyline belongs to the open canyon: it goes into the haze all through the fold that closes it (evenly: the fold's pace is the sheet's)
+    const show = Math.min(1, Math.max(0, open));
+    if (this.atm) this.atm.uBgSkyShow.value = show;
+    if (show > 0 !== this.skyShown) {
+      this.skyShown = show > 0;
+      for (const s of this.sky) this.mesh.setVisibleAt(s.id, this.skyShown);
+    }
     // the cast shadows: those of the structure the city rests in, or the two of a fold blended as it goes
     if (this.warming) {
       // (the warm-up's poses are never drawn: no shadow map is made for them)

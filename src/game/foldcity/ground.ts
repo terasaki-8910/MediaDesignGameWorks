@@ -28,6 +28,9 @@ uniform sampler2D uShadowA;
 uniform sampler2D uShadowB;
 uniform float uShadowMix;
 uniform float uShadowOn;
+uniform float uBgSlab;
+uniform float uBgCars;
+uniform float uBgGrain;
 varying float vTwist;
 varying vec2 vSheet;
 float bgRough = 0.92;
@@ -147,6 +150,8 @@ vec3 bgGround( vec2 s ) {
 	float grime = smoothstep( 0.25, 0.75, 0.6 * big + 0.4 * vn( s * 0.07 + 5.0 ) );
 	vec3 street = uStreet * ( 0.72 + 0.3 * big + 0.24 * mid ) * ( 0.8 + 0.4 * fine ) * ( 0.84 + 0.16 * grime );
 	street *= 1.0 - 0.24 * joints( alongV ? s.yx : s.xy, vec2( 0.9, 0.45 ), 0.04, aa );
+	// the roadway is relaid in patches, a few metres each, every one its own tone: seen from above a street is never one tone
+	street *= 1.0 + 0.07 * uBgSlab * ( slabTone( alongV ? s.yx : s.xy, vec2( 3.6, 1.8 ), aa ) - 0.5 );
 	float median = 0.0;
 	if ( inU != inV ) {
 		street *= 1.0 + 0.1 * ( 1.0 - smoothstep( 0.0, L.y * 0.7, lat ) ); // the crown of the road, worn pale
@@ -156,14 +161,29 @@ vec3 bgGround( vec2 s ) {
 	vec3 bed = mix( uPark * 0.85, uPath * 0.85, smoothstep( 0.4, 0.7, mid ) ) * ( 0.85 + 0.3 * fine );
 	street = mix( street, bed, median );
 	street *= 1.0 - 0.42 * ( 1.0 - smoothstep( 0.0, 1.5, - e ) ); // the gutter along the kerb, in the kerb's shade
+	// cars parked along both kerbs (not across a crossing, not on a boulevard's planted strip): seen from above a street
+	// has life in it. Each is a body with a darker cabin, its own paint; they are gone where a car is under two pixels,
+	// so the walls the play cameras look along carry none
+	if ( inU != inV ) {
+		float run = alongV ? s.y : s.x;
+		float off = lat - ( L.y - 1.3 );
+		float slot = floor( run / 5.7 );
+		float id = h21( vec2( slot, L.x * 0.37 + ( ( alongV ? s.x : s.y ) > L.x ? 3.1 : 7.7 ) ) );
+		float q = abs( run - ( slot + 0.5 ) * 5.7 );
+		float body = ( 1.0 - smoothstep( 2.15 - aa, 2.15 + aa, q ) ) * ( 1.0 - smoothstep( 0.9 - aa, 0.9 + aa, abs( off ) ) );
+		float cabin = ( 1.0 - smoothstep( 1.0 - aa, 1.0 + aa, abs( q - 0.25 ) ) ) * ( 1.0 - smoothstep( 0.7 - aa, 0.7 + aa, abs( off ) ) );
+		vec3 paint = id < 0.2 ? vec3( 0.045, 0.047, 0.052 ) : id < 0.36 ? vec3( 0.33, 0.34, 0.35 ) : id < 0.46 ? vec3( 0.52, 0.51, 0.48 ) : id < 0.53 ? vec3( 0.13, 0.075, 0.065 ) : vec3( 0.09, 0.12, 0.16 );
+		paint = mix( paint, paint * 0.45 + vec3( 0.02, 0.025, 0.03 ), cabin );
+		street = mix( street, paint, body * step( id, 0.6 ) * uBgCars * ( 1.0 - smoothstep( 0.45, 1.3, aa ) ) );
+	}
 
 	// the pavement along the block edge: pale slabs, a kerb of paler stone at the street's edge
-	vec3 walk = uWalk * ( 0.84 + 0.18 * big + 0.12 * mid ) * ( 0.88 + 0.24 * fine ) * ( 0.93 + 0.14 * slabTone( s, vec2( 1.7, 1.7 ), aa ) ) * ( 0.86 + 0.14 * grime );
+	vec3 walk = uWalk * ( 0.84 + 0.18 * big + 0.12 * mid ) * ( 0.88 + 0.24 * fine ) * ( 1.0 + 0.14 * uBgSlab * ( slabTone( s, vec2( 1.7, 1.7 ), aa ) - 0.5 ) ) * ( 0.86 + 0.14 * grime );
 	walk *= 1.0 - 0.22 * joints( s, vec2( 1.7, 1.7 ), 0.05, aa );
 	walk *= 1.0 + 0.26 * ( 1.0 - smoothstep( 0.3, 0.45 + aa, e ) );
 
 	// the block: its courts, paved in larger slabs, each block its own tone
-	vec3 inner = uYard * tone * ( 0.84 + 0.2 * mid ) * ( 0.85 + 0.3 * fine ) * ( 0.92 + 0.16 * slabTone( s, vec2( 3.2, 3.2 ), aa ) ) * ( 0.84 + 0.16 * grime );
+	vec3 inner = uYard * tone * ( 0.84 + 0.2 * mid ) * ( 0.85 + 0.3 * fine ) * ( 1.0 + 0.16 * uBgSlab * ( slabTone( s, vec2( 3.2, 3.2 ), aa ) - 0.5 ) ) * ( 0.84 + 0.16 * grime );
 	inner *= 1.0 - 0.2 * joints( s, vec2( 3.2, 3.2 ), 0.07, aa );
 	bool plaza = type > 0.5 && type < 1.5;
 	if ( plaza ) {
@@ -179,7 +199,7 @@ vec3 bgGround( vec2 s ) {
 		vec2 tl = floor( s / 2.4 );
 		float chequer = mod( tl.x + tl.y, 2.0 ) * ( 1.0 - smoothstep( 0.2, 0.7, aa / 2.4 ) );
 		inner = mix( uPlaza, uPlazaB, clamp( band + ray * 0.8 + chequer * 0.3, 0.0, 1.0 ) * 0.6 ) * ( 0.76 + 0.3 * mid + 0.14 * big ) * ( 0.92 + 0.16 * fine ) * ( 0.94 + 0.1 * rnd );
-		inner *= ( 0.9 + 0.2 * slabTone( s, vec2( 2.4, 2.4 ), aa ) ) * ( 0.8 + 0.2 * grime ) * ( 1.0 - 0.16 * ( 1.0 - smoothstep( 0.0, 4.0, e ) ) );
+		inner *= ( 1.0 + 0.2 * uBgSlab * ( slabTone( s, vec2( 2.4, 2.4 ), aa ) - 0.5 ) ) * ( 0.8 + 0.2 * grime ) * ( 1.0 - 0.16 * ( 1.0 - smoothstep( 0.0, 4.0, e ) ) );
 		inner *= 1.0 - 0.22 * joints( s, vec2( 2.4, 2.4 ), 0.06, aa );
 	} else if ( type > 1.5 && type < 2.5 ) {
 		// park: lawn with a winding path and a darker rim of hedge
@@ -227,7 +247,10 @@ vec3 bgGround( vec2 s ) {
 	}
 	// patches of a couple of metres (repairs, damp), which stay when the grain has gone: no stretch of paving is one tone
 	float patchy = mix( 0.5, vn( s * 0.55 + 3.0 ), 1.0 - smoothstep( 0.6, 2.5, aa ) );
-	return mix( street, blockCol, inBlock ) * ( 0.85 + 0.3 * patchy );
+	// the stone's own grain, setts and slabs a little apart in tone at the scale of a metre: what the overviews, looking
+	// straight down, see of the paving. It goes where a metre is under a pixel, so the walls seen along carry none of it
+	float grain = mix( 0.5, vn( s * 0.83 + 7.0 ), 1.0 - smoothstep( 0.35, 1.3, aa ) );
+	return mix( street, blockCol, inBlock ) * ( 0.85 + 0.3 * patchy ) * ( 1.0 + uBgGrain * ( 0.3 * ( fine - 0.5 ) + 0.3 * ( grain - 0.5 ) ) );
 }
 `;
 

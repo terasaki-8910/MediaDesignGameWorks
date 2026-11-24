@@ -6,12 +6,13 @@ The atlas (512 px, made here) is a stack of horizontal strips. Each strip tiles 
 window bays of 2.9 m), so a storey of a facade is one quad with U running over its bays and V over the strip: ground
 floor arcade, plain floor, balcony floor, mansard with dormers, ashlar courses, zinc with standing seams, slate, the
 glazing of the Art Deco fronts, and a white strip for faces that are a plain colour. Windows are drawn recessed (a shaded
-reveal, a stone surround, a sill with its rain streak) with dark glass; the limestone and the dark grey slate are in the
-atlas, COLOR_0 only tints.
+reveal, a stone surround, a sill with its rain streak) with glass that is the dark of a front but no black hole; the
+limestone and the grey slate (lifted towards the haze colour) are in the atlas, COLOR_0 only tints.
 
-The far models are those quads and nothing else. The near models have the relief as geometry (Shell.facade, deco_side):
-every window bay stands back between piers, with its jambs, sill and soffit; string courses, cornices, balcony slabs and
-their rails stand out; each pier has its own tone and some carry a rain streak, in COLOR_0.
+The far models are those quads and nothing else. The near models' fronts are the same quads; what they add is outline
+(gen_city.py: dormers, chimney stacks, cornices and balcony slabs over a line of shade, stepped crowns) and the fins of
+the Art Deco fronts (deco_side). Shell.facade, which gives every window bay its reveal as geometry, is kept for a model
+that is seen from nearer than any is now: at 120 m and more it only made fine stripes.
 """
 import math
 import random
@@ -31,18 +32,18 @@ DECO = (0.92, 0.93, 0.95)
 DECO_B = (0.74, 0.75, 0.77)
 # plain colours (on the white strip)
 TRIM = K.srgb("#BDB4A3")
-GLASS = K.srgb("#161B21")
+GLASS = K.srgb("#3D4248")  # (lifted towards the haze: glass is the dark of a front, never a black hole in it)
 SLATE = (1.0, 1.0, 1.0)  # the slate strip as painted
 ZINC = K.srgb("#6E777D")  # as a plain colour; a roof of zinc sheets is the "zinc" strip as painted (WHITE)
 LEAD = K.srgb("#5A676D")
 # the atlas's limestone as a plain colour (the reveals of the near models: they have no texture of their own)
 STONE = K.srgb("#AAA08F")
-RAIL = K.srgb("#2A2927")
+RAIL = K.srgb("#4A4742")
 BRICK = K.srgb("#7C6659")
 GILT = K.srgb("#A08D52")
-LEAF = K.srgb("#6F8257")
-LEAF_B = K.srgb("#4C5C3C")
-LEAF_C = K.srgb("#7F8B5C")
+LEAF = K.srgb("#7F8475")
+LEAF_B = K.srgb("#63655E")
+LEAF_C = K.srgb("#868A7A")
 BARK = K.srgb("#6B6457")
 WATER = K.srgb("#6E8A90")
 TANK = K.srgb("#6B5A4B")
@@ -501,7 +502,7 @@ def deco_side(s, p0, p1, z0, z1, rnd, tint=DECO, fin=0.6, width=0.95, pitch=3.5,
             continue
         xa = i * gap
         xb = xa + width
-        k = 0.92 + 0.16 * rnd.random()
+        k = 0.96 + 0.08 * rnd.random()
         c = mul(stone, k)
         for j in range(tiers):  # the pier's face in courses of ashlar, tier by tier
             a, b = z0 + step * j, z0 + step * (j + 1)
@@ -511,11 +512,11 @@ def deco_side(s, p0, p1, z0, z1, rnd, tint=DECO, fin=0.6, width=0.95, pitch=3.5,
             s.face([at(xa, 0, a), at(xb, 0, a), at(xb, 0, b), at(xa, 0, b)], w, [low, low, w, w],
                    [(u0, a0), (u0 + width / TILE, a0), (u0 + width / TILE, a1), (u0, a1)])
         if i > 0:
-            d = mul(c, 0.6)
-            s.quad([at(xa, 0, z0), at(xa, fin, z0), at(xa, fin, z1), at(xa, 0, z1)], d, (-t[0], -t[1], 0.0), [mul(d, 0.7), mul(d, 0.7), d, d])
+            d = mul(c, 0.8)
+            s.quad([at(xa, 0, z0), at(xa, fin, z0), at(xa, fin, z1), at(xa, 0, z1)], d, (-t[0], -t[1], 0.0), [mul(d, 0.8), mul(d, 0.8), d, d])
         if i < count - 1:
-            d = mul(c, 0.84)
-            s.quad([at(xb, 0, z0), at(xb, fin, z0), at(xb, fin, z1), at(xb, 0, z1)], d, (t[0], t[1], 0.0), [mul(d, 0.7), mul(d, 0.7), d, d])
+            d = mul(c, 0.92)
+            s.quad([at(xb, 0, z0), at(xb, fin, z0), at(xb, fin, z1), at(xb, 0, z1)], d, (t[0], t[1], 0.0), [mul(d, 0.8), mul(d, 0.8), d, d])
 
 
 def deco_mass(s, hx, hy, z0, z1, rnd, tint=DECO, c=(0.0, 0.0), sides="SNEW", **kw):
@@ -531,10 +532,11 @@ def atlas():
     rng = np.random.default_rng(1207)
     img = np.zeros((SIZE, SIZE, 3))
     stone = np.array([0.665, 0.628, 0.560])
-    slate = np.array([0.222, 0.232, 0.250])  # dark grey with a little blue: the darkest large tone of the city
+    # dark grey with a little blue, lifted towards the haze colour: the darkest large tone of the city, but never black
+    slate = np.array([0.338, 0.338, 0.346])
     zinc = np.array([0.40, 0.43, 0.455])
-    glass = np.array([0.125, 0.140, 0.165])  # dark: a window is the dark of a front, darker than its wall in any light
-    iron = np.array([0.130, 0.130, 0.140])
+    glass = np.array([0.262, 0.270, 0.285])  # a window is the dark of a front, darker than its wall in any light, but no hole
+    iron = np.array([0.250, 0.250, 0.255])
     bay = SIZE // 4
     grain = lambda h: 1.0 + 0.035 * (rng.random((h, SIZE, 1)) - 0.5)  # noqa: E731
 
@@ -582,8 +584,8 @@ def atlas():
                                                                                      a[y0 + (y1 - y0) * 2 // 3:y0 + (y1 - y0) * 2 // 3 + 1, x0:x1])
         # the reveal's shade: the top four rows and the left three columns of the opening
         shade = np.ones((y1 - y0, x1 - x0, 1))
-        shade[-4:] = 0.5
-        shade[:, :3] = np.minimum(shade[:, :3], 0.62)
+        shade[-4:] = 0.7
+        shade[:, :3] = np.minimum(shade[:, :3], 0.78)
         region[inside] = (region * shade)[inside]
 
     def streak(a, x0, x1, y1, depth, strength=0.16):
@@ -610,23 +612,24 @@ def atlas():
     a[:] = zinc * (1.0 + 0.08 * tile_noise(h, 16))
     for x in range(0, SIZE, 16):
         a[:, x:x + 16] *= 0.92 + 0.16 * rng.random()
-        a[:, x:x + 1] *= 0.66
-        a[:, x + 1:x + 2] *= 1.12
+        a[:, x:x + 1] *= 0.84
+        a[:, x + 1:x + 2] *= 1.06
 
     # the glazing between the piers of an Art Deco front: dark glass in metal frames, a paler stone mullion per bay
     a, h = strip("slot")
     # (a bay: the pier's stone over its first 34 px, where the near model's fin stands in front of it; then glass)
-    a[:] = glass * 1.25
+    # (glazing that takes the sky: a middle grey a step under the stone, so a front of it is a calm band and no dark stripe)
+    a[:] = np.array([0.415, 0.425, 0.440])
     for x in range(0, SIZE, 16):  # each pane takes the sky a little differently
-        a[:, x:x + 16] *= 0.8 + 0.5 * rng.random()
-    a[5:6] = np.array([0.30, 0.31, 0.32])  # the floors behind the glass
-    a[10:11] = np.array([0.30, 0.31, 0.32])
+        a[:, x:x + 16] *= 0.9 + 0.2 * rng.random()
+    a[5:6] = np.array([0.36, 0.37, 0.38])  # the floors behind the glass
+    a[10:11] = np.array([0.36, 0.37, 0.38])
     for b in range(4):
         x = b * bay
         for m in (64, 96):
-            a[:, x + m:x + m + 3] = np.array([0.33, 0.34, 0.35])
+            a[:, x + m:x + m + 3] = np.array([0.37, 0.38, 0.39])
         a[:, x:x + 30] = stone * (0.96 + 0.08 * rng.random())
-        a[:, x + 30:x + 34] = stone * 0.6
+        a[:, x + 30:x + 34] = stone * 0.75
     a[:1] = stone * 0.7
 
     a, h = strip("ground")
@@ -638,8 +641,8 @@ def atlas():
         x = b * bay
         window(a, x + 24, x + 104, 4 if b % 2 else 12, 88, arch=True)
         if b == 1:
-            a[4:60, x + 30:x + 98] = np.array([0.21, 0.19, 0.17])  # a door of dark wood
-            a[4:60, x + 63:x + 65] = 0.1
+            a[4:60, x + 30:x + 98] = np.array([0.31, 0.28, 0.25])  # a door of dark wood
+            a[4:60, x + 63:x + 65] = 0.2
     a[h - 10:] = stone * 1.08  # the string course over the ground floor
     a[h - 12:h - 10] = stone * 0.55
 
@@ -673,14 +676,14 @@ def atlas():
         shift = int(rng.integers(0, 8))
         for cx in range(0, SIZE, 8):
             cols = np.arange(cx + shift, cx + shift + 8) % SIZE
-            slates[r:r + 4, cols] = 0.88 + 0.24 * rng.random()
-        slates[r:r + 1] *= 0.78
-    a[:] = slate * slates * (1.0 + 0.14 * tile_noise(h, 32) + 0.12 * tile_noise(h, 8))
+            slates[r:r + 4, cols] = 0.94 + 0.12 * rng.random()
+        slates[r:r + 1] *= 0.9
+    a[:] = slate * slates * (1.0 + 0.09 * tile_noise(h, 32) + 0.06 * tile_noise(h, 8))
     for b in range(4):
         x = b * bay
         a[8:72, x + 38:x + 90] = stone * 1.04  # the dormer's stone front
         a[72:76, x + 34:x + 94] = zinc  # its zinc cap
-        a[8:76, x + 90:x + 94] = slate * 0.55  # its shade on the slates
+        a[8:76, x + 90:x + 94] = slate * 0.78  # its shade on the slates
         window(a, x + 46, x + 82, 18, 62)
     a[:7] = stone * 1.08  # the cornice and gutter
     a[7:9] = stone * 0.55
@@ -692,9 +695,9 @@ def atlas():
         shift = int(rng.integers(0, 8))
         for cx in range(0, SIZE, 8):
             cols = np.arange(cx + shift, cx + shift + 8) % SIZE
-            slates[r:r + 4, cols] = 0.88 + 0.24 * rng.random()
-        slates[r:r + 1] *= 0.78
-    a[:] = slate * slates * (1.0 + 0.14 * tile_noise(h, 32) + 0.12 * tile_noise(h, 8))
+            slates[r:r + 4, cols] = 0.94 + 0.12 * rng.random()
+        slates[r:r + 1] *= 0.9
+    a[:] = slate * slates * (1.0 + 0.09 * tile_noise(h, 32) + 0.06 * tile_noise(h, 8))
     return np.clip(img, 0.0, 1.0)
 
 

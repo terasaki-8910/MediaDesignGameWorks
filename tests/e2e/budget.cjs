@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const { describeBackend, launch } = require('./browser.cjs');
 
 const MAX_CALLS = 300;
-const MAX_TRIANGLES = 1_500_000;
+const MAX_TRIANGLES = 1_350_000;
 
 (async () => {
   const BASE = process.env.BASE_URL ?? 'http://localhost:4173/';

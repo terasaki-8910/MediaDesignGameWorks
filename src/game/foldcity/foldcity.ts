@@ -29,8 +29,15 @@ export interface Background {
   update(dt: number): void;
 }
 
-/** `sink` is slight: the city's ground is meant to be seen, and a haze that follows world height would differ between a floor, a wall and a ceiling of the same sheet. */
-export const ATMOSPHERE: AtmosphereParams = { density: 1 / 560, power: 5, strength: 1, gain: 0.78, saturation: 0.74, lift: 0.012, sink: 0.12, base: 0 };
+/**
+ * `sink` is slight: the city's ground is meant to be seen, and a haze that follows world height would differ between a floor, a wall and a ceiling of the same sheet.
+ * The rest was set against the fixed tone measure (tone.py: the city darker, calmer and less saturated than the play area, real darks, no crushed blacks) in the five
+ * shots s1-play, s2-play, s3-play, gate and player-back; `?bgtune=` tries other numbers without a build.
+ */
+export const ATMOSPHERE: AtmosphereParams = {
+  density: 1 / 560, power: 5, tail: 470, tailPower: 2.2, strength: 1, gain: 0.67, saturation: 0.74, lift: 0, sink: 0.12, base: 0,
+  toe: 0.078, knee: 6, winBase: 0.3, winNear: 45, winFar: 105, winKeep: 0.97, calm: 0.56, calmTone: 0.15, calmNear: 70, calmFar: 190, slab: 1.3, cars: 1, grain: 1.8, skyWin: 0.65, skyWinFar: 0.4, rowBand: 0.05, rowEven: 0.8, skyHaze: 0.55, skyHazeFar: 0.88,
+};
 
 interface Item {
   b: Building;

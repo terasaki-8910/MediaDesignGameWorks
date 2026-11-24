@@ -151,14 +151,14 @@ export function installHaze() {
  * strong blue), with the sunlit ground in its lower half at shallow angles (the bounce that fills upright faces).
  */
 /**
- * `?sky=a1`: a variant of the visible sky for the owner to compare (the default is approved and stays as it is). After
- * reference A1: the horizon's pale warm band runs up into the blue over a long gradient (to about 16 degrees instead of 9)
- * and the blue is less saturated. Only the sky that is seen changes: the light it gives is the default sky's.
+ * The visible sky (the owner's decision of 2026-11-24): after reference A1, the horizon's pale warm band runs up into the blue
+ * over a long gradient (to about 16 degrees instead of 9) and the blue is less saturated. Only the sky that is seen follows
+ * these numbers: the light it gives is built from the sky as it was before. `?sky=old` shows that earlier sky, to compare.
  */
 export const SKY_A1 = { bandTop: 0.28, grey: 0.08, redFall: 2.5, greenFall: 1.3 };
 
 export async function loadSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer, url = LOOK.hdri, sunU = LOOK.hdriSunU, gain = LOOK.hdriGain, variant: string | null = null) {
-  const a1 = variant === 'a1';
+  const a1 = variant !== 'old';
   const src = await new HDRLoader().setDataType(THREE.FloatType).loadAsync(url);
   const { width: w, height: h } = src.image as { width: number; height: number };
   const data = src.image.data as Float32Array;

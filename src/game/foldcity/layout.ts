@@ -155,13 +155,14 @@ const treeModels = MODELS.map((m, i) => (m.name.startsWith('tree_') ? i : -1)).f
 
 const propModel = (name: string) => MODELS.findIndex((m) => m.name === name);
 
-/** Trees stand this far apart along a kerb, and this far out from it (in the roadway's edge, clear of the fronts). */
+/** Trees stand about this far apart along a kerb (unevenly: layoutProps), and this far out from it (in the roadway's edge, clear of the fronts). */
 const TREE_PITCH = 13;
 const TREE_OUT = 0.6;
 
 /**
- * What stands in the streets and the open blocks: plane trees one by one along both kerbs of every avenue and boulevard
- * (each its own variant, size and turn, a little out of line), a loose stand of them in a park, and a fountain or a
+ * What stands in the streets and the open blocks: plane trees along both kerbs of every avenue and boulevard as a street
+ * has them after a century (uneven gaps, a stretch of kerb with none, young trees among old ones, each its own variant,
+ * size and turn, out of line by a metre), a loose stand of them in a park, and a fountain or a
  * monument in the middle of a plaza. Each is a `Lot` like a building's (its model is a prop of models.ts); `cell` is the
  * block it belongs to.
  */
@@ -174,14 +175,17 @@ export function layoutProps(lat: Lattice, seed: number): Lot[] {
     out.push({ model: treeModels[Math.floor(r() * treeModels.length)], swap: r() < 0.5, flip: r() < 0.5, scale: size * (0.8 + r() * 0.4), sy: 0.9 + r() * 0.25, u, v, cell });
   };
   const kerb = (alongU: boolean, lo: number, hi: number, across: number, cell: number) => {
-    // a row of plane trees along the kerb, evenly planted (each a little out of line, now and then one missing)
-    const n = Math.max(1, Math.floor((hi - lo - 6) / TREE_PITCH) + 1);
-    const start = (lo + hi) / 2 - ((n - 1) * TREE_PITCH) / 2;
-    for (let k = 0; k < n; k++) {
-      const along = start + k * TREE_PITCH + (r() - 0.5) * 1.2;
-      const off = across + (r() - 0.5) * 0.7;
-      if (r() < 0.08) continue;
-      tree(alongU ? along : off, alongU ? off : along, cell);
+    // plane trees along the kerb, never a ruled row: the gap to the next is 8 to 20 m, now and then a stretch of 20 to 50 m
+    // has none, and about a third are young trees two thirds the size of the old ones
+    let along = lo + 3 + r() * 9;
+    while (along < hi - 3) {
+      if (r() < 0.15) {
+        along += TREE_PITCH * (1.5 + r() * 2.5);
+        continue;
+      }
+      const off = across + (r() - 0.5) * 1.8;
+      tree(alongU ? along : off, alongU ? off : along, cell, r() < 0.32 ? 0.6 + r() * 0.2 : 0.92 + r() * 0.45);
+      along += TREE_PITCH * (0.62 + r() * 0.92);
     }
   };
   for (let j = 0; j < nv; j++)
@@ -244,6 +248,8 @@ const ALLEY = 3.2;
  */
 export function layoutLots(
   lat: Lattice, seed: number, scaleBase = 1, withProps = false, curled?: (v0: number, v1: number) => boolean, lowAt?: (v0: number, v1: number) => boolean,
+  /** Blocks that hold a given landmark whatever the seed drew for them (block index to model name). */
+  force?: ReadonlyMap<number, string>,
 ): Lot[] {
   const landmarkModels = withProps ? landmarkAll : landmarkCity;
   const r = rng(seed * 101 + 11);
@@ -321,12 +327,14 @@ export function layoutLots(
         const depth = Math.min(END_DEPTH * scaleBase, room);
         return row(0.2, D - 0.2, along, dir, depth, true) ? Math.min(MAX_SCALE * scaleBase, depth / 17.2) * 19.2 + ALLEY : 0;
       };
-      if (cell.type === BLOCK_LANDMARK && !low) {
+      const forced = force?.get(idx);
+      if (forced !== undefined || (cell.type === BLOCK_LANDMARK && !low)) {
         // where the sheet curls only a slender landmark can stand (whether it does is settled on the surface, in 3D)
         const pool = curl ? slender(landmarkModels) : landmarkModels;
         const k = pickWeighted(pool.map((mi) => MODELS[mi].weight), r());
         let mi = pool[k];
         if (mi === lastLandmark) mi = pool[(k + 1) % pool.length];
+        if (forced !== undefined) mi = MODELS.findIndex((m) => m.name === forced);
         const m = MODELS[mi];
         const s = Math.min(1.12 * scaleBase, (L - 2) / m.w, (D - 2) / m.d);
         if (s >= 0.7 * scaleBase) {
