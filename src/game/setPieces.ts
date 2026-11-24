@@ -108,24 +108,19 @@ export function towerPlacements(m: Tower): Placement[] {
  * paving), for a block that can lie on any of its faces. `sun` points towards the sun.
  *   lit, shade   tone of upright and downward faces where they face the sun and where they face away (faces that look
  *                up keep 1), with a smooth step between
- *   calmUp, calmSide   how far the stone's photograph is moved towards its mean colour `mean` (linear) on faces that
- *                look up and on the others (0 = as photographed): a block dressed smooth, its blocks and stains fainter
+ * The stone itself stays the kit's, as photographed.
  */
-export interface FacingTone { lit: number; shade: number; calmUp: number; calmSide: number; mean: THREE.Color }
+export interface FacingTone { lit: number; shade: number }
 
 export function toneByFacing(material: THREE.MeshStandardMaterial, sun: THREE.Vector3, t: FacingTone) {
   const f = (x: number) => x.toFixed(4);
-  const apply = 'diffuseColor *= sampledDiffuseColor;';
-  const chunk = THREE.ShaderChunk.map_fragment;
-  if (!chunk.includes(apply)) throw new Error('three.js map_fragment has changed: toneByFacing cannot reach the stone map');
   material.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <map_fragment>',
         `vec3 toneN = inverseTransformDirection( normalize( vNormal ), viewMatrix );
 	float toneUp = smoothstep( 0.3, 0.8, toneN.y );
-	${chunk.replace(apply, `sampledDiffuseColor.rgb = mix( sampledDiffuseColor.rgb, vec3( ${f(t.mean.r)}, ${f(t.mean.g)}, ${f(t.mean.b)} ), mix( ${f(t.calmSide)}, ${f(t.calmUp)}, toneUp ) );
-	${apply}`)}`,
+	#include <map_fragment>`,
       )
       .replace(
         '#include <color_fragment>',
@@ -134,6 +129,6 @@ export function toneByFacing(material: THREE.MeshStandardMaterial, sun: THREE.Ve
 	diffuseColor.rgb *= mix( toneSide, 1.0, toneUp );`,
       );
   };
-  material.customProgramCacheKey = () => `tone-by-facing:${[t.lit, t.shade, t.calmUp, t.calmSide].map(f).join(':')}:${t.mean.getHexString()}`;
+  material.customProgramCacheKey = () => `tone-by-facing:${[t.lit, t.shade].map(f).join(':')}`;
   material.needsUpdate = true;
 }

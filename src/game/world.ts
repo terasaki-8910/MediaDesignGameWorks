@@ -25,17 +25,13 @@ const GLASS_ACTIVE = 3.2;
 /** Emission of the path lines (the cube's faces, the plates, the tower's ring): under the bloom threshold, like a console at rest. */
 const PATH_GLOW = 1.3;
 /**
- * The path cube's stone and paving (setPieces.ts toneByFacing; the cube can lie on any face, so nothing of this is baked).
- * Faces that do not look up: the kit's 0.6 where they face the sun, the stone as it is where they face away. The ashlar is
- * dressed smooth: its photograph is moved half-way to its mean colour (fc_kit.py ASHLAR, #B9AF9F) and the kit's
- * normal map is at a fraction of its strength. The paved cells are the kit's paving, a little calmer too: an inlay in the
- * block, honed like it (mean: PAVING, #CED1D2).
+ * The path cube's stone and paving are the kit's ashlar and paving as on every slab; only their tone by facing is the
+ * cube's own (setPieces.ts toneByFacing; the cube can lie on any face, so nothing of this is baked). Faces that do not
+ * look up: the kit's 0.6 where they face the sun, the stone as it is where they face away.
  */
-const CUBE_STONE = { lit: 0.6, shade: 1, calmUp: 0.5, calmSide: 0.5, mean: new THREE.Color('#B9AF9F') };
-const CUBE_PAVING = { lit: 0.6, shade: 1, calmUp: 0.4, calmSide: 0.5, mean: new THREE.Color('#CED1D2') };
-const CUBE_RELIEF = 0.4;
-/** The paving of the arm tower's deck: honed like the cube's, and without the patches and the worn line of the fixed walkways. */
-const HONED_PAVING = { lit: 1, shade: 1, calmUp: 0.5, calmSide: 0.5, mean: new THREE.Color('#CED1D2') };
+const CUBE_TONE = { lit: 0.6, shade: 1 };
+/** How much of the sky's reflection the gate's ring takes (1 = like stone; the small gilt ornaments take look.ts giltEnv, 2.4). */
+const RING_SKY = 0.45;
 
 const AXIS: Record<'x' | 'y' | 'z', THREE.Vector3> = {
   x: new THREE.Vector3(1, 0, 0),
@@ -254,15 +250,8 @@ export class World {
     fixed.name = 'kit:fixed';
     this.root.add(fixed);
     for (const [id, placements] of plan.modules) {
-      const m = this.moduleById.get(id)!;
-      const f = cellFloor(m.at);
-      if (m.type === 'tower') {
-        // the turntable's deck is honed like the cube's paved cells and the plates: the paving of what turns is calmer
-        const deck = kit.build(placements, { own: ['M_paving'] });
-        const top = deck.getObjectByName('kit:M_paving') as THREE.Mesh | undefined;
-        if (top) toneByFacing(top.material as THREE.MeshStandardMaterial, LOOK.sunDir, HONED_PAVING);
-        this.root.getObjectByName(id)!.add(deck);
-      } else this.root.getObjectByName(id)!.add(kit.build(placements, { tintOrigin: new THREE.Vector3(f[0], f[1], f[2]), walk: plan.walkModules.get(id) }));
+      const f = cellFloor(this.moduleById.get(id)!.at);
+      this.root.getObjectByName(id)!.add(kit.build(placements, { tintOrigin: new THREE.Vector3(f[0], f[1], f[2]), walk: plan.walkModules.get(id) }));
     }
     this.addSetPieces(kit);
     // the bronze and gilt of all consoles are two meshes; each console keeps its own glass, lit by itself
@@ -295,6 +284,20 @@ export class World {
     return this.kit?.giltMaterials() ?? [];
   }
 
+  /**
+   * The gate's ring takes less of the sky than any other material: `RING_SKY` of the scene's. A ring of polished metal
+   * 9 m across mirrors a sky that is bright all round, and is then one flat yellow; held down, its body is a deep gold and
+   * the low sun draws the lines of light on its beads, its flutes and its rays. Call once the sky is in, as for the gilt.
+   */
+  ringTakesSky(scene: THREE.Scene) {
+    if (!scene.environment) return;
+    for (const m of this.kit?.materialsNamed('M_gilt_broad') ?? []) {
+      m.envMap = scene.environment;
+      m.envMapIntensity = scene.environmentIntensity * RING_SKY;
+      m.needsUpdate = true;
+    }
+  }
+
   /** The kit's pieces of the cube, the plates, the mural, the tower and the gate, each under its module's node. */
   private addSetPieces(kit: Kit) {
     for (const m of this.cs.modules) {
@@ -305,9 +308,7 @@ export class World {
         for (const name of ['M_stone', 'M_paving']) {
           const mesh = cube.getObjectByName(`kit:${name}`) as THREE.Mesh | undefined;
           if (!mesh) continue;
-          const mat = mesh.material as THREE.MeshStandardMaterial;
-          toneByFacing(mat, LOOK.sunDir, name === 'M_stone' ? CUBE_STONE : CUBE_PAVING);
-          if (name === 'M_stone') mat.normalScale.multiplyScalar(CUBE_RELIEF);
+          toneByFacing(mesh.material as THREE.MeshStandardMaterial, LOOK.sunDir, CUBE_TONE);
         }
         node.add(cube);
       } else if (m.type === 'tower') {
@@ -549,9 +550,9 @@ export class World {
   }
 
   /**
-   * Parapets on every closed edge of the walk map, from kit pieces: balustrades on bridges, plazas and the sunny
-   * side of the roads, low ashlar walls where a road only waits for its neighbour, on the shaded side of the roads,
-   * on the arm tower and on the path cube, and a post wherever segments meet, turn or end.
+   * Parapets on every closed edge of the walk map, from kit pieces: balustrades on bridges, plazas, the arm tower and
+   * the sunny side of the roads, low ashlar walls where a road only waits for its neighbour, on the shaded side of the
+   * roads and on the path cube, and a post wherever segments meet, turn or end.
    */
   private buildRails(wm: WalkMap, hiddenModules: Set<Id>) {
     for (const c of [...this.rails.children]) {
@@ -571,7 +572,8 @@ export class World {
         if (t.open[s]) return;
         const d = DIRS[s];
         let kind: keyof typeof lists = (t.cell[0] + t.cell[2]) % 2 ? 'wall_a' : 'wall_b';
-        if (m?.type === 'bridge') {
+        if (m?.type === 'tower') kind = 'balustrade';
+        else if (m?.type === 'bridge') {
           // across the end of a bridge a wall, along its sides the balustrade
           const along = [s, SIDES[(k + 2) % 4]].some((x) => wm.tiles.get(step(t.cell, x))?.module === t.module);
           if (!along || m.params.length === 1) kind = 'balustrade';

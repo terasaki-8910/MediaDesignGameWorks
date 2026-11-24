@@ -139,8 +139,8 @@
       "maxTextureBytes": 15000
     },
     "gate.glb": {
-      "maxFileBytes": 400000,
-      "maxTriangles": 6500,
+      "maxFileBytes": 560000,
+      "maxTriangles": 10500,
       "maxDrawCalls": 5,
       "maxMaterials": 4,
       "maxTextureSize": 512,

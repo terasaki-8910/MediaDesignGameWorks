@@ -10,7 +10,7 @@ Pieces (nodes):
   tower_shaft    an empty with tower_shaft_detail and tower_shaft_run: a gilt bronze bearing ring under the hub's slab
                  (2.32 m in radius, like the old one: it shows beyond the slab's edges and catches the sun),
                  a flaring capital, a shaft with cut corners (3.0 m across, 3.66 m over the corners) in courses of
-                 1.15 m with a pilaster on each face, and a stepped foot that tapers away to a
+                 1.15 m with a pilaster on each face and two band courses, and a stepped foot that tapers away to a
                  gilt drop 30 m below the deck: like the pylons' corbels, it ends on purpose and has no pier of its own.
   tower_bracket  the stone console under an arm, modelled under the north arm
   tower_crown    a slender pier (0.45 m square) on the corner of the hub between two sides without an arm (modelled on
@@ -61,20 +61,22 @@ K.loft(bm, list(reversed(FOOT)), 0)
 K.lathe(bm, [(0.0, -DEPTH), (0.05, -29.9), (0.13, -29.74), (0.17, -29.62), (0.13, -29.5), (0.07, -29.44), (0.0, -29.44)], 12, 1)
 detail = K.finish(K.new_object("tower_shaft_detail", bm, materials=MATS), smooth_angle=30)
 
-# the run of the shaft in courses (each takes its own tone), a pilaster on each face
+# the run of the shaft in courses (each takes its own tone), two band courses, a pilaster on each face
 bm = bmesh.new()
 n = round((SHAFT[0] - SHAFT[1]) / COURSE)
 rings = []
 for i in range(n + 1):
     z = SHAFT[1] + (SHAFT[0] - SHAFT[1]) * i / n
     rings.append((HALF, z, CUT))
+    if i in (6, 12):  # a band course on top of this one
+        rings += [(HALF + 0.04, z + 0.03, CUT), (HALF + 0.04, z + 0.2, CUT), (HALF, z + 0.23, CUT)]
 K.loft(bm, rings, 0)
 for k in range(4):
     a = k * math.pi / 2
     c, s = round(math.cos(a)), round(math.sin(a))
-    for lo, hi in (((-0.5, HALF - 0.05, SHAFT[1] + 0.5), (0.5, HALF + 0.04, SHAFT[0] - 0.35)),  # the strip, 4 cm proud
-                   ((-0.56, HALF - 0.05, SHAFT[0] - 0.35), (0.56, HALF + 0.07, SHAFT[0] - 0.1)),  # its cap
-                   ((-0.56, HALF - 0.05, SHAFT[1] + 0.2), (0.56, HALF + 0.07, SHAFT[1] + 0.5))):  # its foot
+    for lo, hi in (((-0.5, HALF - 0.05, SHAFT[1] + 0.5), (0.5, HALF + 0.07, SHAFT[0] - 0.35)),  # the strip
+                   ((-0.58, HALF - 0.05, SHAFT[0] - 0.35), (0.58, HALF + 0.11, SHAFT[0] - 0.1)),  # its cap
+                   ((-0.58, HALF - 0.05, SHAFT[1] + 0.2), (0.58, HALF + 0.11, SHAFT[1] + 0.5))):  # its foot
         pts = [(c * x - s * y, s * x + c * y, z) for x, y, z in (lo, hi)]
         K.box(bm, [min(p[i] for p in pts) for i in range(3)], [max(p[i] for p in pts) for i in range(3)], 0)
 run = K.finish(K.new_object("tower_shaft_run", bm, materials=MATS), bevel=0.02, smooth_angle=30)
@@ -154,7 +156,7 @@ bpy.context.view_layer.update()
 ao = K.bake_ao(parts, "tower_ao", 512, occluders=[deck], distance=1.5, strength=0.85)
 K.grime_vertex_colours(parts, ao, amount=0.5, skip=("M_gilt", "M_path_glass"))
 K.depth_weathering([detail, run, bracket], -0.6, -4.0, tint="#7C7E78")  # under the deck: damp, never in the sun (as the piers)
-K.course_tint([run], COURSE, 0.02)
+K.course_tint([run], COURSE, 0.07)
 K.face_weathering([crown], vertical=UPRIGHT_TONE, skip=("M_gilt",))
 bpy.data.objects.remove(deck)
 for ob in parts:

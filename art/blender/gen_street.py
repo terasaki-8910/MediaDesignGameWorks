@@ -3,8 +3,8 @@
     node <game3d>/scripts/blender.mjs art/blender/gen_street.py -- --out public/assets/kit/street.glb
 
 The deck, the cornices, the parapets and the lamps are the kit's. This file adds, on top of the paving:
-  street_side  the north side of one 4 m cell: a kerb of dressed stone (6 cm high, with a rounded nose) and a narrow
-               pavement behind it up to the foot of the parapet. The carriageway
+  street_side  the north side of one 4 m cell: a kerb of dressed stone (6 cm high, with a rounded nose), a narrow
+               pavement behind it up to the foot of the parapet, and two stone bollards on the kerb. The carriageway
                between the kerbs stays the kit's paving: it is where the player walks, and stays the lightest.
                The game leaves a side out where the street has a side port (a dropped kerb).
   street_arch  the archway at the street's far end: two piers on moulded plinths, an impost, eleven voussoirs that
@@ -41,11 +41,14 @@ PAVING = K.stone_material("M_paving", dict(K.PAVING))
 GILT = K.plain_material("M_gilt", "#E3C16F", metallic=1.0, roughness=0.26)
 MATS = [STONE, PAVING, GILT]
 
-# kerb and pavement (bollards on the kerb were tried: on the hanging street they are a row of teeth against the city)
+# kerb, pavement, bollards
 bm = bmesh.new()
 K.prism(bm, [(KERB[0], 0.0), (KERB[0], RISE - 0.02), (KERB[0] + 0.03, RISE), (KERB[1], RISE), (KERB[1], 0.0)], -H, H, 0)
 faces = K.slab_outline(bm, [(-H, KERB[1] + 0.001), (H, KERB[1] + 0.001), (H, PAVE), (-H, PAVE)], 0.0, RISE - 0.004, material_index=0)
 faces[-1].material_index = 1
+for x in (-1.0, 1.0):
+    K.lathe(bm, [(0.115, RISE - 0.01), (0.115, 0.1), (0.09, 0.14), (0.078, 0.5), (0.098, 0.56), (0.098, 0.6), (0.06, 0.67), (0.0, 0.71)], 10, 0,
+            centre=(x, (KERB[0] + KERB[1]) / 2 + 0.02))
 side = K.finish(K.new_object("street_side", bm, materials=MATS), smooth_angle=40)
 
 # the archway

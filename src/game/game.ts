@@ -171,6 +171,7 @@ export class Game {
     const city = this.city.load('./assets/city.glb', this.shots || opts.capture ? undefined : compileCity).catch((e) => console.warn('background city not loaded:', e));
     Promise.all([sky, kit, city, character]).finally(() => {
       giltTakesSky(this.engine.scene, this.world.giltMaterials()); // before warmUp, so the gilt's shader is compiled once
+      this.world.ringTakesSky(this.engine.scene);
       this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
       if (['facing', 'range', 'dist', 'unit0', 'unit1', 'unit2'].includes(query.get('bgdebug') ?? '')) this.flattenForDebug();
       this.ready = true;

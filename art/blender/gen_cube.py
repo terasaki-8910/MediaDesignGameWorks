@@ -7,7 +7,7 @@ A 12 m block of ashlar bound in gilt bronze, each face nine 4 m cells. Which cel
 
 Pieces (nodes). The cell and inlay pieces are modelled on a face that looks up: the face is the plane z = 0, the
 piece's "north" is +Y, the origin is the middle of the cell (cells) or of the face (inlays).
-  cube_cell_blank  a carved coffer: a flush margin, a shallow sunk panel and a flat octagonal boss in its middle
+  cube_cell_blank  a carved coffer: a flush margin, a panel sunk 9 cm and an octagonal boss in its middle
   cube_cell_path   a paved cell, flush with the face: the kit's paving, so a face's path is its lightest part
   cube_inlay_hub   the roundel of the path line in the middle of a face (cyan glass, material M_path_glass)
   cube_inlay_arm   the path line from the roundel north to the gilt edge of the face
@@ -43,10 +43,11 @@ GILT = K.plain_material("M_gilt", "#E3C16F", metallic=1.0, roughness=0.26)
 GLASS = K.plain_material("M_path_glass", "#0B2A30", metallic=0.0, roughness=0.2, emission="#5FF2FF", strength=1.0)
 MATS = [STONE, PAVING, GILT, GLASS]
 
-# the coffer, from its edge inwards: (half width, height, how much of the corner is cut). It is shallow (3.5 cm): the sun is
-# 12 degrees up, and a deeper panel on the face that is up fills with long shadows that are busier than the paving beside it
+# the coffer, from its edge inwards: (half width, height, how much of the corner is cut): a panel sunk 9 cm, and in it a
+# boss that rises to 2 cm under the face, with a dished middle
 bm = bmesh.new()
-K.loft(bm, [(H, 0.0, 0.0), (1.72, 0.0, 0.0), (1.66, -0.035, 0.0), (0.56, -0.035, 0.16), (0.5, 0.0, 0.14)], 0, cap_bottom=False)
+K.loft(bm, [(H, 0.0, 0.0), (1.72, 0.0, 0.0), (1.6, -0.09, 0.0), (0.78, -0.09, 0.22), (0.66, -0.02, 0.2), (0.42, -0.02, 0.14),
+            (0.36, -0.06, 0.11)], 0, cap_bottom=False)
 blank = K.finish(K.new_object("cube_cell_blank", bm, materials=MATS), smooth_angle=15)  # every step of the panel is a sharp edge
 K.face_up(blank)
 
@@ -112,7 +113,7 @@ for k, ob in enumerate(parts):
 bpy.context.view_layer.update()
 K.unwrap_atlas(parts, "UV1", margin=0.01)
 ao = K.bake_ao(parts, "cube_ao", 256, distance=0.5, strength=1.2)
-K.grime_vertex_colours(parts, ao, amount=0.15, skip=("M_gilt", "M_path_glass", "M_paving"))
+K.grime_vertex_colours(parts, ao, amount=0.35, skip=("M_gilt", "M_path_glass", "M_paving"))
 for ob in parts:
     ob.location = (0, 0, 0)
 bpy.context.view_layer.update()
