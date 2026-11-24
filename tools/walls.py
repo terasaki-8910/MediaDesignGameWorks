@@ -9,9 +9,10 @@ For each named wall region below, over the city pixels inside it (play area and 
                 (stone against slate as colours, not light against shade)
   cool b*/C*    b* and chroma of the cooler cluster (blue-grey slate: b* below 0, C* about 3-7)
 Checks:
-  shade walls: 0.70 <= ratio <= 1.00 and sd >= 10
-  sun walls:   0.55 <= ratio <= 1.10
-  (upper limits raised from 0.95 on 2026-11-24 when the owner asked for stronger windows and weathering)
+  shade walls: 1.00 <= detail <= 1.50 L* and sd >= 10
+  sun walls:   0.80 <= detail <= 1.60 L*
+  (absolute since 2026-11-25: the bounds equal the old ratios 0.70-1.00 and 0.55-1.10 at the approved walkway's detail
+   of about 1.45 L*; a ratio to the play area punished richer play-area pieces)
   all walls:   split dE >= 8, cool b* < 0 and cool C* <= 7 (blue-grey slate, not saturated blue)
 """
 import json
@@ -84,6 +85,7 @@ def main():
         r = {
             "region": name, "kind": kind,
             "ratio": float(np.median(lc[m])) / play_lc,
+            "detail": float(np.median(lc[m])),
             "sd": float(L[m].std()),
             "black": float((L[m] < 20).mean()),
             "split_dE": float(np.linalg.norm(c[0] - c[1])),
@@ -91,18 +93,18 @@ def main():
             "cool_c": float(np.hypot(cool[1], cool[2])),
         }
         if kind == "shade":
-            r["ok_detail"] = 0.70 <= r["ratio"] <= 1.00 and r["sd"] >= 10
+            r["ok_detail"] = 1.00 <= r["detail"] <= 1.50 and r["sd"] >= 10
         else:
-            r["ok_detail"] = 0.55 <= r["ratio"] <= 1.10
+            r["ok_detail"] = 0.80 <= r["detail"] <= 1.60
         r["ok_split"] = r["split_dE"] >= 8 and r["cool_b"] < 0 and r["cool_c"] <= 7
         rows.append(r)
     if "--json" in sys.argv:
         print(json.dumps(rows, indent=1))
         return 0
     ok = lambda v: "pass" if v else "FAIL"
-    print(f"{'region':12} ratio    sd  black  split dE  cool b*  cool C*  detail  split")
+    print(f"{'region':12} detail   sd  black  split dE  cool b*  cool C*  detail  split")
     for r in rows:
-        print(f"{r['region']:12} {r['ratio']:5.2f} {r['sd']:5.1f} {100 * r['black']:5.1f}%  {r['split_dE']:7.1f}  {r['cool_b']:7.1f}  {r['cool_c']:7.1f}  {ok(r['ok_detail']):6} {ok(r['ok_split'])}")
+        print(f"{r['region']:12} {r['detail']:5.2f} {r['sd']:5.1f} {100 * r['black']:5.1f}%  {r['split_dE']:7.1f}  {r['cool_b']:7.1f}  {r['cool_c']:7.1f}  {ok(r['ok_detail']):6} {ok(r['ok_split'])}")
     return 0
 
 
