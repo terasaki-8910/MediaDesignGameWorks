@@ -177,10 +177,12 @@ export class MorphCity implements Background {
       this.timings[name] = Math.round(performance.now() - t0);
       t0 = performance.now();
     };
-    const [gltf, props] = await Promise.all([loader.loadAsync(url), loader.loadAsync(url.replace(/city\.glb$/, 'cityprops.glb'))]);
+    // the two files load while the city is planned (the plan needs neither): the plan's second or so of work no longer waits
+    // for the download and the parsing, which go on between its slices
+    const assets = Promise.all([loader.loadAsync(url), loader.loadAsync(url.replace(/city\.glb$/, 'cityprops.glb'))]);
+    assets.catch(() => {}); // (a failed load is reported where it is awaited, below)
     // planned in slices of about 50 ms, so the page keeps drawing while it loads (a few longer frames rather than one for
     // each of the plan's forty-odd steps)
-    lap('assets');
     const steps = planSteps(this.theme.city.seed, this.opts.keepOut);
     let step = steps.next();
     let slice = performance.now();
@@ -194,6 +196,8 @@ export class MorphCity implements Background {
     const plan = step.value;
     this.plan = plan;
     lap('plan');
+    const [gltf, props] = await assets;
+    lap('assets');
     const atm = atmosphereUniforms({ ...ATMOSPHERE, ...this.opts.tune });
     this.atm = atm;
     if (this.opts.debug) atm.uBgDebug.value = this.opts.debug;
@@ -321,12 +325,13 @@ export class MorphCity implements Background {
       const geometry: [number, number] = [ids.get(meshName(MODELS[b.model], 0))!, ids.get(meshName(MODELS[b.model], 1))!];
       const id = mesh.addInstance(geometry[1]);
       mesh.setVisibleAt(id, false); // until the first pose puts it on the sheet
-      // a tone and a warmth per block (about 6 % either way: the brief's stone by stone), a little more per house
+      // a tone and a warmth per block (about 11 % either way: the brief's stone by stone), and 6 % more per house: seen from
+      // far a wall of city is houses of different stone, where one tone made it a band
       const cell = b.lot.cell >= 0 ? plan.lattice.cells[b.lot.cell].r : 0.5;
       const h1 = Math.sin(cell * 91.7 + 3.1) * 43758.5453;
       const h2 = Math.sin(cell * 57.3 + 1.7) * 24634.6345;
       const prop = MODELS[b.model].kind === 'prop';
-      const v = 0.94 * (prop ? 0.96 + rTint() * 0.08 : 0.94 + (h1 - Math.floor(h1)) * 0.12) * (0.98 + rTint() * 0.04);
+      const v = 0.94 * (prop ? 0.96 + rTint() * 0.08 : 0.89 + (h1 - Math.floor(h1)) * 0.22) * (prop ? 0.98 + rTint() * 0.04 : 0.94 + rTint() * 0.12);
       const warm = prop ? (rTint() - 0.5) * 0.05 : (h2 - Math.floor(h2) - 0.5) * 0.1 + (rTint() - 0.5) * 0.02;
       // the alpha carries the number of the building's block: with it the building goes into the far haze when its block does (atmosphere.ts, bgFar)
       mesh.setColorAt(id, tint.set(v * (1 + warm), v, v * (1 - warm), b.lot.cell >= 0 ? Math.round(cell * 255) / 255 : 0.5));

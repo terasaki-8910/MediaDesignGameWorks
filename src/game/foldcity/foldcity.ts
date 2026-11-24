@@ -31,12 +31,17 @@ export interface Background {
 
 /**
  * `sink` is slight: the city's ground is meant to be seen, and a haze that follows world height would differ between a floor, a wall and a ceiling of the same sheet.
- * The rest was set against the fixed tone measure (tone.py: the city darker, calmer and less saturated than the play area, real darks, no crushed blacks) in the five
- * shots s1-play, s2-play, s3-play, gate and player-back; `?bgtune=` tries other numbers without a build.
+ * The rest was set against the two fixed measures: tone.py (the city darker, calmer and less saturated than the play area, real darks, no crushed blacks) in the five
+ * shots s1-play, s2-play, s3-play, gate and player-back, and walls.py (the walls beside the play area: modelled in shade, not busier than the walkway in the sun,
+ * warm stone against blue-grey slate). They leave little room: most of these numbers sit within a few percent of where one of the checks fails.
+ * `?bgtune=` tries other numbers without a build.
  */
 export const ATMOSPHERE: AtmosphereParams = {
-  density: 1 / 560, power: 5, tail: 470, tailPower: 2.2, strength: 1, gain: 0.67, saturation: 0.74, lift: 0, sink: 0.12, base: 0,
-  toe: 0.078, knee: 6, winBase: 0.3, winNear: 45, winFar: 105, winKeep: 0.97, calm: 0.56, calmTone: 0.15, calmNear: 70, calmFar: 190, slab: 1.3, cars: 1, grain: 1.8, skyWin: 0.65, skyWinFar: 0.4, rowBand: 0.05, rowEven: 0.8, skyHaze: 0.55, skyHazeFar: 0.88,
+  density: 1 / 560, power: 5, tail: 470, tailPower: 2.2, strength: 1, gain: 0.42, saturation: 0.74, lift: 0, sink: 0.12, base: 0,
+  // no floor under the darks: the tone mapping's toe is undone instead, and the shade is lit by the sky
+  toe: 0, knee: 6, untoe: 1, skyShade: 2.2, skySun: 2.32, skyLo: 0.1, skyUp: 1, occ: 0.9, occShade: 0.32, canyon: 0.7, shadow: 0.5,
+  winBase: 0.3, winNear: 45, winFar: 105, winKeep: 0.97, calm: 0.9, calmBase: 0.2, calmTone: 0.15, calmNear: 60, calmFar: 160,
+  ground: 0.54, slab: 0, pave: 0.3, cars: 1, skyWin: 0.65, skyWinFar: 0.4, rowBand: 0.05, rowEven: 0.8, skyHaze: 0.55, skyHazeFar: 0.88,
 };
 
 interface Item {

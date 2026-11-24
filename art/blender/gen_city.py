@@ -19,13 +19,16 @@ A2: the Art Deco mass of the Palais de Chaillot), each as <name>_lod0 (near) and
   belfry            block with a tall clock tower: an open bell stage, a stone spire between four pinnacles
 The far model is the fronts of the facade atlas of city_kit.py (limestone walls with recessed windows, slate roofs),
 one quad a storey, the dormers drawn on the mansard, bare roofs. The near model is made for the distance it is seen from
-(the walls beside the play area, 120 to 250 m from the play cameras, where a window's reveal is a pixel): its fronts are
-the same quads, and what it adds is outline. A mansard with a steep lower slope and a shallow upper one, a pale zinc
-ledge at the break; a dormer to every bay; chimney stacks beside the ridge, no two alike, with their pots; a cornice
-that stands 1.1 m out over a frieze in its shade, balcony slabs over a line of shade; an attic storey set back behind a
-terrace (haussmann_tall), end pavilions a storey taller (haussmann_a), a stepped stone crown (tower_house); the Art Deco
-masses have piers that stand out as fins before bands of glazing (deco_side), parapets at every setback and stepped
-crowns. Nothing but the belfry ends in a point: the dome, the corner rotunda and the towers end blunt, because on a wall
+(the walls beside the play area, 120 to 250 m from the play cameras): fewer, larger features than a window to every
+bay. Its fronts are in depth, after A2 (city_kit.order): giant piers of large ashlar blocks every 7 m or so, and between
+them the wall 0.6 m back, in their shade, with one tall bay of glazing over the ground floor's. To that it adds outline.
+A mansard with a steep lower slope and a shallow upper one, a pale zinc ledge at the break; a broad dormer to every pier
+bay, and on the end slopes; chimney stacks beside the ridge, no two alike, with their pots; at each end of a mansard a
+stepped gable wall of flues (the far model has its tall part); a cornice that stands 1.1 m out over a frieze in its
+shade, balcony slabs over a line of shade; in the middle of a long front a shallow bay carried up through the cornice
+(both models), so no eaves line is one ruled edge; an attic storey set back behind a terrace (haussmann_tall), end
+pavilions a storey taller (haussmann_a), a stepped stone crown (tower_house); the Art Deco masses have broad piers that
+stand out as fins before bands of glazing (deco_side), parapets at every setback and stepped crowns. Nothing but the belfry ends in a point: the dome, the corner rotunda and the towers end blunt, because on a wall
 of the folded city a point aims at the walkways. COLOR_0 tints the atlas and colours the plain parts (zinc, cornices,
 chimneys, gilt). The game draws the buildings as one batch, tints, scales and stretches each one along its length. Origin: ground
 centre of the footprint; +X is the long side.
@@ -44,16 +47,30 @@ opts = K.script_args()
 OUT = opts.get("out", "public/assets/city.glb")
 K.reset()
 
-TERRACE = K.srgb("#7C858C")  # a flat roof of zinc and gravel: never the colour of the streets
-STACK = K.srgb("#8E877B")  # chimney stacks: rendered stone under soot, between the slate and the fronts
+TERRACE = K.srgb("#79848F")  # a flat roof of zinc and gravel: never the colour of the streets
+STACK = K.srgb("#968B78")  # chimney stacks: rendered stone under soot, between the slate and the fronts
 POT = K.srgb("#8E7D6E")  # chimney pots: terracotta under soot, never a row of red dots
-DORMER = K.srgb("#9A9386")  # a dormer's stone front and cheeks
-ZINC_B = K.srgb("#7F868B")  # zinc that takes the sky: dormer caps, the ledge at the mansard's break
-SHADE = K.srgb("#7A7367")  # stone in the shade of a cornice or a balcony: the line under every overhang
+DORMER = K.srgb("#A69B86")  # a dormer's stone front and cheeks
+ZINC_B = K.srgb("#7E8893")  # zinc that takes the sky: dormer caps, the ledge at the mansard's break
+SHADE = K.srgb("#756C5C")  # stone in the shade of a cornice or a balcony: the line under every overhang
 
 
-def fronts(s, hx, hy, floors, z0=0.0, tint=WALL, sides="SNEW"):
-    """The storeys of a Haussmann front: the arcade, then floors with a balcony line on the second and the top one."""
+def tiers_of(floors):
+    """The tiers of a near front of `floors` storeys ((height, spandrel) each): the ground floor under its string course,
+    then all the floors above as one tall bay up to the frieze (two where the front is over eight storeys), so a bay is
+    one or two tall openings (A2's slots between piers) and not a window to every storey."""
+    upper = floors - 1
+    if upper > 7:
+        low = upper // 2
+        return [(GROUND_FLOOR, 1.0), (low * STOREY, 1.1), ((upper - low) * STOREY, 0.0)]
+    return [(GROUND_FLOOR, 1.0), (upper * STOREY, 0.0)]  # (the frieze under the cornice closes the top bay)
+
+
+def fronts(s, hx, hy, floors, z0=0.0, tint=WALL, sides="SNEW", rnd=None):
+    """The storeys of a Haussmann front. Far (no `rnd`): the atlas's fronts, the arcade, then floors with a balcony line
+    on the second and the top one. Near: the front in depth (city_kit.order), giant piers before tall recessed bays."""
+    if rnd is not None:
+        return order_box(s, hx, hy, z0, tiers_of(floors), rnd, tint, sides=sides, foot=0.5 if z0 == 0.0 else None, pitch=6.8, width=4.0, blocks=STOREY * 2)
     plan = [("ground", GROUND_FLOOR)] + [("balcony" if f in (2, floors - 1) else "floor", STOREY) for f in range(1, floors)]
     return s.storeys(hx, hy, z0, plan, tint, sides, foot=0.5 if z0 == 0.0 else None)
 
@@ -70,14 +87,14 @@ def chimney_stacks(s, lod, cx, cy, roof, ridge, n, seed):
         w, l, h = 0.55 + 0.3 * r.random(), 0.9 + 0.8 * r.random(), ridge + 1.5 + 1.3 * r.random()
         s.box((x - w, y - l, roof - 0.3), (x + w, y + l, roof + h), STACK, top=TRIM, foot=0.8)
         if lod == 0:
-            for k in (-1, 1):
-                s.box((x - 0.2, y + k * l * 0.5 - 0.2, roof + h), (x + 0.2, y + k * l * 0.5 + 0.2, roof + h + 0.7), POT)
+            s.box((x - 0.22, y - l * 0.7, roof + h), (x + 0.22, y + l * 0.7, roof + h + 0.7), POT)
 
 
-def dormers(s, hx, hy, z, inset, mh, h=2.4, w=0.78, skip=None):
-    """A row of dormers on the mansard's two long slopes, one a bay: a stone front under a zinc cap, standing out of the
-    slates, so the eaves line is a row of small gables and never a ruled edge. `skip` leaves bays out."""
-    n = max(1, round(2 * hx / BAY))
+def dormers(s, hx, hy, z, inset, mh, h=2.6, w=1.25, skip=None, ends=(-1, 1)):
+    """A row of dormers on the mansard's two long slopes, one to every bay between the front's piers: a broad stone front
+    under a zinc cap, standing out of the slates, so the eaves line is a row of gables and never a ruled edge. `skip`
+    leaves bays out."""
+    n = max(1, round(2 * hx / 5.8))
     for i in range(n):
         if skip and i in skip:
             continue
@@ -86,31 +103,53 @@ def dormers(s, hx, hy, z, inset, mh, h=2.4, w=0.78, skip=None):
         for sy in (-1, 1):
             y0, y1 = sorted((sy * (hy - 0.3), sy * (hy - back)))
             s.box((x - w, y0, z + 0.6), (x + w, y1, z + 0.6 + h), DORMER, top=ZINC_B)
-            u0, u1 = sorted(((x - w + 0.28) * -sy, (x + w - 0.28) * -sy))  # along the wall as seen from outside
+            u0, u1 = sorted(((x - w + 0.32) * -sy, (x + w - 0.32) * -sy))  # along the wall as seen from outside
             s.panel("S" if sy < 0 else "N", 0.0, 0.0, u0, u1, z + 0.95, z + 0.3 + h, GLASS, hy - 0.26)
+    # and on the two end slopes, so the roof's end against the sky is gables as well and no ruled line
+    m = max(1, round(2 * hy / 6.5))
+    for i in range(m):
+        if ends is None:
+            break
+        y = -hy + (i + 0.5) * 2 * hy / m
+        back = inset * (0.6 + h) / mh + 0.15
+        for sx in ends:
+            x0, x1 = sorted((sx * (hx - 0.3), sx * (hx - back)))
+            s.box((x0, y - w, z + 0.6), (x1, y + w, z + 0.6 + h), DORMER, top=ZINC_B)
+            u0, u1 = sorted(((y - w + 0.32) * sx, (y + w - 0.32) * sx))
+            s.panel("W" if sx < 0 else "E", 0.0, 0.0, u0, u1, z + 0.95, z + 0.3 + h, GLASS, hx - 0.26)
 
 
-def block(s, lod, hx, hy, floors, at=(0.0, 0.0), z0=0.0, chimneys=3, tiers=1, tint=WALL, roof="mansard", slate_top=False, attic=False, seed=1):
+def block(s, lod, hx, hy, floors, at=(0.0, 0.0), z0=0.0, chimneys=3, tiers=1, tint=WALL, roof="mansard", slate_top=False, attic=False, seed=1, sides="SNEW"):
     """A Haussmann block: fronts, balcony slabs, cornice, and its roof; returns the height of the roof's flat. What the
     near model adds is what still reads from the play area (walls 120 to 250 m off): a cornice that stands well out over a
     frieze in its shade, balcony slabs over a line of shade, a row of dormers, chimney stacks with pots."""
     s.o = at
     near = lod == 0
-    top = fronts(s, hx, hy, floors, z0, tint)
+    rnd = random.Random(seed * 31 + 7)
+    top = fronts(s, hx, hy, floors, z0, tint, sides, rnd if near else None)
     out = 1.1 if near else 0.55
     s.box((-hx - out, -hy - out, top - 0.1), (hx + out, hy + out, top + 0.5), TRIM, bottom=True)
     if near:
-        s.ring(hx + 0.3, hy + 0.3, top - 1.25, top - 0.1, SHADE)  # the frieze, in the cornice's shade
+        s.ring(hx + 0.35, hy + 0.35, top - 1.4, top - 0.1, SHADE)  # the frieze, in the cornice's shade
         for f in (2, floors - 1):
             z = z0 + GROUND_FLOOR + (f - 1) * STOREY
             s.box((-hx - 0.85, -hy - 0.85, z - 0.05), (hx + 0.85, hy + 0.85, z + 0.25), TRIM, bottom=True)
             s.ring(hx + 0.22, hy + 0.22, z - 0.55, z - 0.05, SHADE)
     top += 0.5
+    if roof == "mansard" and not attic and hx >= 11.5:
+        # a shallow bay in the middle of each long front, carried up through the cornice as a block of stone: the eaves of
+        # a long house are stepped in the middle and never one ruled line against the sky
+        bw = min(hx * 0.32, 6.5)
+        out = 0.7 if near else 0.5
+        for sy in (-1, 1):
+            y0, y1 = sorted((sy * (hy - 0.2), sy * (hy + out)))
+            s.box((-bw, y0, z0), (bw, y1, top + 2.5), mul(tint, 0.97), top=TRIM, strip="ashlar", foot=0.5 if z0 == 0.0 else None, walls="SEW" if sy < 0 else "NEW")
+            s.box((-bw * 0.55, y0, top + 2.5), (bw * 0.55, y1, top + 3.6), TRIM, walls="SEW" if sy < 0 else "NEW")
     if attic:
         # the top storey stands back behind a terrace: the cornice line, then a lower, narrower storey under the roof
         s.box((-hx - 0.1, -hy - 0.1, top), (hx + 0.1, hy + 0.1, top + 0.9), TRIM, top=PAVED, paved=True)
         hx, hy = hx - 1.7, hy - 1.7
-        top = s.storeys(hx, hy, top, [("floor", STOREY)], mul(tint, 0.94))
+        top = order_box(s, hx, hy, top, [(STOREY, 0.0)], rnd, mul(tint, 0.94), depth=0.45) if near else s.storeys(hx, hy, top, [("floor", STOREY)], mul(tint, 0.94))
         s.box((-hx - 0.5, -hy - 0.5, top - 0.1), (hx + 0.5, hy + 0.5, top + 0.35), TRIM, bottom=True)
         top += 0.35
     if roof == "terrace":
@@ -169,7 +208,24 @@ def block(s, lod, hx, hy, floors, at=(0.0, 0.0), z0=0.0, chimneys=3, tiers=1, ti
         rz += 2.6
         cx, cy = hx - 2.5, hy - 2.5
     if near:
-        dormers(s, hx, hy, top, inset, mh, h=2.4 if roof == "mansard" else 3.0)
+        dormers(s, hx, hy, top, inset, mh, h=2.6 if roof == "mansard" else 3.2)
+    if roof == "pavilion" and not chimneys:
+        # an end pavilion's outer end: the same gable wall of flues, through the steep end slope
+        for sx, side in ((-1, "W"), (1, "E")):
+            if side in sides:
+                x0, x1 = sorted((sx * (hx + 0.1), sx * (hx - 1.1)))
+                s.box((x0, -hy * 0.4, top), (x1, hy * 0.4, rz + ridge), STACK, top=TRIM)
+                if near:
+                    s.box((x0, -hy * 0.75, top), (x1, hy * 0.75, top + mh * 0.55), STACK, top=TRIM)
+    if roof == "mansard" and tiers == 1 and "E" in sides and "W" in sides:
+        # the party walls at the two ends: a gable wall of chimney flues rising through the end slope, stepped (the Paris
+        # mur pignon), so the roof's end against the sky is stone in steps and never the slope's ruled edge
+        for sx in (-1, 1):
+            x0, x1 = sorted((sx * (hx + 0.1), sx * (hx - 1.1)))
+            s.box((x0, -hy * 0.42, top), (x1, hy * 0.42, rz + ridge + 1.5), STACK, top=TRIM)
+            if near:
+                s.box((x0, -hy * 0.8, top), (x1, hy * 0.8, top + mh * 0.6), STACK, top=TRIM)
+                s.box((sx * (hx - 0.5) - 0.22, -hy * 0.3, rz + ridge + 1.5), (sx * (hx - 0.5) + 0.22, hy * 0.3, rz + ridge + 2.2), POT)
     if roof == "pavilion":  # tall stacks at the ends of the ridge
         if chimneys:
             for sx in (-1, 1):
@@ -184,8 +240,8 @@ def haussmann_a(lod):
     s = Shell()
     # a long front between two end pavilions a storey taller, under steep pavilion roofs
     block(s, lod, 14.3, 8.0, 6, slate_top=True, seed=11)
-    for sx in (-1, 1):
-        block(s, lod, 3.9, 8.5, 7, at=(sx * 18.1, 0.0), roof="pavilion", chimneys=0, seed=11)
+    for sx in (-1, 1):  # (the side against the long front is never seen)
+        block(s, lod, 3.9, 8.5, 7, at=(sx * 18.1, 0.0), roof="pavilion", chimneys=0, seed=11, sides="SNE" if sx > 0 else "SNW")
     return s
 
 
@@ -200,7 +256,16 @@ def haussmann_corner(lod):
             a0, a1 = 2 * math.pi * i / seg, 2 * math.pi * (i + 1) / seg
             p0 = (c[0] + 6.2 * math.cos(a0), c[1] + 6.2 * math.sin(a0))
             p1 = (c[0] + 6.2 * math.cos(a1), c[1] + 6.2 * math.sin(a1))
-            s.wall(p0, p1, z, z + h, strip, WALL, bays=1, foot=0.5 if k == 0 else None)
+            if lod == 0 and k > 0 and i % 2 == 0:
+                g0, g1 = strip_v("slot")
+                c = (0.8, 0.8, 0.8)
+                s.face([(p0[0], p0[1], z), (p1[0], p1[1], z), (p1[0], p1[1], z + h - 0.8), (p0[0], p0[1], z + h - 0.8)], c, None,
+                       [(40 / SIZE, g0), (120 / SIZE, g0), (120 / SIZE, g1), (40 / SIZE, g1)])
+                s.wall(p0, p1, z + h - 0.8, z + h, "ashlar", WALL_B)
+            elif lod == 0:
+                s.wall(p0, p1, z, z + h, "ashlar", WALL, foot=0.5 if k == 0 else None)
+            else:
+                s.wall(p0, p1, z, z + h, strip, WALL, bays=1, foot=0.5 if k == 0 else None)
         if lod == 0 and k in (0, 2, 5):  # the string course and the balconies run round the rotunda
             s.cylinder(c, 6.55, z + h - 0.3, z + h, mul(TRIM, 0.95), seg, top=TRIM)
         z += h
@@ -346,7 +411,10 @@ def deco_tower(lod):
 def dome(lod):
     s = Shell()
     h = 17.0
-    top = s.storeys(h, h, 0.0, [("ground", 5.2), ("balcony", 5.4), ("floor", 5.4)], WALL, foot=0.6)
+    if lod == 0:
+        top = order_box(s, h, h, 0.0, [(5.2, 1.0), (10.8, 0.0)], random.Random(21), WALL, foot=0.6, pitch=6.4, width=3.6, depth=0.8)
+    else:
+        top = s.storeys(h, h, 0.0, [("ground", 5.2), ("balcony", 5.4), ("floor", 5.4)], WALL, foot=0.6)
     s.box((-h - 0.5, -h - 0.5, top), (h + 0.5, h + 0.5, top + 1.0), TRIM, top=PAVED, bottom=True, paved=True)
     s.box((-h + 1.5, -h + 1.5, top + 1.0), (h - 1.5, h - 1.5, top + 3.0), WALL_B, PAVED, strip="ashlar", paved=True)
     if lod == 0:
