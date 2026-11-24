@@ -7,16 +7,22 @@ import { nextAction, remainingActions, solveSection } from '../core/solver.ts';
 import type { Tunables } from '../core/tunables.ts';
 import type { Action, PuzzleSection, PuzzleState, StageFile } from '../core/types.ts';
 import { Sound } from './audio.ts';
-import { BackgroundCity, setupEnvironment } from './backdrop.ts';
+import { createBackground, setupEnvironment } from './backdrop.ts';
+import { pierKeepOut } from './foldcity/keepout.ts';
+import { pierFeet, planSlabs } from './kitLayout.ts';
+import type { Background } from './foldcity/foldcity.ts';
 import { CameraRig } from './camera.ts';
 import { DemoDirector, type DemoOptions } from './demo.ts';
 import { Engine } from './engine.ts';
 import { Hud, type Settings } from './hud.ts';
 import { Input } from './input.ts';
+import { Kit } from './kit.ts';
+import { giltTakesSky } from './look.ts';
 import { createMaterials } from './materials.ts';
 import { Player, cloakAvatar } from './player.ts';
 import { Telemetry, clientInfo, defaultConsent } from './telemetry.ts';
 import { loadVrmAvatar } from './vrmAvatar.ts';
+import { loadWandererAvatar, type WandererAvatar } from './wandererAvatar.ts';
 import { World, type EdgeMarker } from './world.ts';
 
 export interface Revision { revision: number; updated: string; recent: { date: string; summary: string }[] }
@@ -66,13 +72,13 @@ export class Game {
   readonly hud: Hud;
   readonly sound = new Sound();
   readonly telemetry: Telemetry;
-  readonly city: BackgroundCity;
+  readonly city: Background;
   readonly rig: CameraRig;
   readonly director: DemoDirector | null = null;
   mode: Mode = 'title';
   /** Walking direction set by the demo instead of the keyboard. */
   steer: { x: number; z: number } | null = null;
-  /** True once the gate model is in and shaders are compiled (the capture waits for this). */
+  /** True once the gate model and the character are in and shaders are compiled (the capture waits for this). */
   ready = false;
   state: PuzzleState;
   settings: Settings;
@@ -92,6 +98,8 @@ export class Game {
   private telemetryAllowed = true;
   private introTimer = 0;
   private readonly shots: boolean;
+  /** The character model, when it is the avatar in use (the review shots put it back into its rest pose). */
+  private wanderer: WandererAvatar | null = null;
 
   constructor(canvas: HTMLCanvasElement, hudRoot: HTMLElement, data: GameData, opts: GameOptions = {}) {
     this.data = data;
@@ -103,13 +111,14 @@ export class Game {
     this.engine = new Engine(canvas, this.settings.quality, opts.capture);
     this.engine.adaptive = !this.shots;
     const M = createMaterials(stage.visualTheme.accent);
-    setupEnvironment(this.engine.scene, this.engine.renderer, stage.visualTheme);
+    const env = setupEnvironment(this.engine.scene, this.engine.renderer, this.settings.quality);
+    this.engine.beforeRender = () => env.sun.follow(this.engine.camera, this.player.pos.y);
     this.world = new World(this.cs, M);
     this.engine.scene.add(this.world.root);
-    const bounds = new THREE.Box3(new THREE.Vector3(-70, -200, -55), new THREE.Vector3(80, 200, 40));
-    this.city = new BackgroundCity(stage.visualTheme, new THREE.Vector3(4, 0, -6), bounds);
+    const query = new URLSearchParams(location.search);
+    this.city = createBackground(stage.visualTheme, { variant: query.get('city'), morph: query.get('morph'), debug: query.get('bgdebug'), farWindows: query.get('farwin') === '1', tune: query.get('bgtune'), buildings: query.get('bldg'), keepOut: pierKeepOut(pierFeet(planSlabs(this.cs))) });
     this.engine.scene.add(this.city.group);
-    this.player = new Player(cloakAvatar(M));
+    this.player = new Player({ object: new THREE.Group(), animate: () => {} }); // nothing until the character has loaded
     this.engine.scene.add(this.player.root);
     this.input = new Input(canvas);
     this.hud = new Hud(hudRoot);
@@ -131,18 +140,60 @@ export class Game {
       if (!document.pointerLockElement && (this.mode === 'play' || this.mode === 'fold')) this.openPause();
     });
     const vrmUrl = params.get('vrm') ?? './assets/player.vrm';
-    loadVrmAvatar(vrmUrl)
-      .then((a) => a && this.player.setAvatar(a))
-      .catch((e) => console.warn('VRM avatar not loaded:', e));
-    this.world
-      .loadGateModel('./assets/gate.glb')
-      .catch((e) => console.warn('gate model not loaded, keeping the procedural gate:', e))
-      .finally(() => {
-        this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
-        this.ready = true;
+    // The avatar: a VRM file if one is there, else the character model, else (loading failed) the old cloaked stand-in.
+    const character = loadVrmAvatar(vrmUrl)
+      .catch((e) => {
+        console.warn('VRM avatar not loaded:', e);
+        return null;
+      })
+      .then(async (vrm) => {
+        if (vrm) return this.player.setAvatar(vrm);
+        try {
+          this.wanderer = await loadWandererAvatar({ reduceMotion: () => this.settings.reduceMotion });
+          this.player.setAvatar(this.wanderer);
+        } catch (e) {
+          console.warn('character model not loaded, keeping the cloaked stand-in:', e);
+          this.player.setAvatar(cloakAvatar(M));
+        }
       });
+    const gate = this.world
+      .loadGateModel('./assets/gate.glb')
+      .catch((e) => console.warn('gate model not loaded, keeping the procedural gate:', e));
+    const sky = env.sky.catch((e) => console.warn('sky not loaded, keeping the haze colour:', e));
+    const kit = Kit.load(this.engine.renderer)
+      .then((k) => this.world.applyKit(k))
+      .catch((e) => {
+        console.error('kit not loaded, showing the plain slabs:', e);
+        this.world.showColliders();
+      });
+    // (the city's shaders are compiled off the frame, against the scene as it is lit once the sky is in, before the city is shown)
+    const compileCity = async (o: THREE.Object3D) => {
+      await sky;
+      await this.engine.renderer.compileAsync(o, this.engine.camera, this.engine.scene);
+    };
+    const city = this.city.load('./assets/city.glb', this.shots || opts.capture ? undefined : compileCity).catch((e) => console.warn('background city not loaded:', e));
+    Promise.all([gate, sky, kit, city, character]).finally(() => {
+      giltTakesSky(this.engine.scene, this.world.giltMaterials()); // before warmUp, so the gilt's shader is compiled once
+      this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
+      if (['facing', 'range', 'dist', 'unit0', 'unit1', 'unit2'].includes(query.get('bgdebug') ?? '')) this.flattenForDebug();
+      this.ready = true;
+    });
     if (opts.demo) this.director = new DemoDirector(this, opts.demo);
     if (!opts.capture) requestAnimationFrame((t) => this.frame(t));
+  }
+
+  /** `?bgdebug=facing`: everything but the background city turns flat white and the sky black, so a script can count classes. */
+  private flattenForDebug() {
+    const white = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+    const black = new THREE.MeshBasicMaterial({ color: 0x000000, fog: false });
+    this.engine.scene.background = new THREE.Color(0x000000);
+    this.engine.bloom.intensity = 0;
+    this.engine.scene.traverse((o) => {
+      for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p === this.city.group) return;
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) mesh.material = o.parent === this.engine.scene && mesh.geometry.type === 'CircleGeometry' ? black : white;
+      else if ((o as THREE.Sprite).isSprite || (o as THREE.Points).isPoints || (o as THREE.Line).isLine) o.visible = false;
+    });
   }
 
   get section(): PuzzleSection {
@@ -193,6 +244,7 @@ export class Game {
     this.rig.setFrame(null);
     this.rig.setCinematic(null);
     this.enterSection(index, false);
+    this.wanderer?.reset();
     this.engine.scene.updateMatrixWorld(true); // the camera's collision rays must see this pose, not the last frame's
     if (title) this.showTitle();
     else this.mode = 'shot';
@@ -288,6 +340,10 @@ export class Game {
     if (i === 0 || !announce) this.player.place(cp.at, cp.facing, this.cs.walkMap(this.state));
     this.world.highlightConsole(null);
     this.world.setGuidance(sec.consoles, this.data.tunables.sections[sec.id]?.beacon ?? 0);
+    // the city shows this section's structure; walking on from the section before, it folds there
+    const fold = announce && i > 0;
+    this.city.setSection?.(i, fold, this.settings.reduceMotion);
+    if (fold) this.engine.hold(5); // no resize hitch inside the 4 s fold of the background
     this.hud.hint(null);
     // a previous section's intro timer must not hide this section's text
     clearTimeout(this.introTimer);

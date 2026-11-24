@@ -98,7 +98,7 @@ function marbleCanvas(seed: number): HTMLCanvasElement {
  * darker carved stone. The puzzle is about which path faces up, so each face has to read from any side at a glance.
  */
 export function cubeFaceTextures(arms: { u: number; v: number }[], accent: string, seed: number) {
-  const S = 768;
+  const S = 512; // twelve of these: at 768 they were 36 MB of the texture budget
   const q = S / 3;
   const [c, ctx] = canvas(S, S);
   const [e, ectx] = canvas(S, S);
@@ -138,39 +138,6 @@ export function cubeFaceTextures(arms: { u: number; v: number }[], accent: strin
   ectx.arc(1.5 * q, 1.5 * q, 26, 0, Math.PI * 2);
   ectx.fill();
   return { map: tex(c), emissive: tex(e) };
-}
-
-/** Facade with a window grid; returns colour and emissive (lit windows) maps. */
-export function facadeTextures(seed: number, cols = 6, rows = 14) {
-  const W = 256;
-  const Hh = 512;
-  const [c, ctx] = canvas(W, Hh);
-  const [e, ectx] = canvas(W, Hh);
-  const r = rng(seed);
-  ctx.fillStyle = '#3a3f52';
-  ctx.fillRect(0, 0, W, Hh);
-  ectx.fillStyle = '#000';
-  ectx.fillRect(0, 0, W, Hh);
-  const cw = W / cols;
-  const rh = Hh / rows;
-  for (let i = 0; i < cols; i++)
-    for (let j = 0; j < rows; j++) {
-      const x = i * cw + cw * 0.22;
-      const y = j * rh + rh * 0.25;
-      const w = cw * 0.56;
-      const h = rh * 0.5;
-      ctx.fillStyle = '#20232f';
-      ctx.fillRect(x, y, w, h);
-      if (r() < 0.32) {
-        const warm = r() < 0.75;
-        ectx.fillStyle = warm ? `rgba(255,${190 + Math.floor(r() * 50)},120,1)` : 'rgba(140,220,255,1)';
-        ectx.fillRect(x, y, w, h);
-      }
-    }
-  ctx.fillStyle = 'rgba(255,255,255,0.05)';
-  for (let j = 0; j < rows; j++) ctx.fillRect(0, j * rh, W, 2);
-  speckle(ctx, W, Hh, 10, seed);
-  return { map: tex(c, true, true), emissive: tex(e, true, true) };
 }
 
 /** Mural that shows the six cube faces, as a diegetic hint. */

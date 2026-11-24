@@ -20,26 +20,25 @@ export function cloakAvatar(M: Materials): Avatar {
   const profile = [
     [0.0, 1.74], [0.16, 1.72], [0.22, 1.63], [0.2, 1.5], [0.31, 1.42], [0.35, 1.12], [0.41, 0.62], [0.47, 0.06], [0.0, 0.06],
   ].map(([x, y]) => new THREE.Vector2(x, y));
-  const cloth = new THREE.MeshStandardMaterial({ color: '#2b2f5e', roughness: 0.82, metalness: 0.05 });
+  // a stand-in until the real character is chosen: deep grey-teal cloth, dark bronze face, gilt trim (no purple, no cyan)
+  const cloth = new THREE.MeshStandardMaterial({ color: '#27393b', roughness: 0.82, metalness: 0.05 });
   const body = new THREE.Mesh(new THREE.LatheGeometry(profile, 28), cloth);
   body.castShadow = true;
-  const face = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 12), new THREE.MeshStandardMaterial({ color: '#121426', roughness: 1 }));
+  const face = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 12), new THREE.MeshStandardMaterial({ color: '#2e2a22', roughness: 0.6, metalness: 0.6 }));
   face.position.set(0, 1.56, -0.07);
   const eyeGeo = new THREE.SphereGeometry(0.022, 8, 6);
   const eyes = [-0.05, 0.05].map((x) => {
-    const e = new THREE.Mesh(eyeGeo, M.glow);
+    const e = new THREE.Mesh(eyeGeo, M.warmGlow);
     e.position.set(x, 1.58, -0.205);
     return e;
   });
-  const hem = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.025, 6, 40), M.glow);
+  const hem = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.025, 6, 40), M.brass);
   hem.rotation.x = Math.PI / 2;
   hem.position.y = 0.08;
   const sash = new THREE.Mesh(new THREE.TorusGeometry(0.355, 0.03, 6, 32), M.brass);
   sash.rotation.x = Math.PI / 2;
   sash.position.y = 1.05;
-  const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.12), M.glow);
-  shard.position.set(0.55, 1.7, 0.1);
-  g.add(body, face, ...eyes, hem, sash, shard);
+  g.add(body, face, ...eyes, hem, sash);
   let phase = 0;
   return {
     object: g,
@@ -49,8 +48,6 @@ export function cloakAvatar(M: Materials): Avatar {
       body.position.y = airborne ? 0 : Math.abs(Math.sin(phase)) * 0.045 * k;
       body.rotation.x = -0.12 * k;
       body.scale.set(1 + 0.05 * k, 1, 1 + 0.05 * k);
-      shard.position.y = 1.7 + Math.sin(phase * 0.5) * 0.08;
-      shard.rotation.y += dt * 2;
     },
   };
 }

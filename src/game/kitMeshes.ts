@@ -1,5 +1,8 @@
-// Procedural meshes for each module type, built in the same module-local frame as src/core/kit.ts.
+// Meshes for each module type, built in the same module-local frame as src/core/kit.ts. `tile` and `bridge` modules get
+// only their camera collider here: what the player sees of them comes from the Blender kit (kit.ts, kitLayout.ts).
+// The other types are still procedural.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CUBE_FACE_NORMAL, SLAB } from '../core/kit.ts';
 import { DIRS, type DirName } from '../core/math.ts';
 import type { CubeFace, Interactable, ModuleInstance } from '../core/types.ts';
@@ -27,35 +30,6 @@ function slabMesh(M: Materials, w: number, d: number, cellsU: number, cellsV: nu
   m.position.y = -SLAB / 2;
   m.userData.collider = true;
   return m;
-}
-
-function cornice(M: Materials, w: number, d: number) {
-  const c = mesh(box(w + 0.35, 0.16, d + 0.35), M.parapet);
-  c.position.y = -SLAB - 0.05;
-  return c;
-}
-
-function columns(M: Materials, pts: [number, number][], depth = 46) {
-  const g = new THREE.CylinderGeometry(0.42, 0.55, depth, 10);
-  const inst = new THREE.InstancedMesh(g, M.column, pts.length);
-  const m4 = new THREE.Matrix4();
-  pts.forEach(([x, z], i) => inst.setMatrixAt(i, m4.makeTranslation(x, -SLAB - depth / 2, z)));
-  inst.castShadow = true;
-  inst.receiveShadow = true;
-  return inst;
-}
-
-function lampPost(M: Materials) {
-  const g = new THREE.Group();
-  const post = mesh(new THREE.CylinderGeometry(0.06, 0.09, 3.0, 8), M.brass);
-  post.position.y = 1.5;
-  // kept small: lamps pass right by the camera on the bridges, where a big bright bulb fills the frame
-  const bulb = mesh(new THREE.SphereGeometry(0.15, 12, 8), M.lamp, false, false);
-  bulb.position.y = 3.1;
-  const cap = mesh(new THREE.ConeGeometry(0.2, 0.18, 10), M.brass);
-  cap.position.y = 3.31;
-  g.add(post, bulb, cap);
-  return g;
 }
 
 function arch(M: Materials, span: number, height: number) {
@@ -109,13 +83,8 @@ export function buildModuleMesh(m: ModuleInstance, M: Materials, ctx: BuildConte
       const [w, d] = m.params.size ?? [1, 1];
       const s = slabMesh(M, w * 4, d * 4, w, d);
       s.position.set((w - 1) * 2, -SLAB / 2, (d - 1) * 2);
-      const c = cornice(M, w * 4, d * 4);
-      c.position.x = (w - 1) * 2;
-      c.position.z = (d - 1) * 2;
-      const pts: [number, number][] = [];
-      for (let i = 0; i <= w; i += Math.max(1, Math.floor(w / 2)))
-        for (let j = 0; j <= d; j += Math.max(1, Math.floor(d / 2))) pts.push([i * 4 - 2.4 + (i === 0 ? 0.8 : 0), j * 4 - 2.4 + (j === 0 ? 0.8 : 0)]);
-      root.add(s, c, columns(M, pts));
+      s.visible = false; // the camera's rays still hit it
+      root.add(s);
       return { root, colliders: [s] };
     }
     case 'bridge': {
@@ -123,20 +92,9 @@ export function buildModuleMesh(m: ModuleInstance, M: Materials, ctx: BuildConte
       const inset = m.params.inset ?? 0;
       const s = slabMesh(M, L * 4 - inset * 2, 4, L, 1);
       s.position.set((L - 1) * 2, -SLAB / 2, 0);
-      const beam = mesh(box(L * 4 - inset * 2 - 1, 1.4, 1.6), M.slate);
-      beam.position.set((L - 1) * 2, -SLAB - 0.7, 0);
-      const trim = mesh(box(L * 4 - inset * 2, 0.12, 4.3), M.brass);
-      trim.position.set((L - 1) * 2, -SLAB - 0.02, 0);
-      root.add(s, beam, trim);
+      s.visible = false;
+      root.add(s);
       if (m.params.lamps) {
-        const open = new Set((m.params.sidePorts ?? []).map((p) => `${p.i}${p.side}`));
-        for (let i = 0; i < L; i++)
-          for (const side of ['N', 'S'] as const) {
-            if (open.has(`${i}${side}`)) continue;
-            const lp = lampPost(M);
-            lp.position.set(i * 4, 0, side === 'N' ? -1.75 : 1.75);
-            root.add(lp);
-          }
         if (L >= 4) {
           const a = arch(M, 4.2, 4.2);
           a.rotation.y = Math.PI / 2;
@@ -159,17 +117,18 @@ export function buildModuleMesh(m: ModuleInstance, M: Materials, ctx: BuildConte
       c.position.set(4, 6, 4);
       c.userData.collider = true;
       root.add(c);
-      // brass edges
+      // brass edges, as one mesh (twelve separate ones were 24 draw calls with their shadows)
       const e = 6.05;
+      const edges: THREE.BufferGeometry[] = [];
       for (const [sx, sy, sz, px, py, pz] of [
         [12.3, 0.3, 0.3, 0, e, e], [12.3, 0.3, 0.3, 0, -e, e], [12.3, 0.3, 0.3, 0, e, -e], [12.3, 0.3, 0.3, 0, -e, -e],
         [0.3, 12.3, 0.3, e, 0, e], [0.3, 12.3, 0.3, -e, 0, e], [0.3, 12.3, 0.3, e, 0, -e], [0.3, 12.3, 0.3, -e, 0, -e],
         [0.3, 0.3, 12.3, e, e, 0], [0.3, 0.3, 12.3, -e, e, 0], [0.3, 0.3, 12.3, e, -e, 0], [0.3, 0.3, 12.3, -e, -e, 0],
       ]) {
-        const b = mesh(box(sx, sy, sz), M.brass);
-        b.position.set(4 + px, 6 + py, 4 + pz);
-        root.add(b);
+        edges.push(box(sx, sy, sz).translate(4 + px, 6 + py, 4 + pz));
       }
+      root.add(mesh(mergeGeometries(edges), M.brass));
+      for (const g of edges) g.dispose();
       return { root, colliders: [c] };
     }
     case 'tower': {
@@ -257,30 +216,88 @@ export function buildModuleMesh(m: ModuleInstance, M: Materials, ctx: BuildConte
   }
 }
 
+/** An open cylinder whose vertex colours run from full at the foot to nothing at the top: a column of light with no cap. */
+function fadingColumn(radius: number, height: number, sides: number): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(radius, radius, height, sides, 10, true);
+  const pos = g.getAttribute('position');
+  const col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const t = pos.getY(i) / height + 0.5;
+    const v = (1 - t) ** 1.6 * THREE.MathUtils.smoothstep(t, 0, 0.06);
+    col.set([v, v, v], i * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
+
+/**
+ * The guidance column: a lit tube that is brightest in the middle of its width and dies away at both edges (the glow of a
+ * beam of light, not a slab: the brief keeps it a faint cue), and fades out smoothly well short of its top so it never runs
+ * up into the sky. The edges fall off with the angle between the surface and the eye (see `softEdge`); the fade with
+ * height is in the vertex colours, a slow start at the foot and an ease to nothing at the top.
+ */
+function guideColumn(radius: number, height: number): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(radius, radius, height, 16, 14, true);
+  const pos = g.getAttribute('position');
+  const col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const t = pos.getY(i) / height + 0.5;
+    const v = (1 - THREE.MathUtils.smoothstep(t, 0.0, 1.0)) ** 1.5 * THREE.MathUtils.smoothstep(t, 0, 0.08);
+    col.set([v, v, v], i * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
+
+/**
+ * A copy of the column material whose opacity falls to nothing where the tube turns away from the eye: across the width the
+ * brightness is 1 - (x / r)^2 (a smooth bell), so the beam has soft edges at any distance and from any side.
+ */
+function softEdge(base: THREE.Material): THREE.MeshBasicMaterial {
+  const m = base.clone() as THREE.MeshBasicMaterial;
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vEdgeN;\nvarying vec3 vEdgeV;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvEdgeN = normalize( normalMatrix * normal );\nvEdgeV = ( modelViewMatrix * vec4( position, 1.0 ) ).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vEdgeN;\nvarying vec3 vEdgeV;')
+      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.a *= pow( abs( dot( normalize( vEdgeN ), normalize( - vEdgeV ) ) ), 2.0 );');
+  };
+  m.customProgramCacheKey = () => 'guide-soft-edge';
+  return m;
+}
+
+/** Where a console stands in its cell: against the side it is named after. */
+export const CONSOLE_OFFSET = 1.35;
+/** The guidance column stands from 1.5 m over the cell floor and is 4.4 m tall: from the play camera it ends about a tenth of the frame below its top edge. */
+const GUIDE_FOOT = 1.5;
+const GUIDE_HEIGHT = 4.4;
+
+/**
+ * The cues of a console (floor ring, beacon, guidance column). Its body comes from the kit and is added under the
+ * node named `body`, which is already turned so the kit's front faces the player.
+ */
 export function consoleMesh(c: Interactable, M: Materials): THREE.Group {
   const g = new THREE.Group();
   const d = DIRS[c.facing];
-  const ped = mesh(new THREE.CylinderGeometry(0.42, 0.55, 1.05, 12), M.parapet);
-  ped.position.set(d[0] * 1.35, 0.52, d[2] * 1.35);
-  const top = mesh(new THREE.CylinderGeometry(0.52, 0.52, 0.08, 16), M.brass);
-  top.position.set(d[0] * 1.35, 1.08, d[2] * 1.35);
-  const holo = mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42), M.glow, false, false);
-  holo.position.set(d[0] * 1.35, 1.6, d[2] * 1.35);
-  holo.name = 'holo';
-  const ring = mesh(new THREE.RingGeometry(1.5, 1.62, 40), M.glowSoft, false, false);
+  const body = new THREE.Group();
+  body.name = 'body';
+  body.position.set(d[0] * CONSOLE_OFFSET, 0, d[2] * CONSOLE_OFFSET);
+  body.rotation.y = Math.atan2(-d[0], -d[2]);
+  const ring = mesh(new THREE.RingGeometry(1.5, 1.6, 40), M.glowSoft, false, false);
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.03;
   ring.name = 'ring';
-  const beacon = mesh(new THREE.CylinderGeometry(0.18, 0.18, 30, 8, 1, true), M.glowSoft, false, false);
-  beacon.position.set(d[0] * 1.35, 16, d[2] * 1.35);
+  const beacon = mesh(fadingColumn(0.18, 30, 8), M.column.clone(), false, false);
+  beacon.position.set(d[0] * CONSOLE_OFFSET, 16, d[2] * CONSOLE_OFFSET);
   beacon.visible = false;
   beacon.name = 'beacon';
   // faint guidance column, brightness set by the section's `beacon` tunable
-  const guide = mesh(new THREE.CylinderGeometry(0.5, 0.5, 14, 12, 1, true), M.glowSoft.clone(), false, false);
-  guide.position.set(d[0] * 1.35, 7.6, d[2] * 1.35);
+  const guide = mesh(guideColumn(0.55, GUIDE_HEIGHT), softEdge(M.column), false, false);
+  guide.position.set(d[0] * CONSOLE_OFFSET, GUIDE_FOOT + GUIDE_HEIGHT / 2, d[2] * CONSOLE_OFFSET);
   guide.name = 'guide';
   guide.visible = false;
-  g.add(ped, top, holo, ring, beacon, guide);
+  g.add(body, ring, beacon, guide);
   return g;
 }
 

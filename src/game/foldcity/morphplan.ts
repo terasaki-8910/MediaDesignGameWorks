@@ -1,0 +1,385 @@
+// The plan of the one city that every structure shares (sheet.ts): one street lattice, one list of lots, and for each lot
+// where it stands in each structure and how it gets through each transition. A lot keeps its sheet coordinates for good;
+// a structure only decides whether a building can stand there (the sheet is not too bent, it faces the play area, it cuts
+// through nothing) and how tall. In a transition a building rides the sheet; one that cannot stand in the next structure
+// sinks away before it would touch anything, one that only stands there rises once it can. Pure: no GLB, no DOM.
+import * as THREE from 'three';
+import { BLOCK_LANDMARK, BLOCK_PLAIN, footprint, latticeFrom, layoutLots, layoutProps, lines, type Lattice, type Lot } from './layout.ts';
+import { MODEL_INDEX, MODELS } from './models.ts';
+import {
+  boxObb, cutsSheet, facesPlayArea, GAP, Hash, MAX_BURY, MAX_GAP, MAX_TILT, overlaps, PLAY, PLAY_CENTER, PLAY_MARGIN, SheetPoints, type Obb,
+} from './plan.ts';
+import { rng } from './rng.ts';
+import {
+  A0, A1, B0, B1, blendState, CREASES_A, CREASES_B, curlsTightly, makeState, restState, SHEET_SIGN, STRUCTURES, surfaceOf, veilAt, type LipBlock, type SheetState, type StructureName,
+  type Transition,
+} from './sheet.ts';
+import { frameAt, makeFrame, type Frame, type Surface } from './surfaces.ts';
+
+/** Block pitch along a and b, and the scale of the buildings. */
+export const PITCH: [number, number] = [86, 74];
+export const SCALE = 1.25;
+/** Buildings stand up to this far from the play area. */
+export const REACH = 1000;
+/** Trees, lamps and fountains stand only this near: further off they are smaller than a pixel. */
+export const PROP_REACH = 540;
+/**
+ * The detailed model of a building stands within this distance of the play volume: the walls the play cameras look along
+ * (120 to 250 m ahead of them, up to 300 m from the volume's far end) show their roofs' dormers, stacks and cornices.
+ */
+export const NEAR_PLAY = 340;
+/** From FAR_LOW[0] to FAR_LOW[1] metres from the play volume the buildings' height comes down to FAR_HEIGHT metres at most. */
+export const FAR_LOW: readonly [number, number] = [300, 430];
+export const FAR_HEIGHT = 38;
+/** A building takes this share of a transition to sink away or to rise. */
+export const RAMP = 0.18;
+/** The fractions of a transition the plan checks (and the tests check again). */
+export const SAMPLES = Array.from({ length: 19 }, (_, i) => (i + 1) / 20);
+
+/** How a building gets through a transition: it stands until `fall` (gone by then) and again from `rise` on. */
+export interface Presence {
+  fall: number;
+  rise: number;
+}
+
+export interface MorphBuilding {
+  lot: Lot;
+  model: number;
+  /** Street furniture, a plaza's centrepiece or a pier's foot rather than a building: it collides with nothing. */
+  prop: boolean;
+  /** Per structure (the order of STRUCTURES): does it stand there, its height factor, how far its base is sunk, its level of detail. */
+  alive: boolean[];
+  sy: number[];
+  sink: number[];
+  lod: (0 | 1)[];
+  /** Per transition (STRUCTURES[i] to STRUCTURES[i + 1]). */
+  presence: Presence[];
+}
+
+export interface MorphPlan {
+  lattice: Lattice;
+  buildings: MorphBuilding[];
+  stats: { lots: number; standing: number[]; props: number[]; triangles: number[]; dips: number[] };
+}
+
+/**
+ * A square of sheet (centre and half side) nothing may be built on: the foot of one of the play area's piers. `foot` is the
+ * scale of the masonry foot that stands there (the pier comes down into it).
+ */
+export interface KeepOut { a: number; b: number; r: number; foot: number }
+
+const smooth = (t: number) => {
+  const x = Math.min(1, Math.max(0, t));
+  return x * x * (3 - 2 * x);
+};
+
+/** How much of a building stands at fraction `f` of a transition (0 to 1). */
+export function presenceAt(p: Presence, f: number): number {
+  // a ramp never reaches past either end of the transition: at rest a building stands whole or not at all
+  const down = Math.min(RAMP, Math.max(p.fall, 1e-3));
+  const up = Math.min(RAMP, Math.max(1 - p.rise, 1e-3));
+  return Math.max(p.fall <= 0 ? 0 : 1 - smooth((f - (p.fall - down)) / down), p.rise >= 1 ? 0 : smooth((f - p.rise) / up));
+}
+
+const STAY: Presence = { fall: Infinity, rise: -Infinity };
+const NONE: Presence = { fall: -Infinity, rise: Infinity };
+
+export function sharedLattice(seed: number): Lattice {
+  const r = rng(seed * 31 + 7);
+  const a = lines([A0, A1], CREASES_A, PITCH[0], false, r, 4);
+  const b = lines([B0, B1], CREASES_B, PITCH[1], false, r, 3);
+  const lattice = latticeFrom(a, b, seed);
+  // (the blocks of nearLandmarks are landmark blocks whatever the seed drew: the ground paves them as such)
+  for (const cell of nearLandmarks(lattice).keys()) lattice.cells[cell].type = BLOCK_LANDMARK;
+  return lattice;
+}
+
+/**
+ * The walls' near stretch is what the play cameras look along: the sheet's walls (between its first two creases on either
+ * side) some 200 to 350 m along the play axis. By rule, not by the seed's luck, one block of each wall there holds a
+ * landmark that reads by its outline against the far haze: the stepped Art Deco tower on one wall, the dome on the other
+ * (both end blunt: neither aims a point at the walkways). The block is the one whose middle lies nearest to NEAR_STRETCH
+ * along the axis and to the middle of the wall across it, among the building blocks.
+ */
+export const NEAR_STRETCH = 270;
+export function nearLandmarks(lattice: Lattice): Map<number, string> {
+  const out = new Map<number, string>();
+  const nu = lattice.u.length - 1;
+  const mid = (CREASES_B[CREASES_B.length / 2] + CREASES_B[CREASES_B.length / 2 + 1]) / 2;
+  for (const [sign, name] of [[-1, 'deco_tower'], [1, 'dome']] as const) {
+    let best = -1;
+    let err = Infinity;
+    for (let j = 0; j + 1 < lattice.v.length; j++)
+      for (let i = 0; i < nu; i++) {
+        const type = lattice.cells[i + j * nu].type;
+        if (type !== BLOCK_PLAIN && type !== BLOCK_LANDMARK) continue;
+        const u = (lattice.u[i].c + lattice.u[i + 1].c) / 2;
+        const v = (lattice.v[j].c + lattice.v[j + 1].c) / 2;
+        // (a block deep enough for the landmark's footprint, between the wall's two creases)
+        if (Math.sign(v) !== sign || lattice.v[j + 1].c - lattice.v[j].c < 58 || lattice.u[i + 1].c - lattice.u[i].c < 58) continue;
+        if (Math.abs(lattice.v[j].c) < CREASES_B[CREASES_B.length / 2] - 1 || Math.abs(lattice.v[j + 1].c) < CREASES_B[CREASES_B.length / 2] - 1) continue;
+        if (Math.abs(lattice.v[j].c) > CREASES_B[CREASES_B.length / 2 + 1] + 1 || Math.abs(lattice.v[j + 1].c) > CREASES_B[CREASES_B.length / 2 + 1] + 1) continue;
+        const e = Math.abs(u - NEAR_STRETCH) + 0.5 * Math.abs(Math.abs(v) - mid);
+        if (e < err) [best, err] = [i + j * nu, e];
+      }
+    if (best >= 0) out.set(best, name);
+  }
+  return out;
+}
+
+/** The surface a structure shows: the sheet beyond the tube's seam is cut away, and where it dissolves nothing stands. */
+export function shownSurface(s: SheetState, name: string, lattice?: Lattice): Surface {
+  const surf = surfaceOf(s, name);
+  const block = lattice ? lipBlocks(lattice) : undefined;
+  return { ...surf, vRange: Number.isFinite(s.cut) ? [-s.cut, s.cut] : surf.vRange, veil: (u: number, v: number) => veilAt(s, u, v, block) } as Surface;
+}
+
+/** The block of the lattice a sheet point lies in, as the sheet's upper edge needs it (sheet.ts, veilAt): what the ground's shader reads from its textures. */
+export function lipBlocks(lattice: Lattice): (a: number, b: number) => LipBlock {
+  const find = (list: Lattice['u'], x: number) => {
+    let lo = 0;
+    let hi = list.length - 2;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (list[mid].c <= x) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
+  const nu = lattice.u.length - 1;
+  const out: LipBlock = { c: 0, r: 0 };
+  return (a, b) => {
+    const i = find(lattice.u, a);
+    const j = find(lattice.v, b);
+    out.c = (lattice.v[j].c + lattice.v[j + 1].c) / 2;
+    out.r = Math.round(lattice.cells[i + j * nu].r * 255) / 255;
+    return out;
+  };
+}
+
+/**
+ * Does the block between street lines v0 and v1 lie against a crease, or on the walls of the channel's slot? Its houses
+ * stay low, clear of the fold's other side and of the sky between the slot's walls.
+ */
+const byCrease = (v0: number, v1: number) => CREASES_B.some((c) => Math.abs(c - v0) < 1 || Math.abs(c - v1) < 1);
+
+/** Trees stand only near (`d` = metres from the play volume): all of them within TREE_NEAR, none beyond TREE_REACH, where a crown is a dot. */
+export const TREE_NEAR = 170;
+export const TREE_REACH = 265;
+function treeKept(lot: Lot, d: number): boolean {
+  if (!MODELS[lot.model].name.startsWith('tree_')) return true;
+  const h = Math.sin(lot.u * 12.9898 + lot.v * 78.233) * 43758.5453;
+  return h - Math.floor(h) < 1 - smooth((d - TREE_NEAR) / (TREE_REACH - TREE_NEAR));
+}
+
+/**
+ * A building that ends in a point stands on its wall of the folded city with that point aimed at the play area. Along the
+ * play area's own length (and SPIRE_CLEAR beyond each end) such a lot gets the blunt building named here instead, fitted
+ * into the same footprint, so no spire points at a camera head-on. The two with stone spires (the belfry, the cathedral)
+ * keep SPIRE_FAR of distance ahead of the play area as well, the stretch of wall the play cameras look along: there a
+ * spire is a spike lying on its side. Further along the canyon the spires stand and are seen small, in the haze. The
+ * tower house, the Art Deco tower and the dome end blunt (art/blender/gen_city.py); the tower house stands anywhere.
+ */
+export const SPIRE_CLEAR = 120;
+export const SPIRE_FAR = 360;
+const BLUNT: Readonly<Record<string, string>> = { belfry: 'haussmann_step', deco_tower: 'deco_block', dome: 'deco_block', cathedral: 'deco_hall' };
+const SPIRED: readonly string[] = ['belfry', 'cathedral'];
+export function blunt(lot: Lot): Lot {
+  const old = MODELS[lot.model];
+  const to = BLUNT[old.name];
+  if (!to || lot.u < PLAY.min.x - SPIRE_CLEAR || lot.u > PLAY.max.x + (SPIRED.includes(old.name) ? SPIRE_FAR : SPIRE_CLEAR)) return lot;
+  const model = MODEL_INDEX.get(to)!;
+  const m = MODELS[model];
+  const length = old.w * lot.scale * (lot.stretch ?? 1);
+  let scale = Math.min(lot.scale, (old.d * lot.scale) / m.d);
+  if (length / (m.w * scale) < 0.8) scale = length / (m.w * 0.8);
+  return { ...lot, model, scale, stretch: Math.min(1.28, length / (m.w * scale)) };
+}
+
+const T = new THREE.Vector3();
+const FC = makeFrame();
+const CORNERS = [[-1, -1], [1, -1], [1, 1], [-1, 1], [0, -1], [0, 1], [-1, 0], [1, 0]] as const;
+
+/** Can a lot stand on this surface at all: inside it, facing the play area, the sheet under it flat enough. Returns the sink, or -1. */
+function seat(surface: Surface, lot: Lot, f: Frame): number {
+  const m = MODELS[lot.model];
+  const [fu, fv] = footprint(m, lot.scale, lot.swap, lot.stretch);
+  if (lot.u - fu / 2 < surface.uRange[0] || lot.u + fu / 2 > surface.uRange[1]) return -1;
+  if (lot.v - fv / 2 < surface.vRange[0] || lot.v + fv / 2 > surface.vRange[1]) return -1;
+  // nothing stands where the sheet has begun to dissolve into the haze
+  const veil = (surface as Surface & { veil?: (u: number, v: number) => number }).veil;
+  if (veil && Math.max(veil(lot.u - fu / 2, lot.v), veil(lot.u + fu / 2, lot.v), veil(lot.u, lot.v - Math.sign(lot.v) * fv / 2), veil(lot.u, lot.v + Math.sign(lot.v) * fv / 2)) > 0.02) return -1;
+  frameAt(surface, SHEET_SIGN, lot.u, lot.v, f);
+  if (!facesPlayArea(f.p, f.n)) return -1;
+  let sink = 0.5;
+  for (const [su, sv] of CORNERS) {
+    frameAt(surface, SHEET_SIGN, lot.u + (su * fu) / 2, lot.v + (sv * fv) / 2, FC);
+    const dev = T.subVectors(FC.p, f.p).dot(f.n);
+    if (FC.n.angleTo(f.n) > MAX_TILT || dev > MAX_BURY || -dev > MAX_GAP) return -1;
+    sink = Math.max(sink, -dev + 0.5);
+  }
+  return sink;
+}
+
+/** The box of a building of height factor `sy` standing at frame `f`. */
+export function boxAt(lot: Lot, f: Frame, sy: number): Obb {
+  const m = MODELS[lot.model];
+  const x = (lot.swap ? f.ev : f.eu).clone().multiplyScalar(lot.flip ? -1 : 1);
+  const z = new THREE.Vector3().crossVectors(x, f.n);
+  const H = m.h * lot.scale * sy;
+  return { c: f.p.clone().addScaledVector(f.n, H / 2), a: [x, f.n.clone(), z], h: [(m.w * lot.scale * (lot.stretch ?? 1)) / 2, H / 2, (m.d * lot.scale) / 2] };
+}
+
+export const PLAY_OBB = boxObb(PLAY.clone().expandByScalar(PLAY_MARGIN));
+
+/**
+ * The plan, in steps: each structure, then each sample of each transition. The game runs one step at a time between frames
+ * (the whole plan takes about half a second); `planMorph` runs them all at once.
+ */
+export function* planSteps(seed: number, keepOut: readonly KeepOut[] = []): Generator<void, MorphPlan> {
+  const lattice = sharedLattice(seed);
+  const clear = (lot: Lot) => {
+    const [fu, fv] = footprint(MODELS[lot.model], lot.scale, lot.swap, lot.stretch);
+    return !keepOut.some((k) => Math.abs(lot.u - k.a) < fu / 2 + k.r && Math.abs(lot.v - k.b) < fv / 2 + k.r);
+  };
+  const forced = nearLandmarks(lattice);
+  const lots = layoutLots(lattice, seed, SCALE, true, curlsTightly, byCrease, forced).filter(clear).map(blunt);
+  // (the walls' landmarks of nearLandmarks take their place before anything else does: their neighbours fit around them)
+  const firsts = new Set(lots.filter((lot) => forced.get(lot.cell) === MODELS[lot.model].name));
+  const first = (lot: Lot) => firsts.has(lot);
+  const foot = MODEL_INDEX.get('pier_foot')!;
+  const feet: Lot[] = keepOut.map((k) => ({ model: foot, u: k.a, v: k.b, swap: false, flip: false, scale: k.foot, sy: 1, cell: -1 }));
+  const entry = (lot: Lot, prop: boolean): MorphBuilding => ({
+    lot, model: lot.model, prop, alive: STRUCTURES.map(() => false), sy: STRUCTURES.map(() => lot.sy), sink: STRUCTURES.map(() => 0.5),
+    lod: STRUCTURES.map(() => 1 as const), presence: [],
+  });
+  const buildings: MorphBuilding[] = [...lots.map((l) => entry(l, false)), ...layoutProps(lattice, seed).filter(clear).map((l) => entry(l, true)), ...feet.map((l) => entry(l, true))];
+  const stats = { lots: lots.length, standing: [] as number[], props: [] as number[], triangles: [] as number[], dips: [] as number[] };
+  const f = makeFrame();
+
+  // each structure at rest, nearest to the play area first: what is close keeps its full height, what is far fits around it
+  for (const [si, name] of STRUCTURES.entries()) {
+    const surface = shownSurface(restState(name), name, lattice);
+    const sheets = new SheetPoints([{ surface }], 6, REACH + 150, PLAY_CENTER);
+    // a second lattice of points between the first's, for the tall buildings: a tower finds the wall beside it
+    const between = new SheetPoints([{ surface }], 6, REACH + 150, PLAY_CENTER, 3);
+    const order = buildings
+      .map((b) => ({ b, d: surface.at(b.lot.u, b.lot.v, T).distanceTo(PLAY_CENTER) }))
+      .filter((o) => o.d <= (o.b.prop ? PROP_REACH : REACH) && (!o.b.prop || treeKept(o.b.lot, PLAY.distanceToPoint(surface.at(o.b.lot.u, o.b.lot.v, T)))))
+      .sort((p, q) => Number(first(q.b.lot)) - Number(first(p.b.lot)) || p.d - q.d);
+    const hash = new Hash();
+    let standing = 0;
+    let props = 0;
+    let triangles = 0;
+    for (const { b } of order) {
+      const sink = b.model === foot ? 0.5 : seat(surface, b.lot, f);
+      if (sink < 0) continue;
+      if (b.prop) {
+        b.alive[si] = true;
+        b.sink[si] = sink;
+        props++;
+        triangles += MODELS[b.model].tris[0];
+        continue;
+      }
+      const [fu, fv] = footprint(MODELS[b.model], b.lot.scale, b.lot.swap, b.lot.stretch);
+      // far along the canyon nothing stands much higher than a house: a tower there would reach into a view whose frame
+      // leaves out the wall it stands on, and hang in the haze
+      const far = smooth((PLAY.distanceToPoint(f.p) - FAR_LOW[0]) / (FAR_LOW[1] - FAR_LOW[0]));
+      let sy = Math.min(b.lot.sy, (FAR_HEIGHT + (1 - far) * 200) / (MODELS[b.model].h * b.lot.scale));
+      for (let attempt = 0; attempt < 4; attempt++, sy *= 0.78) {
+        const obb = boxAt(b.lot, f, sy);
+        if (overlaps(obb, PLAY_OBB) || hash.hits(obb, GAP)) continue;
+        // (asked of nearly the whole box: a tower beside a wall of the sheet must stand clear of it to its top)
+        if (cutsSheet(sheets, obb, 0, b.lot.u, b.lot.v, fu, fv, 0, 0.8)) continue;
+        if (MODELS[b.model].h * b.lot.scale * sy > 40 && cutsSheet(between, obb, 0, b.lot.u, b.lot.v, fu, fv, 0, 0.8)) continue;
+        hash.insert(obb);
+        b.alive[si] = true;
+        b.sy[si] = sy;
+        b.sink[si] = sink;
+        // (the detailed model wherever a camera of the play area can come near: by the distance to the play volume, not to its centre)
+        b.lod[si] = PLAY.distanceToPoint(surface.at(b.lot.u, b.lot.v, T)) < NEAR_PLAY ? 0 : 1;
+        triangles += MODELS[b.model].tris[b.lod[si]];
+        standing++;
+        break;
+      }
+    }
+    stats.standing.push(standing);
+    stats.props.push(props);
+    stats.triangles.push(triangles);
+    yield;
+  }
+
+  // each transition: first what the bending sheet allows under each lot, then what the buildings do to each other
+  const state = makeState();
+  for (let ti = 0; ti + 1 < STRUCTURES.length; ti++) {
+    const tr: Transition = { from: STRUCTURES[ti], to: STRUCTURES[ti + 1] };
+    const live = buildings.filter((b) => b.alive[ti] || b.alive[ti + 1]);
+    for (const b of buildings) b.presence.push(b.alive[ti] && b.alive[ti + 1] ? { ...STAY } : { ...NONE });
+    for (const b of live) {
+      if (b.alive[ti] && !b.alive[ti + 1]) b.presence[ti] = { fall: 0.92, rise: Infinity };
+      if (!b.alive[ti] && b.alive[ti + 1]) b.presence[ti] = { fall: -Infinity, rise: 0.08 };
+    }
+    let dips = 0;
+    const hide = (b: MorphBuilding, at: number) => {
+      const p = b.presence[ti];
+      // before its fall it goes sooner; after its rise it comes later; a building that stood all the way dips out and back
+      if (p.fall === Infinity) {
+        p.fall = at - 0.01;
+        p.rise = at + 0.01;
+        dips++;
+      } else if (at < p.fall) p.fall = Math.min(p.fall, at - 0.01);
+      else p.rise = Math.max(p.rise, at + 0.01);
+    };
+    for (const [k, at] of SAMPLES.entries()) {
+      yield;
+      blendState(tr, at, state);
+      const surface = shownSurface(state, 'blend', lattice);
+      // whether a building cuts through another part of the sheet is asked at every second sample: it costs the most
+      const sheets = k % 2 === 1 ? new SheetPoints([{ surface }], 10, REACH + 80, PLAY_CENTER) : null;
+      const hash = new Hash();
+      const order = live
+        .filter((b) => presenceAt(b.presence[ti], at) > 0.02)
+        .map((b) => ({ b, d: surface.at(b.lot.u, b.lot.v, T).distanceTo(PLAY_CENTER) }))
+        .sort((p, q) => Number(first(q.b.lot)) - Number(first(p.b.lot)) || p.d - q.d);
+      for (const { b } of order) {
+        if (b.model === foot) continue;
+        if (seat(surface, b.lot, f) < 0) {
+          hide(b, at);
+          continue;
+        }
+        if (b.prop) continue;
+        const w = presenceAt(b.presence[ti], at);
+        const sy = (b.alive[ti] ? b.sy[ti] : b.sy[ti + 1]) * (b.alive[ti] && b.alive[ti + 1] ? 1 + (b.sy[ti + 1] / b.sy[ti] - 1) * at : 1);
+        const obb = boxAt(b.lot, f, sy * w);
+        const [fu, fv] = footprint(MODELS[b.model], b.lot.scale, b.lot.swap, b.lot.stretch);
+        if (overlaps(obb, PLAY_OBB) || hash.hits(obb, GAP * 0.5) || (sheets && cutsSheet(sheets, obb, 0, b.lot.u, b.lot.v, fu, fv, 0))) {
+          hide(b, at);
+          continue;
+        }
+        hash.insert(obb);
+      }
+    }
+    stats.dips.push(dips);
+  }
+  return { lattice, buildings, stats };
+}
+
+/** The height factor (with presence) of a building at fraction `f` of transition `ti`; 0 = not there. */
+export function heightAt(b: MorphBuilding, ti: number, f: number): number {
+  const w = presenceAt(b.presence[ti], f);
+  if (w <= 0) return 0;
+  const from = b.alive[ti];
+  const to = b.alive[ti + 1];
+  const sy = from && to ? b.sy[ti] + (b.sy[ti + 1] - b.sy[ti]) * f : from ? b.sy[ti] : b.sy[ti + 1];
+  return sy * w;
+}
+
+export type { StructureName };
+
+export function planMorph(seed: number, keepOut: readonly KeepOut[] = []): MorphPlan {
+  const steps = planSteps(seed, keepOut);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}

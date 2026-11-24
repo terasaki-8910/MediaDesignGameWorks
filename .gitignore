@@ -7,4 +7,6 @@ ai/work/
 video/out/
 # your own footage (movie excerpts and the like): never committed
 video/local/
+# review shots and other build artefacts
 artifacts/
+__pycache__/

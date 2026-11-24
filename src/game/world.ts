@@ -1,18 +1,24 @@
 // Scene graph for a compiled stage: module meshes under group pivots, parapets derived from the walk map,
 // gap plates, consoles, fold animations and Fold Mode previews.
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { CompiledStage, WalkMap } from '../core/compile.ts';
 import { DIRS, SIDES, cellFloor, type Mat3, type Side } from '../core/math.ts';
 import type { Action, CubeFace, Id, PuzzleState } from '../core/types.ts';
 import type { DirName } from '../core/math.ts';
+import type { Kit } from './kit.ts';
+import { RAIL_LINE, edgeKey, planSlabs, sideMatrix } from './kitLayout.ts';
 import { buildModuleMesh, consoleMesh } from './kitMeshes.ts';
 import type { Materials } from './materials.ts';
 import { portalMaterial, prepareDisc } from './portal.ts';
 
 export interface EdgeMarker { pos: THREE.Vector3; side: Side; kind: 'open' | 'close' }
 
-interface ConsoleParts { holo: THREE.Object3D; beacon: THREE.Mesh; guide: THREE.Mesh }
+/** `glass` is the console's own copy of M_console_glass once the kit is in (its cyan light is driven per console). */
+interface ConsoleParts { glass: THREE.MeshStandardMaterial | null; beacon: THREE.Mesh; guide: THREE.Mesh }
+
+/** Emission of a console's glass: at rest, and the mean while the player stands at it. */
+const GLASS_REST = 1.6;
+const GLASS_ACTIVE = 3.2;
 
 const AXIS: Record<'x' | 'y' | 'z', THREE.Vector3> = {
   x: new THREE.Vector3(1, 0, 0),
@@ -59,6 +65,9 @@ export class World {
   private guidance = { ids: new Set<Id>(), level: 0, hidden: false };
   private warmProbe: THREE.Object3D | null = null;
   private time = 0;
+  private kit: Kit | null = null;
+  private flushEdges = new Set<string>();
+  private readonly moduleById = new Map<Id, CompiledStage['modules'][number]>();
   private readonly portal: THREE.ShaderMaterial;
   private readonly cs: CompiledStage;
   private readonly M: Materials;
@@ -78,6 +87,7 @@ export class World {
       this.root.add(p);
     }
     for (const m of cs.modules) {
+      this.moduleById.set(m.id, m);
       const v = buildModuleMesh(m, M, ctx);
       const f = cellFloor(m.at);
       if (m.group) {
@@ -103,7 +113,7 @@ export class World {
       node.position.set(f[0], f[1], f[2]);
       this.consoleNodes.set(c.id, node);
       this.consoleParts.set(c.id, {
-        holo: node.getObjectByName('holo')!,
+        glass: null,
         beacon: node.getObjectByName('beacon') as THREE.Mesh,
         guide: node.getObjectByName('guide') as THREE.Mesh,
       });
@@ -183,9 +193,7 @@ export class World {
       pl.holder.visible = pl.holder.scale.z > 0.01;
     }
     for (const [id, p] of this.consoleParts) {
-      p.holo.rotation.y += dt * (id === this.highlighted ? 3 : 0.8);
-      p.holo.rotation.x += dt * 0.5;
-      p.holo.position.y = 1.6 + Math.sin(this.time * 2 + p.holo.id) * 0.06;
+      if (p.glass) p.glass.emissiveIntensity = id === this.highlighted ? GLASS_ACTIVE + Math.sin(this.time * 6) * 0.8 : GLASS_REST;
       p.beacon.visible = id === this.highlighted;
       if (p.beacon.visible) p.beacon.scale.x = p.beacon.scale.z = 1 + Math.sin(this.time * 6) * 0.35;
     }
@@ -206,6 +214,56 @@ export class World {
       if (k >= 1) this.dropOverlay(p.mesh);
       return k < 1;
     });
+  }
+
+  /**
+   * The kit has loaded: build what the player sees of the `tile` and `bridge` modules, the piers, the lamps, the
+   * consoles and the parapets from it. Until then (and if it fails to load) only the colliders exist.
+   */
+  applyKit(kit: Kit) {
+    this.kit = kit;
+    const plan = planSlabs(this.cs);
+    this.flushEdges = plan.flushEdges;
+    const fixed = kit.build(plan.world, { tintOrigin: new THREE.Vector3(), walk: plan.walkWorld });
+    fixed.name = 'kit:fixed';
+    this.root.add(fixed);
+    for (const [id, placements] of plan.modules) {
+      const f = cellFloor(this.moduleById.get(id)!.at);
+      this.root.getObjectByName(id)!.add(kit.build(placements, { tintOrigin: new THREE.Vector3(f[0], f[1], f[2]), walk: plan.walkModules.get(id) }));
+    }
+    // the bronze and gilt of all consoles are two meshes; each console keeps its own glass, lit by itself
+    this.root.updateMatrixWorld(true);
+    const stands: { piece: string; matrix: THREE.Matrix4 }[] = [];
+    for (const [id, node] of this.consoleNodes) {
+      const slot = node.getObjectByName('body')!;
+      for (const piece of ['console_body', 'console_head']) stands.push({ piece, matrix: slot.matrixWorld.clone() });
+      const body = kit.build([{ piece: 'console_glass', matrix: new THREE.Matrix4() }], { own: ['M_console_glass'] });
+      slot.add(body);
+      const glass = body.getObjectByName('kit:M_console_glass') as THREE.Mesh | undefined;
+      if (glass) {
+        const mat = glass.material as THREE.MeshStandardMaterial;
+        mat.emissive.copy(this.M.accent);
+        mat.emissiveIntensity = GLASS_REST;
+        this.consoleParts.get(id)!.glass = mat;
+      }
+    }
+    const consoles = kit.build(stands);
+    consoles.name = 'kit:consoles';
+    consoles.applyMatrix4(new THREE.Matrix4().copy(this.root.matrixWorld).invert());
+    this.root.add(consoles);
+    const bulb = kit.material('M_lamp_bulb');
+    if (bulb) bulb.emissiveIntensity = 2.6; // small and warm: just enough to glow against the dusk sky
+    this.setState(this.state, false);
+  }
+
+  /** The gilt materials of the kit (none until it has loaded). */
+  giltMaterials(): THREE.MeshStandardMaterial[] {
+    return this.kit?.giltMaterials() ?? [];
+  }
+
+  /** The kit could not be loaded: show the plain collider slabs so the game can still be played. */
+  showColliders() {
+    for (const c of this.colliders) c.visible = true;
   }
 
   /** Swap the procedural gate for the Blender-generated model when public/assets/gate.glb is available. */
@@ -287,7 +345,6 @@ export class World {
     this.gateOpening = false;
     this.portal.uniforms.uOpen.value = 0;
     this.highlighted = null;
-    for (const p of this.consoleParts.values()) p.holo.rotation.set(0, 0, 0); // turned a little every step, not derived from time
     this.setGuidanceHidden(false);
     this.setState(state, false);
   }
@@ -314,7 +371,7 @@ export class World {
     for (const [id, p] of this.consoleParts) {
       const on = !hidden && ids.has(id) && level > 0.01;
       p.guide.visible = on;
-      if (on) (p.guide.material as THREE.MeshBasicMaterial).opacity = 0.05 + 0.22 * level;
+      if (on) (p.guide.material as THREE.MeshBasicMaterial).opacity = 0.09 + 0.2 * level; // of a soft-edged column that is brightest at its foot and fades out upwards
     }
   }
 
@@ -415,38 +472,61 @@ export class World {
       }
   }
 
+  /**
+   * Parapets on every closed edge of the walk map, from kit pieces: balustrades on bridges, plazas and the sunny
+   * side of the roads, low ashlar walls where a road only waits for its neighbour, on the shaded side of the roads
+   * and on the parts that are not converted yet, and a post wherever segments meet, turn or end.
+   */
   private buildRails(wm: WalkMap, hiddenModules: Set<Id>) {
     for (const c of [...this.rails.children]) {
       this.rails.remove(c);
-      (c as THREE.Mesh).geometry?.dispose();
+      (c as THREE.InstancedMesh).dispose(); // the geometry belongs to the kit and stays
     }
-    const walls: THREE.BufferGeometry[] = [];
-    const caps: THREE.BufferGeometry[] = [];
+    const kit = this.kit;
+    if (!kit) return;
+    const lists: Record<'balustrade' | 'wall_a' | 'wall_b', THREE.Matrix4[]> = { balustrade: [], wall_a: [], wall_b: [] };
+    const posts = new Map<string, THREE.Matrix4>();
+    const step = (cell: readonly number[], s: Side) => `${cell[0] + DIRS[s][0]},${cell[1]},${cell[2] + DIRS[s][2]}`;
     for (const t of wm.tiles.values()) {
       if (hiddenModules.has(t.module)) continue;
       const f = cellFloor(t.cell);
-      for (const s of SIDES) {
-        if (t.open[s]) continue;
+      const m = this.moduleById.get(t.module);
+      SIDES.forEach((s, k) => {
+        if (t.open[s]) return;
         const d = DIRS[s];
-        const along = d[0] === 0; // wall runs along X when the side is N or S
-        const cx = f[0] + d[0] * 1.84;
-        const cz = f[2] + d[2] * 1.84;
-        const w = new THREE.BoxGeometry(along ? 4 : 0.28, 1.0, along ? 0.28 : 4);
-        w.translate(cx, t.floorY + 0.5, cz);
-        walls.push(w);
-        const c = new THREE.BoxGeometry(along ? 4.08 : 0.42, 0.09, along ? 0.42 : 4.08);
-        c.translate(cx, t.floorY + 1.04, cz);
-        caps.push(c);
-      }
+        let kind: keyof typeof lists = (t.cell[0] + t.cell[2]) % 2 ? 'wall_a' : 'wall_b';
+        if (m?.type === 'bridge') {
+          // across the end of a bridge a wall, along its sides the balustrade
+          const along = [s, SIDES[(k + 2) % 4]].some((x) => wm.tiles.get(step(t.cell, x))?.module === t.module);
+          if (!along || m.params.length === 1) kind = 'balustrade';
+        } else if (m?.type === 'tile' && !this.flushEdges.has(edgeKey(f[0], f[1], f[2], s))) {
+          const [w, dd] = m.params.size ?? [1, 1];
+          if (Math.min(w, dd) > 1 || s === 'S' || s === 'W') kind = 'balustrade';
+        }
+        lists[kind].push(sideMatrix(f[0], t.floorY, f[2], s));
+        // posts at both ends: on an outer corner, on the joint with the next segment, or in an inner corner
+        for (const a of [SIDES[(k + 1) % 4], SIDES[(k + 3) % 4]]) {
+          const u = DIRS[a];
+          const next = wm.tiles.get(step(t.cell, a));
+          const reach = !t.open[a] ? RAIL_LINE : next && next.open[s] && Math.abs(next.floorY - t.floorY) < 0.01 ? 2.16 : 2;
+          const x = f[0] + d[0] * RAIL_LINE + u[0] * reach;
+          const z = f[2] + d[2] * RAIL_LINE + u[2] * reach;
+          posts.set(`${x.toFixed(2)},${t.floorY.toFixed(2)},${z.toFixed(2)}`, new THREE.Matrix4().makeTranslation(x, t.floorY, z));
+        }
+      });
     }
-    if (walls.length) {
-      const wm1 = new THREE.Mesh(mergeGeometries(walls), this.M.parapet);
-      wm1.castShadow = wm1.receiveShadow = true;
-      const cm = new THREE.Mesh(mergeGeometries(caps), this.M.brass);
-      cm.castShadow = true;
-      this.rails.add(wm1, cm);
-    }
-    for (const g of [...walls, ...caps]) g.dispose();
+    const slots = kit.slots('balustrade', 'baluster_');
+    const each: THREE.Matrix4[] = [];
+    for (const seg of lists.balustrade)
+      for (const b of slots) each.push(new THREE.Matrix4().multiplyMatrices(seg, b));
+    this.rails.add(
+      ...kit.instances('balustrade_body', lists.balustrade, 0.08),
+      ...kit.instances('baluster_00', each, 0.1),
+      ...kit.instances('wall_a', lists.wall_a, 0.08),
+      ...kit.instances('wall_b', lists.wall_b, 0.08),
+      ...kit.instances('post', [...posts.values()], 0.08),
+      ...kit.instances('grime', [...lists.balustrade, ...lists.wall_a, ...lists.wall_b]),
+    );
   }
 
   /** Centre of a group's solids in a state. */
