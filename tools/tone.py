@@ -17,7 +17,8 @@ and checks, per the brief:
   T5 city detail <= 1.10 x play detail   (the city is not much busier than the play area; detail = median |L* - 7x7 mean|;
                                           raised from 0.95 on 2026-11-24 when the owner asked for stronger windows and weathering)
   T6 pixels below L* 20 <= 2 % of the frame   (no crushed blacks)
-  T7 city detail >= 0.55 x play detail   (the city is not flat boxes)
+  T7 city detail >= 0.85 L*              (the city is not flat boxes; absolute since 2026-11-25, because a floor
+                                          relative to the play area's detail punished richer play-area pieces)
 """
 import json
 import os
@@ -102,7 +103,7 @@ def main():
         r["T4"] = r["city_c50"] < r["play_c90"]
         r["T5"] = r["city_lc"] <= 1.10 * r["play_lc"]
         r["T6"] = r["near_black"] <= 0.02
-        r["T7"] = r["city_lc"] >= 0.55 * r["play_lc"]
+        r["T7"] = r["city_lc"] >= 0.85
         rows.append(r)
     if as_json:
         print(json.dumps(rows, indent=1))
