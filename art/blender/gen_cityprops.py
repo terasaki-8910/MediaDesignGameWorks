@@ -46,16 +46,20 @@ def plane_tree(trunk, crowns, lean=(0.0, 0.0)):
     for k, (x, y, cz, cr, ch, colour) in enumerate(crowns):
         if k < 2:  # a limb from the fork up into this mass
             s.cylinder(top, r * 0.6, z + stem, z + cz + ch * 0.3, BARK, 4, r1=r * 0.3, c1=(x, y))
-        s.crown((x, y), cr, z + cz, ch, colour, LEAF_B, 7, lean=(x * 0.12, y * 0.12), turn=0.9 * k, lump=0.07 if k % 2 else 0.04)
+        s.crown((x, y), cr, z + cz, ch, colour, LEAF_U, 7, lean=(x * 0.12, y * 0.12), turn=0.9 * k, lump=0.07 if k % 2 else 0.04)
     return s
 
 
 # The canopies are several small masses that run into each other (a cloud of leaves, never one ball on a stick), a little
-# greyed olive like a plane tree's at dusk (no more chroma than the stone around it: the play area keeps the colour): the key light and the sky reach a crown from above, so seen from the play area a
-# tree is a lit mass, dark only underneath.
-LEAF_D = K.srgb("#8A8B84")
-LEAF_E = K.srgb("#93948C")
-LEAF_F = K.srgb("#82837E")
+# muted green like a plane tree's at dusk (after the final review: drained to grey, C* 4 to 5 on screen, they read as
+# stone; now about 10, still under the walkway's colour): the key light and the sky reach a crown from above, so seen from
+# the play area a tree is a lit mass, dark underneath (LEAF_U, and the crown's own shading). Its cast shadow is the shadow
+# map's (the game bakes the trees' heights with the buildings'); a pool of shade as geometry under the canopy was tried
+# and dropped: the city's distance tone lifts a dark face to the tone of its house, so it showed as a pale plate.
+LEAF_D = K.srgb("#858B7A")
+LEAF_E = K.srgb("#8F9581")
+LEAF_F = K.srgb("#7D8476")
+LEAF_U = K.srgb("#5B6054")  # the underside of a canopy
 
 
 def tree_a():

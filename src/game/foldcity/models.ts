@@ -48,3 +48,38 @@ export const MODELS: readonly ModelInfo[] = [
 export const MODEL_INDEX = new Map(MODELS.map((m, i) => [m.name, i]));
 /** The mesh of a model at a level of detail, by its name in the GLB. */
 export const meshName = (m: ModelInfo, lod: 0 | 1) => (m.single ? m.name : `${m.name}_lod${lod}`);
+
+/**
+ * The textured building units of citytex.glb (art/blender/gen_citytex.py), a look test shown with `?bldg=tex`: footprint,
+ * height and centre as measured from the near meshes. They are not part of the layout: a unit stands in for the near
+ * model of a lot and is scaled to that model's footprint and height (morphcity.ts), so the city is the same with and
+ * without them.
+ */
+export interface TexUnit {
+  name: string;
+  w: number;
+  d: number;
+  /** The height that is fitted to the model's: its roofs and the stacks on them, not the tallest pot (`top`, the mesh's own height). */
+  h: number;
+  top: number;
+  cx: number;
+  cz: number;
+  tris: [number, number];
+}
+export const TEX_UNITS: readonly TexUnit[] = [
+  { name: 'tx_corner', w: 47.5, d: 21.2, h: 29.5, top: 32.4, cx: -0.05, cz: 0, tris: [1070, 606] },
+  { name: 'tx_mid', w: 46, d: 21, h: 34, top: 37.8, cx: 0, cz: 0, tris: [818, 532] },
+  { name: 'tx_end', w: 32, d: 20, h: 27.5, top: 30.6, cx: 0, cz: 0, tris: [514, 330] },
+  { name: 'tx_deco', w: 26.8, d: 18.8, h: 46.2, top: 46.2, cx: 0, cz: 0, tris: [420, 324] },
+];
+/** Which units may stand in for a model's near level (one is picked per lot); models not listed keep their own. */
+export const TEX_FOR: Readonly<Record<string, readonly string[]>> = {
+  haussmann_a: ['tx_corner', 'tx_mid'],
+  haussmann_corner: ['tx_corner'],
+  haussmann_step: ['tx_mid'],
+  haussmann_tall: ['tx_mid'],
+  haussmann_low: ['tx_end'],
+  haussmann_short: ['tx_end'],
+  tower_house: ['tx_deco'],
+  deco_block: ['tx_deco'],
+};

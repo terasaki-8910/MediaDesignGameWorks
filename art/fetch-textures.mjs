@@ -10,6 +10,11 @@ const UA = { 'User-Agent': 'asset-fetch/1.0' };
 const DEFAULTS = [
   'floor_tiles_02:1k:Diffuse,nor_gl,Rough,AO',
   'sandstone_blocks_04:1k:Diffuse,nor_gl,Rough',
+  // the textured building units (art/blender/gen_citytex.py)
+  'sandstone_blocks_08:1k:Diffuse',
+  'large_sandstone_blocks:1k:Diffuse',
+  'grey_roof_tiles_02:1k:Diffuse',
+  'blue_metal_plate:1k:Diffuse',
   'syferfontein_0d_clear_puresky:1k:hdri',
 ];
 

@@ -39,6 +39,8 @@ export interface BackgroundOptions {
   farWindows?: boolean;
   /** `?bgtune=key:value,...`: numbers of the city's atmosphere to try without a build (foldcity/atmosphere.ts, TUNABLE). */
   tune?: string | null;
+  /** `?bldg=tex`: a look test, the near level of the Haussmann and Art Deco lots as the textured units of citytex.glb. */
+  buildings?: string | null;
 }
 
 /**
@@ -56,5 +58,5 @@ export function createBackground(theme: VisualTheme, opts: BackgroundOptions = {
   const freeze = loop ? null : parseFreeze(opts.morph ?? null);
   if (opts.morph && !freeze && !loop) console.warn(`cannot read ?morph=${opts.morph} (for example s1-s2:0.5: neighbouring sections, a fraction from 0 to 1)`);
   const pin = variant && (STRUCTURES as readonly string[]).includes(variant) ? (variant as StructureName) : undefined;
-  return new MorphCity(theme, { keepOut: opts.keepOut, pin, freeze, loop, debug: opts.debug === 'facing' ? 1 : opts.debug === 'range' ? 2 : opts.debug === 'dist' ? 3 : 0, noTrees: opts.debug === 'notrees', farWindows: opts.farWindows, tune: parseTune(opts.tune ?? null) });
+  return new MorphCity(theme, { keepOut: opts.keepOut, pin, freeze, loop, debug: opts.debug === 'facing' ? 1 : opts.debug === 'range' ? 2 : opts.debug === 'dist' ? 3 : 0, noTrees: opts.debug === 'notrees', farWindows: opts.farWindows, texBuildings: opts.buildings === 'tex', tune: parseTune(opts.tune ?? null) });
 }

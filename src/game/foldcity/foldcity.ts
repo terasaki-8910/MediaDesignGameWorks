@@ -40,9 +40,11 @@ export const ATMOSPHERE: AtmosphereParams = {
   density: 1 / 560, power: 5, tail: 470, tailPower: 2.2, strength: 1, gain: 0.42, saturation: 0.74, lift: 0, sink: 0.12, base: 0,
   // no floor under the darks: the tone mapping's toe is undone instead, and the shade is lit by the sky. `chroma` gives
   // the city the saturation it has in the scene (the tone mapping leaves darks more saturated: brown stone, strong blue slate)
-  toe: 0, knee: 6, untoe: 1, chroma: 1, skyShade: 2.2, skySun: 2.32, skyLo: 0.1, skyUp: 1, occ: 0.9, occShade: 0.32, canyon: 0.7, shadow: 0.5,
+  toe: 0, knee: 6, untoe: 1, chroma: 1, skyShade: 2.2, skySun: 2.32, skyLo: 0.1, skyUp: 1, occ: 0.9, occShade: 0.32, occTop: 0.8, downLift: 0.5, canyon: 0.7, shadow: 0.5,
   winBase: 0.3, winNear: 45, winFar: 105, winKeep: 0.97, calm: 0.9, calmBase: 0.2, calmTone: 0.15, calmNear: 60, calmFar: 160,
   ground: 0.54, slab: 0, pave: 0.3, band: 0.4, own: 2, joint: 1.3, setts: 1, canyonPave: 0.45, cars: 1, traffic: 0.7, garden: 0.65, grain: 3, skyWin: 0.65, skyWinFar: 0.4, rowBand: 0.05, rowEven: 0.8, skyHaze: 0.55, skyHazeFar: 0.88,
+  // `?bldg=tex` only: the textured units (atmosphere.ts). Set against the same two measures, with as little room
+  texLow: 0.8, texFine: 0.1, texFineTop: 2, texWin: 0.34, texWinFar: 0.2, texShade: 1.6, texDirt: 0.25, texDirtBase: 0.1, texTone: 1.07, texRoofTone: 1.1, texRoofNear: 0.62,
 };
 
 interface Item {

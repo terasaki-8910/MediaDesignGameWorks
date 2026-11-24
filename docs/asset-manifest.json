@@ -163,6 +163,46 @@
       "author": "Rob Tuytel",
       "tool": "Poly Haven 1K AO (JPG), fetched by art/fetch-textures.mjs; used as the mask of the joints",
       "attribution": ""
+    },
+    {
+      "path": "public/assets/citytex.glb",
+      "license": "own",
+      "source": "art/blender/gen_citytex.py (with art/blender/city_kit.py)",
+      "author": "terasaki-8910",
+      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py and city_kit.py, run through game3d blender.mjs); a look test shown with ?bldg=tex: four textured building units, each a near and a far model, and seven 512 x 256 images (five tiled layers and their weathering masks) made by the script from the Poly Haven textures listed below (CC0-1.0: sandstone_blocks_08, large_sandstone_blocks, grey_roof_tiles_02, blue_metal_plate) and its own drawing (windows, glazing)",
+      "attribution": ""
+    },
+    {
+      "path": "art/textures/sandstone_blocks_08/sandstone_blocks_08_diff_1k.jpg",
+      "license": "CC0-1.0",
+      "source": "https://polyhaven.com/a/sandstone_blocks_08",
+      "author": "Rob Tuytel",
+      "tool": "Poly Haven 1K diffuse (JPG), fetched by art/fetch-textures.mjs; the limestone ashlar of the textured building units (layers 0 and 1)",
+      "attribution": ""
+    },
+    {
+      "path": "art/textures/large_sandstone_blocks/large_sandstone_blocks_diff_1k.jpg",
+      "license": "CC0-1.0",
+      "source": "https://polyhaven.com/a/large_sandstone_blocks",
+      "author": "Rob Tuytel",
+      "tool": "Poly Haven 1K diffuse (JPG), fetched by art/fetch-textures.mjs; its staining, as the weathering mask of the stone",
+      "attribution": ""
+    },
+    {
+      "path": "art/textures/grey_roof_tiles_02/grey_roof_tiles_02_diff_1k.jpg",
+      "license": "CC0-1.0",
+      "source": "https://polyhaven.com/a/grey_roof_tiles_02",
+      "author": "Rob Tuytel",
+      "tool": "Poly Haven 1K diffuse (JPG), fetched by art/fetch-textures.mjs; the slate of the textured building units (layer 2)",
+      "attribution": ""
+    },
+    {
+      "path": "art/textures/blue_metal_plate/blue_metal_plate_diff_1k.jpg",
+      "license": "CC0-1.0",
+      "source": "https://polyhaven.com/a/blue_metal_plate",
+      "author": "Rob Tuytel",
+      "tool": "Poly Haven 1K diffuse (JPG), fetched by art/fetch-textures.mjs; taken nearly grey, the zinc sheet of the textured building units (layer 3)",
+      "attribution": ""
     }
   ]
 }

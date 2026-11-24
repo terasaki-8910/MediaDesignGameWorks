@@ -116,7 +116,7 @@ export class Game {
     this.world = new World(this.cs, M);
     this.engine.scene.add(this.world.root);
     const query = new URLSearchParams(location.search);
-    this.city = createBackground(stage.visualTheme, { variant: query.get('city'), morph: query.get('morph'), debug: query.get('bgdebug'), farWindows: query.get('farwin') === '1', tune: query.get('bgtune'), keepOut: pierKeepOut(pierFeet(planSlabs(this.cs))) });
+    this.city = createBackground(stage.visualTheme, { variant: query.get('city'), morph: query.get('morph'), debug: query.get('bgdebug'), farWindows: query.get('farwin') === '1', tune: query.get('bgtune'), buildings: query.get('bldg'), keepOut: pierKeepOut(pierFeet(planSlabs(this.cs))) });
     this.engine.scene.add(this.city.group);
     this.player = new Player({ object: new THREE.Group(), animate: () => {} }); // nothing until the character has loaded
     this.engine.scene.add(this.player.root);

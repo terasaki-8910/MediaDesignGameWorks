@@ -47,6 +47,7 @@ uniform float uBgBand;
 uniform float uBgSetts;
 uniform float uBgPave;
 uniform float uBgOccShade;
+uniform vec2 uBgOccTop;
 uniform float uBgShadow;
 uniform float uBgGround;
 varying float vTwist;
@@ -63,6 +64,11 @@ float bgNear = 1.0;
 float bgTop = 1.0;
 // the share of the paving's pattern, the traffic and the gardens that is drawn: all of it in the closed structures, less in the open canyon
 float bgShut = 1.0;
+// how far the ground is looked down on (0 seen along, from 70 degrees off its normal; 1 within 40): a sheet turned away
+// from the sun keeps more of the sky's light in its streets and courts where it is seen like that (uBgOccTop: the least
+// of the sky's light there, and how much more light all of it gets), so a wall
+// of city faced square-on is no grid of black streets, while the walls the play cameras look along keep their darks
+float bgDown = 0.0;
 
 float h21( vec2 p ) { p = fract( p * vec2( 123.34, 456.21 ) ); p += dot( p, p + 45.32 ); return fract( p.x * p.y ); }
 // the street line at or below s: the index map gives it to the metre, the next line's centre settles the rest
@@ -525,9 +531,9 @@ export function groundMaterial(
     vertexBegin: bend ? 'transformed = bgSheet( aSheet );' : 'vTwist = 0.0;',
     fragmentDecl: GLSL_DECL,
     fragmentColor:
-      'bgEnds( vSheet );\n{ vec3 bgRay = normalize( vBgWorld - cameraPosition ); vec3 bgN = normalize( cross( dFdx( vBgWorld ), dFdy( vBgWorld ) ) ); bgTop = smoothstep( 0.6, 0.9, abs( dot( bgRay, bgN ) ) ); bgShut = mix( 1.0, uBgCanyonPave, uBgFarSky.x ); }\nbgNear = ( 1.0 - smoothstep( 110.0, 240.0, bgPlayDist() ) ) * mix( 0.4, 1.0, smoothstep( -0.2, 0.5, vBgKeyDir.y ) ) * mix( 0.1, 1.0, bgTop );\ndiffuseColor.rgb = bgGround( vSheet ) * uBgGround;\n#ifdef DOUBLE_SIDED\nif ( ! gl_FrontFacing ) { diffuseColor.rgb = bgUnder( vSheet ); bgRough = 0.95; bgSun = 0.0; bgOcc = 0.8; }\n#endif',
+      'bgEnds( vSheet );\n{ vec3 bgRay = normalize( vBgWorld - cameraPosition ); vec3 bgN = normalize( cross( dFdx( vBgWorld ), dFdy( vBgWorld ) ) ); bgTop = smoothstep( 0.6, 0.9, abs( dot( bgRay, bgN ) ) ); bgDown = smoothstep( 0.71, 0.87, abs( dot( bgRay, bgN ) ) ); bgShut = mix( 1.0, uBgCanyonPave, uBgFarSky.x ); }\nbgNear = ( 1.0 - smoothstep( 110.0, 240.0, bgPlayDist() ) ) * mix( 0.4, 1.0, smoothstep( -0.2, 0.5, vBgKeyDir.y ) ) * mix( 0.1, 1.0, bgTop );\ndiffuseColor.rgb = bgGround( vSheet ) * uBgGround;\n#ifdef DOUBLE_SIDED\nif ( ! gl_FrontFacing ) { diffuseColor.rgb = bgUnder( vSheet ); bgRough = 0.95; bgSun = 0.0; bgOcc = 0.8; }\n#endif',
     fragmentRough: 'roughnessFactor = bgRough;',
-    light: 'bgLight( vec3( 0.0, 1.0, 0.0 ), vBgKeyDir, normalize( vBgSkyUp ), bgSun, mix( mix( uBgOccShade, uBgSkyLobe.z, smoothstep( -0.9, 0.9, vBgKeyDir.y ) ), 1.0, bgOcc ) )',
+    light: 'bgLight( vec3( 0.0, 1.0, 0.0 ), vBgKeyDir, normalize( vBgSkyUp ), bgSun, mix( mix( mix( uBgOccShade, max( uBgOccShade, uBgOccTop.x ), bgDown ), uBgSkyLobe.z, smoothstep( -0.9, 0.9, vBgKeyDir.y ) ), 1.0, bgOcc ) ) * ( 1.0 + uBgOccTop.y * bgDown * ( 1.0 - smoothstep( -0.9, 0.9, vBgKeyDir.y ) ) )',
     ground: true,
     uniforms: {
       ...ends,
