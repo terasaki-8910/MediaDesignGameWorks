@@ -38,6 +38,13 @@ uniform float uShadowMix;
 uniform float uShadowOn;
 uniform float uBgSlab;
 uniform float uBgCars;
+uniform float uBgTraffic;
+uniform float uBgGarden;
+uniform float uBgJoint;
+uniform float uBgOwn;
+uniform float uBgCanyonPave;
+uniform float uBgBand;
+uniform float uBgSetts;
 uniform float uBgPave;
 uniform float uBgOccShade;
 uniform float uBgShadow;
@@ -52,6 +59,10 @@ float bgOcc = 1.0;
 // how much of the paving's own pattern is drawn: all of it under the walkways seen from above, less with distance from
 // the play volume and where the ground is seen along (the walls beside the play area)
 float bgNear = 1.0;
+// how far the ground is seen from above (1 within 26 degrees of its normal, 0 beyond 53)
+float bgTop = 1.0;
+// the share of the paving's pattern, the traffic and the gardens that is drawn: all of it in the closed structures, less in the open canyon
+float bgShut = 1.0;
 
 float h21( vec2 p ) { p = fract( p * vec2( 123.34, 456.21 ) ); p += dot( p, p + 45.32 ); return fract( p.x * p.y ); }
 // the street line at or below s: the index map gives it to the metre, the next line's centre settles the rest
@@ -62,13 +73,6 @@ int findLine( float s, int row, int n ) {
 }
 // 1 inside, 0 outside, soft over one pixel
 float inside( float d, float aa ) { return smoothstep( - aa, aa, d ); }
-// joints of a tile grid: 1 on a joint; they fade out where a tile is smaller than a pixel
-float joints( vec2 s, vec2 tile, float w, float aa ) {
-	vec2 q = abs( fract( s / tile + 0.5 ) - 0.5 ) * tile;
-	float j = 1.0 - min( smoothstep( w - aa, w + aa, q.x ), smoothstep( w - aa, w + aa, q.y ) );
-	return j * ( 1.0 - smoothstep( 0.25, 0.8, aa / min( tile.x, tile.y ) ) );
-}
-
 // a line of half-width w at distance d from its middle: it goes into its surroundings where it is thinner than a pixel
 float bgLine( float d, float w, float aa ) { return ( 1.0 - smoothstep( w - aa, w + aa, abs( d ) ) ) * min( 1.0, 2.5 * w / max( aa, 1e-3 ) ) * ( 1.0 - smoothstep( 4.0, 12.0, aa / w ) ); }
 
@@ -76,6 +80,32 @@ float bgLine( float d, float w, float aa ) { return ( 1.0 - smoothstep( w - aa, 
 float bgBands( float x, float w, float aa ) {
 	float t = abs( fract( x / ( 2.0 * w ) ) - 0.5 ) * 2.0 * w; // distance from the middle of the darker course's joint
 	return ( smoothstep( 0.5 * w - aa, 0.5 * w + aa, t ) * 2.0 - 1.0 ) * ( 1.0 - smoothstep( 0.25, 0.7, aa / w ) );
+}
+
+// paving in courses of two stones (the brief's A2), each course a row of slabs laid with broken joints, every slab its
+// own cut of the stone: x runs across the courses (w metres each), y along them (slabs of len metres). band is how far
+// the two stones lie apart, own how far a slab lies from its course; -1..1 times those, and plain where a course is
+// under a pixel. Round 5 had the courses alone, at two and a half times the contrast: from a distance they were stripes
+float bgPaving( vec2 p, float w, float len, float band, float own, float joint, float aa ) {
+	float i = floor( p.x / w );
+	float v = p.y / len + h21( vec2( i, 7.0 ) );
+	float fade = 1.0 - smoothstep( 0.25, 0.7, aa / w );
+	// the joints: between the courses and between the slabs of a course, a line never thinner than a pixel
+	float hw = max( 0.04, 0.5 * aa );
+	float jx = 1.0 - smoothstep( hw - aa, hw + aa, abs( fract( p.x / w + 0.5 ) - 0.5 ) * w );
+	float jy = 1.0 - smoothstep( hw - aa, hw + aa, abs( fract( v + 0.5 ) - 0.5 ) * len );
+	return band * bgBands( p.x + 0.5 * w, w, aa ) + ( own * ( h21( vec2( i, floor( v ) ) ) * 2.0 - 1.0 ) - joint * max( jx, jy ) ) * fade;
+}
+
+// a car seen from above, q metres along it and off metres across from its middle: (body, cabin, the shade beside it)
+vec3 bgCar( float q, float off, float aa ) {
+	return vec3( ( 1.0 - smoothstep( 2.15 - aa, 2.15 + aa, q ) ) * ( 1.0 - smoothstep( 0.9 - aa, 0.9 + aa, abs( off ) ) ),
+		( 1.0 - smoothstep( 1.0 - aa, 1.0 + aa, abs( q - 0.25 ) ) ) * ( 1.0 - smoothstep( 0.7 - aa, 0.7 + aa, abs( off ) ) ),
+		( 1.0 - smoothstep( 2.3 - aa, 2.3 + aa, q ) ) * ( 1.0 - smoothstep( 1.25 - aa, 1.25 + aa, abs( off + 0.25 ) ) ) );
+}
+// its paint: black, silver, white, dark red, dark blue, by its number (0 to 1)
+vec3 bgCarPaint( float id ) {
+	return id < 0.2 ? vec3( 0.075, 0.078, 0.085 ) : id < 0.36 ? vec3( 0.33, 0.34, 0.35 ) : id < 0.46 ? vec3( 0.52, 0.51, 0.48 ) : id < 0.53 ? vec3( 0.13, 0.075, 0.065 ) : vec3( 0.09, 0.12, 0.16 );
 }
 
 // the tone of the slab a point lies on (0 to 1, each slab its own); a plain 0.5 where a slab is smaller than a pixel
@@ -155,21 +185,28 @@ vec3 bgGround( vec2 s ) {
 	float tone = 0.9 + 0.2 * rnd;
 	// the paving's own pattern (courses, slabs, joints) is for the city under the walkways, seen from above (bgNear): from
 	// 110 to 240 m from the play volume it goes, and where the ground is seen along, so the walls beside the play area
-	// keep only what is on the ground: kerbs, lane lines, crossings, cars, shadows. It is the sun that picks courses and
-	// joints out: on ground turned away from it they are fainter
+	// keep only what is on the ground: kerbs, lane lines, crossings, parked cars, shadows. It is the sun that picks courses
+	// and joints out: on ground turned away from it they are fainter. The slabs' own tones, the joints, the traffic and the
+	// gardens are there only where the ground is seen from above (top), and the open canyon shows a share of it all (shut)
 	float near = bgNear;
 	float sl = uBgSlab * near;
-	float pv = uBgPave * near;
+	float shut = bgShut;
+	float pv = uBgPave * near * shut;
+	float top = bgTop * shut;
 
-	// the roadway: dark setts relaid in long patches, a pale crown, lane lines, crossings at every junction, a gutter in
-	// the kerb's shade. Nothing here is noise: what gives a street its texture from above is what is on it
+	// the roadway: dark setts relaid in patches, a pale crown, lane lines, crossings at every junction, a gutter in the
+	// kerb's shade, parked cars and traffic. Nothing here is a noise texture: what gives a street its texture from above is
+	// what it is laid with and what is on it
 	bool inU = eu < 0.0;
 	bool inV = ev < 0.0;
 	bool alongV = inU; // a street between two u lines runs along v
 	vec4 L = alongV ? ( e0 < e1 ? la : lb ) : ( e2 < e3 ? lc : ld );
 	float lat = abs( ( alongV ? s.x : s.y ) - L.x );
 	float run = alongV ? s.y : s.x;
-	vec3 street = uStreet * ( 1.0 + 0.1 * sl * ( slabTone( alongV ? s.yx : s.xy, vec2( 14.0, 3.2 ), aa ) - 0.5 ) ) * ( 1.0 + pv * 0.6 * bgBands( run, 1.6, aa ) );
+	vec3 street = uStreet * ( 1.0 + 0.1 * sl * ( slabTone( alongV ? s.yx : s.xy, vec2( 14.0, 3.2 ), aa ) - 0.5 ) );
+	// the lanes where cars stand are setts, relaid patch by patch; the lanes they drive in are asphalt, a shade darker
+	float parking = inside( lat - ( L.y - 2.5 ), aa );
+	street *= 1.0 + 0.1 * near * parking + mix( uBgSetts, 1.0, parking ) * ( pv * bgPaving( vec2( run, lat ), 1.6, 2.5, 0.6 * uBgBand, 0.3 * uBgOwn * top, 0.0, aa ) );
 	float median = 0.0;
 	if ( inU != inV ) {
 		street *= 1.0 + 0.08 * ( 1.0 - smoothstep( 0.0, L.y * 0.7, lat ) ); // the crown of the road, worn pale
@@ -207,25 +244,39 @@ vec3 bgGround( vec2 s ) {
 		float id = h21( vec2( slot, L.x * 0.37 + ( ( alongV ? s.x : s.y ) > L.x ? 3.1 : 7.7 ) ) );
 		float q = abs( run - ( slot + 0.5 ) * 5.7 );
 		float there = step( id, 0.62 ) * step( 9.0, alongV ? ev : eu ) * uBgCars * ( 1.0 - smoothstep( 0.45, 1.3, aa ) );
-		float body = ( 1.0 - smoothstep( 2.15 - aa, 2.15 + aa, q ) ) * ( 1.0 - smoothstep( 0.9 - aa, 0.9 + aa, abs( off ) ) );
-		float cabin = ( 1.0 - smoothstep( 1.0 - aa, 1.0 + aa, abs( q - 0.25 ) ) ) * ( 1.0 - smoothstep( 0.7 - aa, 0.7 + aa, abs( off ) ) );
-		float under = ( 1.0 - smoothstep( 2.3 - aa, 2.3 + aa, q ) ) * ( 1.0 - smoothstep( 1.25 - aa, 1.25 + aa, abs( off + 0.25 ) ) );
-		vec3 paint = id < 0.2 ? vec3( 0.075, 0.078, 0.085 ) : id < 0.36 ? vec3( 0.33, 0.34, 0.35 ) : id < 0.46 ? vec3( 0.52, 0.51, 0.48 ) : id < 0.53 ? vec3( 0.13, 0.075, 0.065 ) : vec3( 0.09, 0.12, 0.16 );
-		paint = mix( paint, paint * 0.5 + vec3( 0.03, 0.035, 0.04 ), cabin );
-		street *= 1.0 - 0.3 * under * there;
-		street = mix( street, paint, body * there );
+		vec3 car = bgCar( q, off, aa );
+		vec3 paint = bgCarPaint( id );
+		paint = mix( paint, paint * 0.5 + vec3( 0.03, 0.035, 0.04 ), car.y );
+		street *= 1.0 - 0.3 * car.z * there;
+		street = mix( street, paint, car.x * there );
+		// and the traffic: cars in the lanes between the parked rows (and the planted strip), each somewhere in its own
+		// stretch of 11 m, the share of the stretches that uBgTraffic gives taken; none on a crossing, and only where the
+		// street is seen from above
+		float d0 = L.y > 15.0 ? 3.6 : 0.0;
+		float lanes = max( 1.0, floor( ( L.y - 2.5 - d0 ) / 2.9 ) );
+		float lw = ( L.y - 2.5 - d0 ) / lanes;
+		float lane = clamp( floor( ( lat - d0 ) / lw ), 0.0, lanes - 1.0 );
+		float side = ( alongV ? s.x : s.y ) > L.x ? 3.1 : 7.7;
+		float stretch = floor( run / 11.0 + h21( vec2( lane + side, L.x * 0.21 ) ) );
+		float tid = h21( vec2( stretch, L.x * 0.53 + lane * 1.7 + side ) );
+		float tq = abs( fract( run / 11.0 + h21( vec2( lane + side, L.x * 0.21 ) ) ) * 11.0 - ( 3.0 + 5.0 * fract( tid * 17.0 ) ) );
+		float going = step( tid, uBgTraffic ) * step( 9.0, alongV ? ev : eu ) * step( d0, lat ) * uBgCars * top * ( 1.0 - smoothstep( 0.45, 1.3, aa ) );
+		car = bgCar( tq, lat - ( d0 + ( lane + 0.5 ) * lw ), aa );
+		paint = bgCarPaint( fract( tid * 29.0 ) );
+		paint = mix( paint, paint * 0.5 + vec3( 0.03, 0.035, 0.04 ), car.y );
+		street *= 1.0 - 0.3 * car.z * going;
+		street = mix( street, paint, car.x * going );
 	}
 
 	// the pavement along the block edge: pale slabs in courses across it, a kerb of paler stone and the joint behind it
 	vec2 ws = eu < ev ? s.yx : s.xy; // (x along the kerb)
-	vec3 walk = uWalk * ( 1.0 + 0.1 * sl * ( slabTone( ws, vec2( 2.6, 1.3 ), aa ) - 0.5 ) ) * ( 1.0 + pv * bgBands( ws.x, 1.3, aa ) );
-	walk *= 1.0 - 0.2 * near * joints( ws, vec2( 2.6, 1.3 ), 0.045, aa );
+	vec3 walk = uWalk * ( 1.0 + 0.1 * sl * ( slabTone( ws, vec2( 2.6, 1.3 ), aa ) - 0.5 ) ) * ( 1.0 + pv * bgPaving( ws, 1.3, 1.3, uBgBand, 0.4 * uBgOwn * top, uBgJoint * top, aa ) );
 	walk *= 1.0 + 0.22 * ( 1.0 - smoothstep( 0.32, 0.4 + aa, e ) ); // the kerb stone
 	walk *= 1.0 - 0.3 * bgLine( e - 0.48, 0.07, aa );
 
 	// the block: its courts, paved in bands of two stones (the brief's A2), each block its own tone
-	vec3 inner = uYard * tone * ( 1.0 + pv * 1.2 * bgBands( s.x, 1.6, aa ) ) * ( 1.0 + 0.08 * sl * ( slabTone( s, vec2( 3.2, 3.2 ), aa ) - 0.5 ) );
-	inner *= 1.0 - 0.2 * near * joints( s, vec2( 3.2, 3.2 ), 0.07, aa );
+	// (how far its two stones lie apart is the block's own: a half to one and a half times the usual)
+	vec3 inner = uYard * tone * ( 1.0 + pv * bgPaving( s, 1.6, 3.2, 1.2 * uBgBand * ( 0.6 + 0.8 * rnd ), 0.45 * uBgOwn * top, uBgJoint * top, aa ) ) * ( 1.0 + 0.08 * sl * ( slabTone( s, vec2( 3.2, 3.2 ), aa ) - 0.5 ) );
 	bool plaza = type > 0.5 && type < 1.5;
 	if ( plaza ) {
 		// plaza: paving laid in rings round the fountain or the monument, a dark band at two radii, rays between them
@@ -240,9 +291,8 @@ vec3 bgGround( vec2 s ) {
 		vec2 tl = floor( s / 4.8 );
 		float chequer = mod( tl.x + tl.y, 2.0 ) * ( 1.0 - smoothstep( 0.2, 0.7, aa / 4.8 ) );
 		float border = 1.0 - smoothstep( 1.3 - aa, 1.3 + aa, abs( e - 4.0 ) );
-		inner = mix( uPlaza, uPlazaB, clamp( band + ray * 0.8 + chequer * 0.45 + border, 0.0, 1.0 ) * 0.6 ) * ( 0.95 + 0.1 * rnd ) * ( 1.0 + pv * 0.8 * bgBands( s.y, 1.2, aa ) );
+		inner = mix( uPlaza, uPlazaB, clamp( band + ray * 0.8 + chequer * 0.45 + border, 0.0, 1.0 ) * 0.6 ) * ( 0.95 + 0.1 * rnd ) * ( 1.0 + pv * bgPaving( s.yx, 1.2, 2.4, 0.8 * uBgBand, 0.35 * uBgOwn * top, uBgJoint * top, aa ) );
 		inner *= ( 1.0 + 0.1 * sl * ( slabTone( s, vec2( 2.4, 2.4 ), aa ) - 0.5 ) ) * ( 1.0 + 0.2 * ( 1.0 - smoothstep( 0.32, 0.4 + aa, e ) ) );
-		inner *= 1.0 - 0.2 * near * joints( s, vec2( 2.4, 2.4 ), 0.06, aa );
 	} else if ( type > 1.5 && type < 2.5 ) {
 		// park: a lawn mown in stripes, a winding path, a darker rim of hedge
 		vec2 c = vec2( 0.5 * ( la.x + la.y + lb.x - lb.y ), 0.5 * ( lc.x + lc.y + ld.x - ld.y ) );
@@ -252,6 +302,18 @@ vec3 bgGround( vec2 s ) {
 		float rimH = 1.0 - inside( e - ${(SIDEWALK + 2.0).toFixed(1)}, aa );
 		inner = mix( lawn, uPath, path );
 		inner = mix( inner, lawn * 0.85, rimH * ( 1.0 - path ) );
+	} else if ( fract( rnd * 7.31 ) < uBgGarden ) {
+		// most blocks keep a garden in their courts: beds of lawn, of shrubs and of paving between paths of gravel, laid out
+		// from the block's corner, each bed its own. Seen from above only (a path is 1.6 m): from further off and along
+		// the ground the court is its paving
+		vec2 plot = fract( rnd * 3.7 ) < 0.5 ? vec2( 7.2, 5.4 ) : vec2( 5.4, 7.2 );
+		vec2 g = ( s - vec2( la.x + la.y, lc.x + lc.y ) - ${(SIDEWALK + 1.0).toFixed(1)} ) / plot;
+		vec2 q = ( fract( g ) - 0.5 ) * plot;
+		float hb = h21( floor( g ) + rnd * 31.0 );
+		float bed = inside( 0.5 * plot.x - 0.8 - abs( q.x ), aa ) * inside( 0.5 * plot.y - 0.8 - abs( q.y ), aa );
+		vec3 plant = hb < 0.5 ? uPark * ( 0.85 + 0.3 * fract( hb * 13.0 ) ) : hb < 0.78 ? uPark * 0.62 : inner;
+		float there = near * shut * ( 1.0 - smoothstep( 0.5, 1.4, aa ) ) * inside( e - ${(SIDEWALK + 1.0).toFixed(1)}, aa );
+		inner = mix( inner, mix( uPath * 0.85, plant, bed ), there );
 	}
 
 	float inBlock = inside( e, aa ); // 0 in the street, 1 in the block
@@ -463,7 +525,7 @@ export function groundMaterial(
     vertexBegin: bend ? 'transformed = bgSheet( aSheet );' : 'vTwist = 0.0;',
     fragmentDecl: GLSL_DECL,
     fragmentColor:
-      'bgEnds( vSheet );\nbgNear = ( 1.0 - smoothstep( 110.0, 240.0, bgPlayDist() ) ) * mix( 0.4, 1.0, smoothstep( -0.2, 0.5, vBgKeyDir.y ) ) * mix( 0.1, 1.0, smoothstep( 0.6, 0.9, abs( dot( normalize( vBgWorld - cameraPosition ), normalize( cross( dFdx( vBgWorld ), dFdy( vBgWorld ) ) ) ) ) ) );\ndiffuseColor.rgb = bgGround( vSheet ) * uBgGround;\n#ifdef DOUBLE_SIDED\nif ( ! gl_FrontFacing ) { diffuseColor.rgb = bgUnder( vSheet ); bgRough = 0.95; bgSun = 0.0; bgOcc = 0.8; }\n#endif',
+      'bgEnds( vSheet );\n{ vec3 bgRay = normalize( vBgWorld - cameraPosition ); vec3 bgN = normalize( cross( dFdx( vBgWorld ), dFdy( vBgWorld ) ) ); bgTop = smoothstep( 0.6, 0.9, abs( dot( bgRay, bgN ) ) ); bgShut = mix( 1.0, uBgCanyonPave, uBgFarSky.x ); }\nbgNear = ( 1.0 - smoothstep( 110.0, 240.0, bgPlayDist() ) ) * mix( 0.4, 1.0, smoothstep( -0.2, 0.5, vBgKeyDir.y ) ) * mix( 0.1, 1.0, bgTop );\ndiffuseColor.rgb = bgGround( vSheet ) * uBgGround;\n#ifdef DOUBLE_SIDED\nif ( ! gl_FrontFacing ) { diffuseColor.rgb = bgUnder( vSheet ); bgRough = 0.95; bgSun = 0.0; bgOcc = 0.8; }\n#endif',
     fragmentRough: 'roughnessFactor = bgRough;',
     light: 'bgLight( vec3( 0.0, 1.0, 0.0 ), vBgKeyDir, normalize( vBgSkyUp ), bgSun, mix( mix( uBgOccShade, uBgSkyLobe.z, smoothstep( -0.9, 0.9, vBgKeyDir.y ) ), 1.0, bgOcc ) )',
     ground: true,

@@ -47,12 +47,12 @@ opts = K.script_args()
 OUT = opts.get("out", "public/assets/city.glb")
 K.reset()
 
-TERRACE = K.srgb("#79848F")  # a flat roof of zinc and gravel: never the colour of the streets
-STACK = K.srgb("#968B78")  # chimney stacks: rendered stone under soot, between the slate and the fronts
-POT = K.srgb("#8E7D6E")  # chimney pots: terracotta under soot, never a row of red dots
-DORMER = K.srgb("#A69B86")  # a dormer's stone front and cheeks
-ZINC_B = K.srgb("#7E8893")  # zinc that takes the sky: dormer caps, the ledge at the mansard's break
-SHADE = K.srgb("#756C5C")  # stone in the shade of a cornice or a balcony: the line under every overhang
+TERRACE = K.srgb("#7C848C")  # a flat roof of zinc and gravel: never the colour of the streets
+STACK = K.srgb("#928B80")  # chimney stacks: rendered stone under soot, between the slate and the fronts
+POT = K.srgb("#8A7E73")  # chimney pots: terracotta under soot, never a row of red dots
+DORMER = K.srgb("#A39B8D")  # a dormer's stone front and cheeks
+ZINC_B = K.srgb("#808890")  # zinc that takes the sky: dormer caps, the ledge at the mansard's break
+SHADE = K.srgb("#746C5F")  # stone in the shade of a cornice or a balcony: the line under every overhang
 
 
 def tiers_of(floors):
@@ -431,9 +431,9 @@ def dome(lod):
             for sy in (-1, 1):  # a stone lantern on each corner of the attic
                 s.box((sx * (h - 2.6) - 1.0, sy * (h - 2.6) - 1.0, top + 3.0), (sx * (h - 2.6) + 1.0, sy * (h - 2.6) + 1.0, top + 5.6), TRIM, ZINC)
     seg = 16 if lod == 0 else 10
-    s.cylinder((0.0, 0.0), 10.0, 19.0, 29.0, TRIM, seg, alt=GLASS if lod == 0 else K.srgb("#6E675A"))
+    s.cylinder((0.0, 0.0), 10.0, 19.0, 29.0, TRIM, seg, alt=GLASS if lod == 0 else K.srgb("#6D675D"))
     s.cylinder((0.0, 0.0), 10.6, 29.0, 30.0, TRIM, seg)
-    s.dome((0.0, 0.0), 10.2, 30.0, 12.5, LEAD, seg, 5 if lod == 0 else 3, alt=GILT)
+    s.dome((0.0, 0.0), 10.2, 30.0, 12.5, LEAD, seg, 5 if lod == 0 else 3, rib=ZINC_B)  # lead sheets between zinc rolls: one metal, ribbed, no stripes
     s.cylinder((0.0, 0.0), 2.2, 41.6, 46.5, TRIM, 8, alt=GLASS)
     s.cylinder((0.0, 0.0), 2.5, 46.5, 49.0, LEAD, 8, r1=0.9)
     s.cylinder((0.0, 0.0), 0.9, 49.0, 50.6, GILT, 6, r1=0.6)  # a gilt ball where a needle would stand: the dome ends blunt

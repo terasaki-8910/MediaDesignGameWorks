@@ -7,7 +7,8 @@ window bays of 2.9 m), so a storey of a facade is one quad with U running over i
 floor arcade, plain floor, balcony floor, mansard with dormers, ashlar courses, zinc with standing seams, slate, the
 glazing of the Art Deco fronts, and a white strip for faces that are a plain colour. Windows are drawn recessed (a shaded
 reveal, a stone surround, a sill with its rain streak) with glass that is the dark of a front but no black hole; the
-limestone and the grey slate (lifted towards the haze colour) are in the atlas, COLOR_0 only tints.
+limestone and the quiet blue-grey slate and zinc (round 6: round 5's colours at the same lightness and less chroma) are
+in the atlas, COLOR_0 only tints.
 
 The far models are those quads and nothing else: the grid of windows is only where a model is far. The near models'
 fronts are modelled (order, after the brief's A2): giant piers of large ashlar blocks, each block its own tone, standing
@@ -34,36 +35,36 @@ BASE = (0.78, 0.78, 0.78)
 DECO = (0.92, 0.93, 0.95)
 DECO_B = (0.74, 0.75, 0.77)
 # plain colours (on the white strip)
-TRIM = K.srgb("#C2B7A2")
-GLASS = K.srgb("#646C78")  # (glass takes the sky: the dark of a front, blue-grey, never a black hole in it)
+TRIM = K.srgb("#C0B7A8")  # cornices, copings, string courses: the fronts' limestone, a step paler (never a tan of its own)
+GLASS = K.srgb("#666C75")  # (glass takes the sky: the dark of a front, blue-grey, never a black hole in it)
 SLATE = (1.0, 1.0, 1.0)  # the slate strip as painted
-ZINC = K.srgb("#69747F")  # as a plain colour; a roof of zinc sheets is the "zinc" strip as painted (WHITE)
-LEAD = K.srgb("#56626F")
+ZINC = K.srgb("#6C747C")  # as a plain colour; a roof of zinc sheets is the "zinc" strip as painted (WHITE)
+LEAD = K.srgb("#59626B")
 # the atlas's limestone as a plain colour (the reveals of the near models: they have no texture of their own)
-STONE = K.srgb("#B0A48D")
+STONE = K.srgb("#AEA490")
 RAIL = K.srgb("#4A4742")
-BRICK = K.srgb("#7C6659")
+BRICK = K.srgb("#77675E")
 GILT = K.srgb("#A08D52")
 LEAF = K.srgb("#7F8475")
 LEAF_B = K.srgb("#63655E")
 LEAF_C = K.srgb("#868A7A")
 BARK = K.srgb("#6B6457")
 WATER = K.srgb("#6E8A90")
-TANK = K.srgb("#6B5A4B")
+TANK = K.srgb("#675B50")
 SPIRE = K.srgb("#B9B0A0")  # a spire of dressed stone: it takes the light on one side and stands in shade on the other
 SPIRE_B = K.srgb("#A59C8C")
-SKYLIGHT = K.srgb("#51626F")
+SKYLIGHT = K.srgb("#576169")
 PAVED = (0.47, 0.55, 0.68)  # a terrace: the ashlar strip as grey slabs, each its own tone, never a blank lid
 
 # the atlas's own colours (sRGB)
-STONE_RGB = (0.690, 0.642, 0.552)
-SLATE_RGB = (0.292, 0.342, 0.424)
-ZINC_RGB = (0.410, 0.468, 0.545)
-GLASS_RGB = (0.400, 0.435, 0.490)
+STONE_RGB = (0.684, 0.643, 0.566)
+SLATE_RGB = (0.314, 0.341, 0.390)
+ZINC_RGB = (0.433, 0.466, 0.512)
+GLASS_RGB = (0.411, 0.434, 0.473)
 # how far the tone of one ashlar block lies from the next, and the slate's broad weathering (the near walls' texture)
-ASHLAR_SPREAD = 0.16
-SLATE_SPREAD = 0.1
-SLATE_BAND = 0.97
+ASHLAR_SPREAD = 0.12
+SLATE_SPREAD = 0.08
+SLATE_BAND = 0.98
 SIZE = 512
 BAY = 2.9  # metres one window bay takes
 TILE = 4 * BAY  # metres the atlas covers along U
@@ -421,11 +422,25 @@ class Shell:
         if r1 > 1e-6:
             self.face([(c1[0] + r1 * math.cos(2 * math.pi * i / seg), c1[1] + r1 * math.sin(2 * math.pi * i / seg), z1) for i in range(seg)], top or colour)
 
-    def dome(self, c, r, z0, h, colour, seg=14, rings=5, alt=None, strip=None):
+    def dome(self, c, r, z0, h, colour, seg=14, rings=5, alt=None, strip=None, rib=None, rib_width=0.28, proud=0.035):
+        """`rib` gives the dome ribs in that colour: a roll of metal up every joint of its segments, `rib_width` of a
+        segment wide and standing `proud` of the radius off the sheets, from the springing to the lantern."""
         for k in range(rings):
             t0, t1 = (math.pi / 2) * k / rings, (math.pi / 2) * (k + 1) / rings
             self.cylinder(c, r * math.cos(t0), z0 + h * math.sin(t0), z0 + h * math.sin(t1), colour, seg, r1=r * math.cos(t1) if k < rings - 1 else 0.0, alt=alt,
                           strip=strip)
+            if rib is None:
+                continue
+            ra, rb = r * (1.0 + proud) * math.cos(t0), r * (1.0 + proud) * math.cos(t1) if k < rings - 1 else 0.0
+            za, zb = z0 + h * (1.0 + proud) * math.sin(t0), z0 + h * (1.0 + proud) * math.sin(t1)
+            half = math.pi / seg * rib_width
+            for i in range(seg):
+                a = 2 * math.pi * i / seg
+                low = [(c[0] + ra * math.cos(a - half), c[1] + ra * math.sin(a - half), za), (c[0] + ra * math.cos(a + half), c[1] + ra * math.sin(a + half), za)]
+                if rb < 1e-6:
+                    self.face(low + [(c[0], c[1], zb)], rib)
+                else:
+                    self.face(low + [(c[0] + rb * math.cos(a + half), c[1] + rb * math.sin(a + half), zb), (c[0] + rb * math.cos(a - half), c[1] + rb * math.sin(a - half), zb)], rib)
 
     def panel(self, side, hx, hy, u0, u1, z0, z1, colour, proud=0.08):
         """A flat face on a wall of a box with half-sizes hx, hy: from u0 to u1 along the wall (0 = its middle)."""
@@ -609,8 +624,9 @@ def atlas():
     """The facade atlas as an sRGB array [row from the bottom, column, rgb]."""
     rng = np.random.default_rng(1207)
     img = np.zeros((SIZE, SIZE, 3))
-    # warm limestone against blue-grey slate (the brief): under the city's warm key the slate must still be the cooler of
-    # the two by a clear step, so it is painted bluer than a slate looks in white light
+    # warm limestone against a quiet blue-grey slate and zinc (the brief; A1 and A2: grey with a hint of blue, low in
+    # saturation). Round 6 took the colours of round 5 to the same lightness and less chroma: the slate and the zinc to
+    # six tenths of it, the glass to seven, the stone to 0.85
     stone = np.array(STONE_RGB)
     slate = np.array(SLATE_RGB)
     zinc = np.array(ZINC_RGB)
@@ -774,8 +790,8 @@ def atlas():
         shift = int(rng.integers(0, 8))
         for cx in range(0, SIZE, 8):
             cols = np.arange(cx + shift, cx + shift + 8) % SIZE
-            slates[r:r + 4, cols] = 0.97 + 0.06 * rng.random()
-        slates[r:r + 1] *= 0.93
+            slates[r:r + 4, cols] = 0.98 + 0.04 * rng.random()
+        slates[r:r + 1] *= 0.95
         if (r // 8) % 2:  # the courses in bands of two, turn about a little darker: the roof's own rhythm seen from above
             slates[r:r + 4] *= SLATE_BAND
     a[:] = slate * slates * (1.0 + SLATE_SPREAD * tile_noise(h, 32))

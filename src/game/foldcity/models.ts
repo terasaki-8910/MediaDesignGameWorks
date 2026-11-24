@@ -35,7 +35,7 @@ export const MODELS: readonly ModelInfo[] = [
   { name: 'belfry', w: 39.4, d: 20.2, h: 50.5, cx: 1.4, cz: 0, weight: 0.9, kind: 'landmark', tris: [982, 366] },
   { name: 'deco_hall', w: 65.2, d: 25, h: 38.3, cx: 0, cz: 0, weight: 0.5, kind: 'landmark', tris: [938, 296] },
   { name: 'deco_tower', w: 30.8, d: 30.8, h: 71, cx: 0, cz: 0, weight: 0.3, kind: 'landmark', tris: [1026, 556] },
-  { name: 'dome', w: 35, d: 37.7, h: 50.6, cx: 0, cz: 1.35, weight: 0.35, kind: 'landmark', tris: [803, 270] },
+  { name: 'dome', w: 35, d: 37.7, h: 50.6, cx: 0, cz: 1.35, weight: 0.35, kind: 'landmark', tris: [947, 320] },
   { name: 'cathedral', w: 59.3, d: 30.8, h: 62, cx: 5.15, cz: 0, weight: 0.4, kind: 'landmark', tris: [739, 555], props: true },
   { name: 'tree_a', w: 7.7, d: 7.4, h: 13.7, cx: 0, cz: -0.18, weight: 0, kind: 'prop', tris: [233, 233], props: true, single: true },
   { name: 'tree_b', w: 10, d: 7.4, h: 11.9, cx: 0.34, cz: -0.45, weight: 0, kind: 'prop', tris: [273, 273], props: true, single: true },
