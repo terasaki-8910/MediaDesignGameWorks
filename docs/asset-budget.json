@@ -131,9 +131,9 @@
       "maxTextureBytes": 70000
     },
     "street.glb": {
-      "maxFileBytes": 160000,
-      "maxTriangles": 2200,
-      "maxDrawCalls": 6,
+      "maxFileBytes": 200000,
+      "maxTriangles": 2700,
+      "maxDrawCalls": 8,
       "maxMaterials": 3,
       "maxTextureSize": 256,
       "maxTextureBytes": 15000

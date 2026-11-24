@@ -28,7 +28,10 @@ interface Cell { gx: number; gz: number; y: number; x0: number; x1: number; z0: 
 
 /** A walkway one cell wide (a road, a bridge, the arm tower's deck), as against a plaza. */
 const isRoad = (m: ModuleInstance) => m.type === 'bridge' || m.type === 'tower' || (m.type === 'tile' && Math.min(...(m.params.size ?? [1, 1])) === 1);
-/** A lamped bridge of four cells or more is a piece of street: kerbs, pavements and bollards on its deck, an archway at its far end. */
+/**
+ * A lamped bridge of four cells or more is a piece of street: kerbs, pavements and bollards on its deck, an archway at its
+ * far end, a coffered soffit and consoles under its cornices.
+ */
 export const isStreet = (m: ModuleInstance) => m.type === 'bridge' && !!m.params.lamps && m.params.length >= 4;
 /**
  * The edge piece where another slab can stand against this one. The kit's `edge_flush` is a plain face that is hidden by
@@ -176,9 +179,13 @@ export function planSlabs(cs: CompiledStage): SlabPlan {
       // the paving's texture is turned from cell to cell (by the cell's place), so its stains do not repeat in rows
       const turn = Math.abs(Math.round(Math.sin(c.gx * 12.9898 + c.gz * 78.233) * 43758.5453)) % 4;
       out.push({ ...place('slab_top', cx, c.y, cz, 0, sx, sz), uvTurn: turn });
-      put('slab_bottom');
+      // the street hangs for most of the game with its underside upright before the player: its own coffered soffit, and
+      // consoles under its cornices
+      const street = isStreet(c.module);
+      put(street ? 'street_soffit' : 'slab_bottom');
       SIDES.forEach((s, k) => {
         if (kind[s] !== 'none') put(kind[s] === 'cornice' ? 'edge_cornice' : flushEdge(c.module), TURNS[s]);
+        if (street && kind[s] === 'cornice') put('street_brackets', TURNS[s]);
         // the walking line: along roads, on to the edge where another slab joins, and from a road to the plaza's middle
         const n = neighbour(c, s);
         if (n && (s === 'E' || s === 'S') && (isRoad(c.module) || isRoad(n.module))) walk.push({ a: v(c.gx, c.y, c.gz), b: v(n.gx, n.y, n.gz) });

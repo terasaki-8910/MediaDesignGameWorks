@@ -28,7 +28,7 @@ const inPlane = (n: readonly number[]) => (Object.keys(DIRS) as DirName[]).filte
 
 /**
  * The path cube: on each face nine cells (paved where the face's path runs, a carved coffer elsewhere), the path line
- * from the middle of the face out along each arm, and the gilt binding round the whole block.
+ * from the middle of the face out along each arm, and the carved arrises and gilt corner bosses of the block.
  */
 export function cubePlacements(m: Cube): Placement[] {
   const out: Placement[] = [];

@@ -2,7 +2,7 @@
 // from the walk map, gap plates, consoles, fold animations and Fold Mode previews.
 import * as THREE from 'three';
 import type { CompiledStage, WalkMap } from '../core/compile.ts';
-import { DIRS, SIDES, cellFloor, type Mat3, type Side } from '../core/math.ts';
+import { CELL, DIRS, SIDES, cellFloor, type Mat3, type Side } from '../core/math.ts';
 import type { Action, CubeFace, Id, PuzzleState } from '../core/types.ts';
 import type { DirName } from '../core/math.ts';
 import type { Kit } from './kit.ts';
@@ -23,8 +23,10 @@ interface ConsoleParts { glass: THREE.MeshStandardMaterial | null; beacon: THREE
 const GLASS_REST = 1.6;
 const GLASS_ACTIVE = 3.2;
 /**
- * Emission of the path lines (the cube's faces, the plates, the tower's ring): they render at about L* 70, some 15 L* over
- * the paving they lie on in the shade, and stay under the bloom threshold. (At 1.3 they were flat strips at L* 86.)
+ * Emission of the path lines (the cube's faces, the plates, the mural's tablets, the tower's ring). On the cube and the
+ * plates this is the value on a line's middle; the glass's vertex colours take it down to 0.62 of it at the edges. They
+ * render at about L* 60 to 75, over the paving they lie on in the shade, and stay under the bloom threshold. (At 1.3 they
+ * were flat strips at L* 86.)
  */
 const PATH_GLOW = 0.5;
 /**
@@ -34,11 +36,12 @@ const PATH_GLOW = 0.5;
  */
 const CUBE_TONE = { lit: 0.6, shade: 1 };
 /**
- * How much of the sky's reflection the gate's ring takes: as much as stone does (the small gilt ornaments take look.ts
+ * How much of the sky's reflection the gate's ring takes, against stone's 1 (the small gilt ornaments take look.ts
  * giltEnv, 2.4, which on a ring 9 m across is a white disc). At 0.45 the ring had little but the low warm sun on it and
- * rendered far more saturated than the kit's gilt.
+ * rendered far more saturated than the kit's gilt; at 1 it was still a deeper ochre (196,153,73) than the gilt eagle
+ * above it. At 1.6 its median is about (223,179,88) and its near-white share stays near 1 %.
  */
-const RING_SKY = 1;
+const RING_SKY = 1.6;
 
 const AXIS: Record<'x' | 'y' | 'z', THREE.Vector3> = {
   x: new THREE.Vector3(1, 0, 0),
@@ -92,6 +95,11 @@ export class World {
   private cubeFaces: Partial<Record<CubeFace, DirName[]>> = {};
   /** The gilt-crowned piers and the sills of the arm towers: hidden while their group turns. */
   private crowns: { group: Id; node: THREE.Object3D }[] = [];
+  /**
+   * The parapets of a street that folds, in the street's own frame: shown while the walk map has none for it (it hangs, or
+   * it is on its way), so the street is a walled street all the time and not a bare slab with lamp piers.
+   */
+  private streetRails: { id: Id; node: THREE.Object3D }[] = [];
   /** The sills at the ends of the towers' arms: shown where the arm meets a walkway, hidden while their group turns. */
   private sills: { group: Id | undefined; node: THREE.Object3D; out: THREE.Vector3 }[] = [];
   private readonly moduleById = new Map<Id, CompiledStage['modules'][number]>();
@@ -264,6 +272,7 @@ export class World {
       const f = cellFloor(this.moduleById.get(id)!.at);
       this.root.getObjectByName(id)!.add(kit.build(placements, { tintOrigin: new THREE.Vector3(f[0], f[1], f[2]), walk: plan.walkModules.get(id) }));
     }
+    this.addStreetRails(kit);
     this.addSetPieces(kit);
     // the bronze and gilt of all consoles are two meshes; each console keeps its own glass, lit by itself
     this.root.updateMatrixWorld(true);
@@ -288,6 +297,33 @@ export class World {
     const bulb = kit.material('M_lamp_bulb');
     if (bulb) bulb.emissiveIntensity = 2.6; // small and warm: just enough to glow against the dusk sky
     this.setState(this.state, false);
+  }
+
+  /**
+   * The balustrades of the streets that fold, as the walk map lays them once a street is down: along both sides of every
+   * cell but at a side port, a post at each end of a segment. They turn with the street.
+   */
+  private addStreetRails(kit: Kit) {
+    const slots = kit.slots('balustrade', 'baluster_');
+    for (const m of this.cs.modules) {
+      if (m.type !== 'bridge' || !isStreet(m) || !m.group) continue;
+      const open = new Set((m.params.sidePorts ?? []).map((p) => `${p.i}${p.side}`));
+      const segments: THREE.Matrix4[] = [];
+      const posts = new Map<string, THREE.Matrix4>();
+      for (let i = 0; i < m.params.length; i++)
+        for (const side of ['N', 'S'] as const) {
+          if (open.has(`${i}${side}`)) continue;
+          segments.push(sideMatrix(i * CELL, 0, 0, side));
+          const z = side === 'N' ? -RAIL_LINE : RAIL_LINE;
+          for (const x of [i * CELL - CELL / 2, i * CELL + CELL / 2]) posts.set(`${x},${z}`, new THREE.Matrix4().makeTranslation(x, 0, z));
+        }
+      const balusters = segments.flatMap((seg) => slots.map((b) => new THREE.Matrix4().multiplyMatrices(seg, b)));
+      const node = new THREE.Group();
+      node.name = 'street-rails';
+      node.add(...kit.instances('balustrade_body', segments, 0.08), ...kit.instances('baluster_00', balusters, 0.1), ...kit.instances('post', [...posts.values()], 0.08));
+      this.root.getObjectByName(m.id)!.add(node);
+      this.streetRails.push({ id: m.id, node });
+    }
   }
 
   /**
@@ -386,6 +422,19 @@ export class World {
     for (const glass of kit.materialsNamed('M_path_glass')) {
       glass.emissive.copy(this.M.accent);
       glass.emissiveIntensity = PATH_GLOW;
+      // the glass's vertex colours shape its light (a lit core along the middle of a line: the kit's scripts,
+      // fc_kit.py glow_gradient); without them a line is one flat value from edge to edge
+      glass.onBeforeCompile = (shader) => {
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <emissivemap_fragment>',
+          `#include <emissivemap_fragment>
+	#if defined( USE_COLOR ) || defined( USE_COLOR_ALPHA )
+		totalEmissiveRadiance *= vColor.rgb;
+	#endif`,
+        );
+      };
+      glass.customProgramCacheKey = () => 'path-glass-gradient';
+      glass.needsUpdate = true;
     }
   }
 
@@ -595,6 +644,12 @@ export class World {
     }
     const kit = this.kit;
     if (!kit) return;
+    // a folding street carries its own parapets wherever this map gives it none
+    for (const r of this.streetRails) {
+      let walked = false;
+      for (const t of wm.tiles.values()) if (t.module === r.id) walked = true;
+      r.node.visible = !walked || hiddenModules.has(r.id);
+    }
     const lists: Record<'balustrade' | 'wall_a' | 'wall_b', THREE.Matrix4[]> = { balustrade: [], wall_a: [], wall_b: [] };
     const posts = new Map<string, THREE.Matrix4>();
     const step = (cell: readonly number[], s: Side) => `${cell[0] + DIRS[s][0]},${cell[1]},${cell[2] + DIRS[s][2]}`;

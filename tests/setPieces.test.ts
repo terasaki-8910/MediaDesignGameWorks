@@ -104,5 +104,13 @@ test('a lamped bridge of four cells is dressed as a street: kerbs on every side 
   assert.ok(near(position(arch[0].matrix), [13.2, 0, 0]));
   // the side port is on the north of cell 1: no kerb there
   assert.ok(!own.some((p) => p.piece === 'street_side' && Math.abs(position(p.matrix).x - 4) < 1e-6 && near(axis(p.matrix, 0, 0, -1), [0, 0, -1])));
+  // it hangs with its underside before the player: its own coffered soffit under every cell, and consoles under each cornice
+  assert.equal(own.filter((p) => p.piece === 'street_soffit').length, 4);
+  assert.equal(own.filter((p) => p.piece === 'slab_bottom').length, 0);
+  const cornices = own.filter((p) => p.piece === 'edge_cornice');
+  const consoles = own.filter((p) => p.piece === 'street_brackets');
+  assert.ok(consoles.length > 0);
+  assert.equal(consoles.length, cornices.length);
+  for (const c of consoles) assert.ok(cornices.some((e) => e.matrix.equals(c.matrix)), 'consoles stand under a cornice');
   assert.equal((plan.modules.get('m_bridge1') ?? []).filter((p) => p.piece.startsWith('street_')).length, 0);
 });

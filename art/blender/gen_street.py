@@ -15,6 +15,14 @@ The deck, the cornices, the parapets and the lamps are the kit's. This file adds
                where the kit would put its plain edge, which is baked against a neighbour and is a dark blank strip when
                the street hangs and is seen edge-on): the kit's kerb and cornice cut into the slab, so that nothing
                passes the cell's edge and the street can lie against its neighbours.
+  street_soffit    the underside of one cell (the game uses it in place of the kit's plain slab_bottom: while the street
+                   hangs its underside is an upright face 16 m tall, seen from the walkways): a coffer cut into the
+                   slab, with a flat margin (the margins of two cells make a rib across the street), a panel sunk 10 cm
+                   in two steps and an octagonal patera in its middle. Nothing passes the slab's underside.
+  street_brackets  eight consoles under the cornice of one cell's open edge (modelled on the north edge): scrolled
+                   blocks 16 cm wide that carry the kit's cornice, half a metre apart. They stand out 13.5 cm, inside
+                   the cornice's 15.
+The street's parapets while it hangs are the kit's balustrade, laid out by the game (world.ts).
 The street folds down from hanging, so nothing here knows which way is up: no ground under the bake, one tone for
 every face of a piece.
 """
@@ -88,26 +96,49 @@ bm = bmesh.new()
 K.sunk_edge(bm, H, K.SLAB)
 edge = K.finish(K.new_object("street_edge", bm, materials=MATS), smooth_angle=30)
 
-parts = [side, piers, ring, edge]
+# the underside: a coffer cut up into the slab
+bm = bmesh.new()
+Z0 = -K.SLAB
+K.loft(bm, [(H, Z0, 0.0), (1.62, Z0, 0.0), (1.56, Z0 + 0.05, 0.0), (1.5, Z0 + 0.05, 0.0), (1.44, Z0 + 0.1, 0.0), (0.7, Z0 + 0.1, 0.2),
+            (0.6, Z0 + 0.035, 0.17), (0.34, Z0 + 0.035, 0.1), (0.28, Z0 + 0.075, 0.08)], 0, cap_bottom=False)
+soffit = K.finish(K.new_object("street_soffit", bm, materials=MATS), smooth_angle=15)
+K.face_up(soffit, axis=(0.0, 0.0, -1.0))
+
+# the consoles under the cornice: (how far out from the cell's edge, height), a scroll from the cornice's bed down to the
+# foot of the fascia
+CONSOLE = [(-0.02, -0.335), (0.135, -0.335), (0.135, -0.37), (0.12, -0.4), (0.085, -0.44), (0.06, -0.49), (0.05, -0.54), (0.03, -0.585), (-0.02, -0.585)]
+bm = bmesh.new()
+for k in range(8):
+    x = -1.75 + 0.5 * k
+    K.prism(bm, [(H + o, z) for o, z in CONSOLE], x - 0.08, x + 0.08, 0)
+brackets = K.finish(K.new_object("street_brackets", bm, materials=MATS), smooth_angle=30)
+
+parts = [side, piers, ring, edge, soffit, brackets]
 for k, ob in enumerate(parts):
     K.world_uv(ob, offset=(0.7 * k, 0.3 * k, 0.45 * k))
     print(f"{ob.name}: {K.triangles(ob)} triangles")
 for ob in (piers, ring):
     ob.location = (20.0, 0, 0)
 edge.location = (0, 20.0, 0)
+soffit.location = (0, 40.0, 0)
+brackets.location = (20.0, 40.0, 0)
 bpy.context.view_layer.update()
 K.unwrap_atlas(parts, "UV1", margin=0.008)
 ao = K.bake_ao(parts, "street_ao", 256, distance=0.8, strength=1.2)
 K.grime_vertex_colours(parts, ao, amount=0.6, skip=("M_gilt",))
-K.face_weathering([piers, ring, edge], vertical=ARCH_TONE, top=ARCH_TONE, skip=("M_gilt",))
+K.face_weathering([piers, ring, edge, soffit, brackets], vertical=ARCH_TONE, top=ARCH_TONE, skip=("M_gilt",))
 K.face_weathering([side], vertical=KERB_TONE, top=KERB_TONE)
-for ob in (piers, ring, edge):
+for ob in (piers, ring, edge, soffit, brackets):
     ob.location = (0, 0, 0)
 bpy.context.view_layer.update()
 if max(v.co.y for v in edge.data.vertices) > H + 1e-4:
     raise RuntimeError("the street's edge stands out of its cell: the street lies against its neighbours")
+if min(v.co.z for v in soffit.data.vertices) < -K.SLAB - 1e-4 or max(max(abs(v.co.x), abs(v.co.y)) for v in soffit.data.vertices) > H + 1e-4:
+    raise RuntimeError("the street's soffit passes the slab: the street lies against its neighbours")
+if max(v.co.y for v in brackets.data.vertices) > H + 0.15:
+    raise RuntimeError("the consoles stand out further than the cornice they carry")
 for ob in parts:
-    K.check_mesh(ob, closed=True)
+    K.check_mesh(ob, closed=ob is not soffit)
 verts = [v.co for ob in (piers, ring) for v in ob.data.vertices]
 wide = max(abs(v.x) for v in verts)
 high = max(v.z for v in verts)
@@ -118,4 +149,4 @@ arch = bpy.data.objects.new("street_arch", None)
 bpy.context.collection.objects.link(arch)
 piers.parent = ring.parent = arch
 bpy.context.view_layer.update()
-K.export(OUT, [side, arch, piers, ring, edge])
+K.export(OUT, [side, arch, piers, ring, edge, soffit, brackets])

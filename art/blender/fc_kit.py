@@ -213,11 +213,12 @@ def plain_material(name, colour, metallic=0.0, roughness=0.5, emission=None, str
     return m
 
 
-# The bronze of the set pieces' beads, channels, thresholds and saddles (M_bronze_trim). The kit's dark bronze (#3D3A2E,
-# all metal) is right for a lamp post, but in the shade it has nothing but the sky's reflection and renders under L* 20;
-# these parts lie on stone in the shade as often as in the sun, so the trim is a patinated bronze, part metal, a shade
-# lighter and warm, which keeps a body colour there.
-BRONZE_TRIM = {"colour": "#423624", "metallic": 0.25, "roughness": 0.6}
+# The bronze of the set pieces' channels, thresholds and saddles (M_bronze_trim). The kit's dark bronze (#3D3A2E, all
+# metal) is right for a lamp post, but in the shade it has nothing but the sky's reflection and renders under L* 20;
+# these parts lie on stone in the shade as often as in the sun, so the trim is a patinated bronze, part metal and warm,
+# which keeps a body colour there. Its colour is set by how it renders: #423624 came out at L* 10-25 on the path lines'
+# rims (black, not bronze); this one is about L* 25-35 in the shade and 40-55 in the sun.
+BRONZE_TRIM = {"colour": "#73593B", "metallic": 0.25, "roughness": 0.6}
 
 
 def bronze_trim_material(opts=None):
@@ -244,10 +245,18 @@ def new_object(name, bm, material=None, materials=None):
     return ob
 
 
-def prism(bm, profile, x0, x1, material_index=0):
-    """Extrude a closed profile [(y, z), ...] along X from x0 to x1, with end caps."""
-    a = [bm.verts.new((x0, y, z)) for y, z in profile]
-    b = [bm.verts.new((x1, y, z)) for y, z in profile]
+def GLASS_SECTION(half, top):
+    """The section of a path line's glass strip, `half` to each side and `top` high at its edges: its upper corners cut
+    and a low ridge along its middle (the vertices there carry the lit core, see glow_gradient)."""
+    return [(-half, 0.0), (half, 0.0), (half, top - 0.004), (half - 0.004, top), (0.0, top + 0.004), (-half + 0.004, top), (-half, top - 0.004)]
+
+
+def prism(bm, profile, x0, x1, material_index=0, along=0):
+    """Extrude a closed profile [(y, z), ...] along X from x0 to x1, with end caps (`along` = 1: a profile [(x, z), ...]
+    along Y)."""
+    at = (lambda t, u, z: (u, t, z)) if along == 1 else (lambda t, u, z: (t, u, z))
+    a = [bm.verts.new(at(x0, y, z)) for y, z in profile]
+    b = [bm.verts.new(at(x1, y, z)) for y, z in profile]
     n = len(profile)
     faces = [bm.faces.new((a[i], a[(i + 1) % n], b[(i + 1) % n], b[i])) for i in range(n)]
     faces.append(bm.faces.new(a))
@@ -530,11 +539,13 @@ def unwrap_atlas(objects, layer, margin=0.004):
     bpy.ops.object.mode_set(mode="OBJECT")
 
 
-def bake_ao(objects, name, size, layer="UV1", occluders=(), distance=1.2, strength=1.0):
+def bake_ao(objects, name, size, layer="UV1", occluders=(), distance=1.2, strength=1.0, clear=0.0):
     """Bake ambient occlusion of `objects` into one image on `layer` and wire it into their materials for glTF.
 
     `occluders` only cast (ground planes, neighbours): they are hidden from the export by the caller. The bake uses
-    Cycles' AO pass, which has no light direction in it.
+    Cycles' AO pass, which has no light direction in it. `clear` is the value of the texels no face covers (0, black, is
+    what Blender's bake leaves): 1 keeps the smaller mip levels of an island's edge from taking black from the empty
+    atlas beside it, which shows as a black band along the edge of a face wherever only the sky lights it.
     """
     scene = bpy.context.scene
     world = scene.world or bpy.data.worlds.new("World")
@@ -542,6 +553,8 @@ def bake_ao(objects, name, size, layer="UV1", occluders=(), distance=1.2, streng
     world.light_settings.distance = distance
     img = bpy.data.images.new(name, size, size, alpha=False)
     img.colorspace_settings.name = "Non-Color"
+    if clear > 0:
+        img.pixels.foreach_set(np.tile(np.array([clear, clear, clear, 1.0], dtype=np.float32), size * size))
     materials = []
     for ob in objects:
         ob.data.uv_layers.active = ob.data.uv_layers[layer]
@@ -569,7 +582,7 @@ def bake_ao(objects, name, size, layer="UV1", occluders=(), distance=1.2, streng
         ob.hide_render = False
     bpy.context.view_layer.objects.active = objects[0]
     scene.render.bake.margin = 8
-    scene.render.bake.use_clear = True
+    scene.render.bake.use_clear = clear <= 0
     scene.render.bake.target = "IMAGE_TEXTURES"
     bpy.ops.object.bake(type="AO", uv_layer=layer)
     px = _pixels(img)
@@ -585,6 +598,36 @@ def bake_ao(objects, name, size, layer="UV1", occluders=(), distance=1.2, streng
         out.node_tree = group
         nt.links.new(nodes[mat.name].outputs["Color"], out.inputs["Occlusion"])
     return img
+
+
+def flat_ao(ob, ao_img, material=None, layer="UV1", at=(0.5, 0.5)):
+    """Give the faces of `ob` (those of the material named `material`, or all) one point of the occlusion map: the middle
+    of their own island (or the point `at`, as fractions of its bounds, where something lies on its middle). For a flat face with nothing over it (a paved top): its occlusion is 1 all over, and an edge of
+    its island would otherwise take the dark of whatever lies beside it in the atlas."""
+    me = ob.data
+    uv = me.uv_layers[layer].data
+    loops = [li for poly in me.polygons if material is None or me.materials[poly.material_index].name == material for li in poly.loop_indices]
+    if not loops:
+        raise RuntimeError(f"{ob.name}: no face of {material}")
+    pts = np.array([uv[li].uv[:] for li in loops])
+    mid = pts.min(0) + (pts.max(0) - pts.min(0)) * np.array(at)
+    if sample_image(ao_img, mid[None, :])[0] < 0.95:
+        raise RuntimeError(f"{ob.name}: the chosen point of the {material} island is not open ({sample_image(ao_img, mid[None, :])[0]:.2f})")
+    for li in loops:
+        uv[li].uv = (float(mid[0]), float(mid[1]))
+
+
+def glow_gradient(ob, material, value):
+    """COLOR_0 of the faces of the material named `material`: `value(co)` (0..1) at each vertex, in the piece's frame. The
+    game multiplies the emission of the path lines' glass by it, so a line is not one flat value."""
+    me = ob.data
+    attr = me.color_attributes["Color"]
+    for poly in me.polygons:
+        if me.materials[poly.material_index].name != material:
+            continue
+        for li in poly.loop_indices:
+            v = float(value(me.vertices[me.loops[li].vertex_index].co))
+            attr.data[li].color = (v, v, v, 1.0)
 
 
 def sample_image(img, uvs):
