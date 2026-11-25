@@ -792,20 +792,40 @@ def triangles(ob):
     return sum(len(p.vertices) - 2 for p in ob.data.polygons)
 
 
-def export(path, objects, jpeg_quality=88):
-    """Export the given objects (and their parents) as one GLB. Options were listed on Blender 4.4.3."""
+def export(path, objects, jpeg_quality=88, draco=None):
+    """Export the given objects (and their parents) as one GLB. Options were listed on Blender 4.4.3.
+
+    `draco` compresses the meshes with Draco (KHR_draco_mesh_compression; the game then needs three's DRACOLoader:
+    src/game/gltf.ts). It is a dict of quantization bits and the level, {"position": 14, "normal": 10, "texcoord": 14,
+    "level": 6} (level 0 keeps the order of the triangles, the others pack them tighter and reorder them): Draco quantizes
+    only attributes of floats, so a colour written as normalized shorts (COLOR_0 with its alpha) comes through exactly.
+    Blender only warns and writes a plain file when its Draco library is missing, so the file is checked."""
     for ob in bpy.context.view_layer.objects:
         ob.select_set(False)
     for ob in objects:
         ob.hide_render = False
         ob.select_set(True)
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    more = {}
+    if draco:
+        more = dict(export_draco_mesh_compression_enable=True, export_draco_mesh_compression_level=draco.get("level", 6),
+                    export_draco_position_quantization=draco.get("position", 14), export_draco_normal_quantization=draco.get("normal", 10),
+                    export_draco_texcoord_quantization=draco.get("texcoord", 14), export_draco_color_quantization=draco.get("color", 12),
+                    export_draco_generic_quantization=draco.get("generic", 12))
     bpy.ops.export_scene.gltf(
         filepath=path, export_format="GLB", use_selection=True, export_apply=True, export_yup=True,
         export_image_format="JPEG", export_jpeg_quality=jpeg_quality, export_texcoords=True, export_normals=True,
         export_tangents=False, export_materials="EXPORT", export_vertex_color="ACTIVE", export_all_vertex_colors=False,
         export_cameras=False, export_lights=False, export_animations=False, export_extras=False,
-        export_gpu_instances=False,
+        export_gpu_instances=False, **more,
     )
+    if draco:
+        import json
+        import struct
+        with open(path, "rb") as fh:
+            head = fh.read(20)
+            doc = json.loads(fh.read(struct.unpack("<I", head[12:16])[0]))
+        if "KHR_draco_mesh_compression" not in doc.get("extensionsRequired", []):
+            raise RuntimeError(f"{path}: written without Draco compression (is Blender's Draco library missing?)")
     tris = sum(triangles(o) for o in objects if o.type == "MESH")
     print(f"exported {path}: {len(objects)} nodes, {tris} triangles, {os.path.getsize(path)} bytes")
