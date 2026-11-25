@@ -61,7 +61,7 @@ Claude Code はサブスクリプションの利用枠（回数制限）の範�
 
 プレイヤーを人型モデルにしたい場合は、VRM ファイルを `public/assets/player.vrm` に置くと、マントの人物の代わりに使われます（歩行はプログラムで動かすので、アニメーションのファイルは不要です）。配布されているモデルを使う場合は、利用条件を確認してください。
 
-門のモデルは `art/blender/gen_gate.py` で生成しています。Python 3.13 で `pip install bpy==5.2.3` をした環境で `python art/blender/gen_gate.py` を実行すると、`public/assets/gate.glb` が作り直されます。Blender 本体があれば `blender --background --python art/blender/gen_gate.py` でも同じです。
+門のモデルは、ほかの部材と同じく Blender 4.4.3 のスクリプトで生成しています。`node <game3d>/scripts/blender.mjs art/blender/gen_gate.py -- --out public/assets/kit/gate.glb` を実行すると作り直されます（`<game3d>` は制作用ハーネス game3d のスキルのフォルダ。パスキューブ・渡し板・壁画・塔・街路は `gen_cube.py`・`gen_plate.py`・`gen_mural.py`・`gen_tower.py`・`gen_street.py` で同じように作り直せます）。同じスクリプトからは毎回同じファイルができます。
 
 ## プレイテストの印
 

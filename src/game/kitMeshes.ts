@@ -1,4 +1,7 @@
-// Procedural meshes for each module type, built in the same module-local frame as src/core/kit.ts.
+// What every module type needs before the Blender kit has loaded, in the same module-local frame as src/core/kit.ts:
+// the hidden colliders the camera's rays hit, and the nodes the kit's pieces are hung on. What the player sees comes
+// from the kit (kit.ts, kitLayout.ts, setPieces.ts). `fallback` builds the old plain meshes instead; it is called only
+// when the kit could not be loaded, so the game can still be played.
 import * as THREE from 'three';
 import { CUBE_FACE_NORMAL, SLAB } from '../core/kit.ts';
 import { DIRS, type DirName } from '../core/math.ts';
@@ -29,52 +32,6 @@ function slabMesh(M: Materials, w: number, d: number, cellsU: number, cellsV: nu
   return m;
 }
 
-function cornice(M: Materials, w: number, d: number) {
-  const c = mesh(box(w + 0.35, 0.16, d + 0.35), M.parapet);
-  c.position.y = -SLAB - 0.05;
-  return c;
-}
-
-function columns(M: Materials, pts: [number, number][], depth = 46) {
-  const g = new THREE.CylinderGeometry(0.42, 0.55, depth, 10);
-  const inst = new THREE.InstancedMesh(g, M.column, pts.length);
-  const m4 = new THREE.Matrix4();
-  pts.forEach(([x, z], i) => inst.setMatrixAt(i, m4.makeTranslation(x, -SLAB - depth / 2, z)));
-  inst.castShadow = true;
-  inst.receiveShadow = true;
-  return inst;
-}
-
-function lampPost(M: Materials) {
-  const g = new THREE.Group();
-  const post = mesh(new THREE.CylinderGeometry(0.06, 0.09, 3.0, 8), M.brass);
-  post.position.y = 1.5;
-  // kept small: lamps pass right by the camera on the bridges, where a big bright bulb fills the frame
-  const bulb = mesh(new THREE.SphereGeometry(0.15, 12, 8), M.lamp, false, false);
-  bulb.position.y = 3.1;
-  const cap = mesh(new THREE.ConeGeometry(0.2, 0.18, 10), M.brass);
-  cap.position.y = 3.31;
-  g.add(post, bulb, cap);
-  return g;
-}
-
-function arch(M: Materials, span: number, height: number) {
-  const g = new THREE.Group();
-  const r = span / 2;
-  for (const x of [-r, r]) {
-    const p = mesh(box(0.5, height, 0.5), M.parapet);
-    p.position.set(x, height / 2, 0);
-    g.add(p);
-  }
-  const ring = mesh(new THREE.TorusGeometry(r, 0.25, 8, 24, Math.PI), M.parapet);
-  ring.position.y = height;
-  g.add(ring);
-  const key = mesh(box(0.6, 0.6, 0.6), M.brass);
-  key.position.y = height + r;
-  g.add(key);
-  return g;
-}
-
 /** Texture-space offset of an arm on a BoxGeometry face (u right, v down), see BoxGeometry's buildPlane. */
 const FACE_UV: Record<CubeFace, { u: readonly number[]; v: readonly number[]; material: number }> = {
   east: { u: [0, 0, -1], v: [0, -1, 0], material: 0 },
@@ -97,6 +54,14 @@ export interface ModuleVisual {
   root: THREE.Object3D;
   /** Meshes that should block the camera. */
   colliders: THREE.Object3D[];
+  /** Builds the plain stand-in for the kit's pieces (the kit failed to load). */
+  fallback?: () => void;
+}
+
+/** A collider that is never drawn: the camera's rays still hit it. */
+function hidden<T extends THREE.Object3D>(o: T): T {
+  o.visible = false;
+  return o;
 }
 
 export interface BuildContext { cubeFaces?: Record<CubeFace, DirName[]> }
@@ -109,13 +74,8 @@ export function buildModuleMesh(m: ModuleInstance, M: Materials, ctx: BuildConte
       const [w, d] = m.params.size ?? [1, 1];
       const s = slabMesh(M, w * 4, d * 4, w, d);
       s.position.set((w - 1) * 2, -SLAB / 2, (d - 1) * 2);
-      const c = cornice(M, w * 4, d * 4);
-      c.position.x = (w - 1) * 2;
-      c.position.z = (d - 1) * 2;
-      const pts: [number, number][] = [];
-      for (let i = 0; i <= w; i += Math.max(1, Math.floor(w / 2)))
-        for (let j = 0; j <= d; j += Math.max(1, Math.floor(d / 2))) pts.push([i * 4 - 2.4 + (i === 0 ? 0.8 : 0), j * 4 - 2.4 + (j === 0 ? 0.8 : 0)]);
-      root.add(s, c, columns(M, pts));
+      s.visible = false; // the camera's rays still hit it
+      root.add(s);
       return { root, colliders: [s] };
     }
     case 'bridge': {
@@ -123,82 +83,47 @@ export function buildModuleMesh(m: ModuleInstance, M: Materials, ctx: BuildConte
       const inset = m.params.inset ?? 0;
       const s = slabMesh(M, L * 4 - inset * 2, 4, L, 1);
       s.position.set((L - 1) * 2, -SLAB / 2, 0);
-      const beam = mesh(box(L * 4 - inset * 2 - 1, 1.4, 1.6), M.slate);
-      beam.position.set((L - 1) * 2, -SLAB - 0.7, 0);
-      const trim = mesh(box(L * 4 - inset * 2, 0.12, 4.3), M.brass);
-      trim.position.set((L - 1) * 2, -SLAB - 0.02, 0);
-      root.add(s, beam, trim);
-      if (m.params.lamps) {
-        const open = new Set((m.params.sidePorts ?? []).map((p) => `${p.i}${p.side}`));
-        for (let i = 0; i < L; i++)
-          for (const side of ['N', 'S'] as const) {
-            if (open.has(`${i}${side}`)) continue;
-            const lp = lampPost(M);
-            lp.position.set(i * 4, 0, side === 'N' ? -1.75 : 1.75);
-            root.add(lp);
-          }
-        if (L >= 4) {
-          const a = arch(M, 4.2, 4.2);
-          a.rotation.y = Math.PI / 2;
-          a.position.set((L - 1) * 4 + 1.2, 0, 0);
-          root.add(a);
-        }
-      }
+      s.visible = false;
+      root.add(s);
       return { root, colliders: [s] };
     }
     case 'cube3': {
       const faces = m.params.faces;
-      const mats: THREE.Material[] = new Array(6);
-      (Object.keys(FACE_UV) as CubeFace[]).forEach((face, k) => {
-        const { map, emissive } = cubeFaceTextures(faceArmsUV(face, faces[face] ?? []), '#7ff6ff', 30 + k);
-        mats[FACE_UV[face].material] = new THREE.MeshStandardMaterial({
-          map, emissiveMap: emissive, emissive: new THREE.Color(1, 1, 1), emissiveIntensity: 2.2, roughness: 0.42, metalness: 0.05,
-        });
-      });
-      const c = mesh(box(12, 12, 12), mats);
+      const c = hidden(mesh(box(12, 12, 12), M.parapet));
       c.position.set(4, 6, 4);
       c.userData.collider = true;
       root.add(c);
-      // brass edges
-      const e = 6.05;
-      for (const [sx, sy, sz, px, py, pz] of [
-        [12.3, 0.3, 0.3, 0, e, e], [12.3, 0.3, 0.3, 0, -e, e], [12.3, 0.3, 0.3, 0, e, -e], [12.3, 0.3, 0.3, 0, -e, -e],
-        [0.3, 12.3, 0.3, e, 0, e], [0.3, 12.3, 0.3, -e, 0, e], [0.3, 12.3, 0.3, e, 0, -e], [0.3, 12.3, 0.3, -e, 0, -e],
-        [0.3, 0.3, 12.3, e, e, 0], [0.3, 0.3, 12.3, -e, e, 0], [0.3, 0.3, 12.3, e, -e, 0], [0.3, 0.3, 12.3, -e, -e, 0],
-      ]) {
-        const b = mesh(box(sx, sy, sz), M.brass);
-        b.position.set(4 + px, 6 + py, 4 + pz);
-        root.add(b);
-      }
-      return { root, colliders: [c] };
+      const fallback = () => {
+        const mats: THREE.Material[] = new Array(6);
+        (Object.keys(FACE_UV) as CubeFace[]).forEach((face, k) => {
+          const { map, emissive } = cubeFaceTextures(faceArmsUV(face, faces[face] ?? []), '#7ff6ff', 30 + k);
+          mats[FACE_UV[face].material] = new THREE.MeshStandardMaterial({
+            map, emissiveMap: emissive, emissive: new THREE.Color(1, 1, 1), emissiveIntensity: 2.2, roughness: 0.42, metalness: 0.05,
+          });
+        });
+        c.material = mats;
+        c.visible = true;
+      };
+      return { root, colliders: [c], fallback };
     }
     case 'tower': {
       const depth = m.params.depth ?? 40;
       const inset = m.params.inset ?? 0.4;
-      const top = slabMesh(M, 4, 4, 1, 1);
+      const top = hidden(slabMesh(M, 4, 4, 1, 1));
       root.add(top);
       const colliders: THREE.Object3D[] = [top];
       for (const a of m.params.arms) {
         const d = DIRS[a];
         const along = Math.abs(d[0]) > 0;
         const len = 4 - inset;
-        const s = slabMesh(M, along ? len : 4, along ? 4 : len, along ? 1 : 1, 1);
+        const s = hidden(slabMesh(M, along ? len : 4, along ? 4 : len, along ? 1 : 1, 1));
         s.position.set(d[0] * (2 + len / 2), -SLAB / 2, d[2] * (2 + len / 2));
         root.add(s);
         colliders.push(s);
-        const strut = mesh(box(along ? len : 0.6, 1.2, along ? 0.6 : len), M.brass);
-        strut.position.set(d[0] * (2 + len / 2), -SLAB - 0.6, d[2] * (2 + len / 2));
-        root.add(strut);
       }
-      const col = mesh(new THREE.CylinderGeometry(1.6, 1.9, depth, 20), M.slate);
+      const col = hidden(mesh(new THREE.CylinderGeometry(1.6, 1.9, depth, 20), M.slate));
       col.position.y = -SLAB - depth / 2;
-      const gear = mesh(new THREE.TorusGeometry(2.1, 0.22, 8, 32), M.brass);
-      gear.rotation.x = Math.PI / 2;
-      gear.position.y = -SLAB - 0.4;
-      const ring = mesh(new THREE.TorusGeometry(1.2, 0.06, 6, 32), M.glow, false, false);
-      ring.rotation.x = Math.PI / 2;
-      ring.position.y = 0.03;
-      root.add(col, gear, ring);
+      root.add(col);
       colliders.push(col);
       return { root, colliders };
     }
@@ -208,79 +133,145 @@ export function buildModuleMesh(m: ModuleInstance, M: Materials, ctx: BuildConte
       const holder = new THREE.Group();
       holder.position.set(-d[0] * 2, 0, -d[2] * 2);
       holder.rotation.y = Math.atan2(d[0], d[2]);
-      const p = mesh(box(3.8, 0.25, 4), [M.slabSide, M.slabSide, M.floor, M.slabSide, M.slabSide, M.slabSide]);
-      p.geometry.translate(0, -0.125, 2);
-      const lip = mesh(box(3.9, 0.1, 0.25), M.glow, false, false);
-      lip.geometry.translate(0, -0.02, 3.9);
-      holder.add(p, lip);
       holder.userData.plate = true;
       root.add(holder);
-      return { root, colliders: [] };
+      const fallback = () => {
+        const p = mesh(box(3.8, 0.25, 4), [M.slabSide, M.slabSide, M.floor, M.slabSide, M.slabSide, M.slabSide]);
+        p.geometry.translate(0, -0.125, 2);
+        const lip = mesh(box(3.9, 0.1, 0.25), M.glow, false, false);
+        lip.geometry.translate(0, -0.02, 3.9);
+        holder.add(p, lip);
+      };
+      return { root, colliders: [], fallback };
     }
     case 'deco': {
-      if (m.params.kind === 'gate') {
-        const s = m.params.size ?? 1;
-        const g = new THREE.Group();
-        const ring = mesh(new THREE.TorusGeometry(4.2 * s, 0.45 * s, 16, 64), M.brass);
-        ring.position.y = 5 * s;
-        const inner = mesh(new THREE.TorusGeometry(3.4 * s, 0.12 * s, 8, 64), M.glow, false, false);
-        inner.position.y = 5 * s;
-        const disc = mesh(new THREE.CircleGeometry(3.3 * s, 48), M.glowSoft, false, false);
-        disc.position.y = 5 * s;
-        disc.name = 'gateDisc';
-        const base = mesh(box(9 * s, 0.6, 2.2 * s), M.parapet);
-        base.position.y = 0.3;
-        g.add(ring, inner, disc, base);
-        root.add(g);
-      } else if (m.params.kind === 'mural') {
-        const panel = mesh(box(9, 3.2, 0.25), [M.parapet, M.parapet, M.parapet, M.parapet, M.parapet,
-          new THREE.MeshStandardMaterial({
-            map: muralTexture(
-              (['top', 'north', 'east', 'south', 'west', 'bottom'] as CubeFace[]).map((f) => ({
-                name: { top: '上', north: '北', east: '東', south: '南', west: '西', bottom: '底' }[f],
-                arms: faceArmsUV(f, ctx.cubeFaces?.[f] ?? []),
-              })),
-              '#7ff6ff',
-            ),
-            roughness: 0.6,
-          })]);
-        panel.position.set(0, 1.9, 1.7);
-        panel.rotation.y = Math.PI;
-        root.add(panel);
-      } else {
-        const ob = mesh(new THREE.CylinderGeometry(0.4, 0.8, 8, 4), M.parapet);
-        ob.position.y = 4;
-        root.add(ob);
+      const fallback = () => {
+        if (m.params.kind === 'gate') {
+          const s = m.params.size ?? 1;
+          const g = new THREE.Group();
+          const ring = mesh(new THREE.TorusGeometry(4.2 * s, 0.45 * s, 16, 64), M.brass);
+          ring.position.y = 5 * s;
+          const inner = mesh(new THREE.TorusGeometry(3.4 * s, 0.12 * s, 8, 64), M.glow, false, false);
+          inner.position.y = 5 * s;
+          const disc = mesh(new THREE.CircleGeometry(3.3 * s, 48), M.glowSoft, false, false);
+          disc.position.y = 5 * s;
+          disc.name = 'gateDisc';
+          const base = mesh(box(9 * s, 0.6, 2.2 * s), M.parapet);
+          base.position.y = 0.3;
+          g.add(ring, inner, disc, base);
+          root.add(g);
+        } else if (m.params.kind === 'mural') {
+          const panel = mesh(box(9, 3.2, 0.25), [M.parapet, M.parapet, M.parapet, M.parapet, M.parapet,
+            new THREE.MeshStandardMaterial({
+              map: muralTexture(
+                (['top', 'north', 'east', 'south', 'west', 'bottom'] as CubeFace[]).map((f) => ({
+                  name: { top: '上', north: '北', east: '東', south: '南', west: '西', bottom: '底' }[f],
+                  arms: faceArmsUV(f, ctx.cubeFaces?.[f] ?? []),
+                })),
+                '#7ff6ff',
+              ),
+              roughness: 0.6,
+            })]);
+          panel.position.set(0, 1.9, 1.7);
+          panel.rotation.y = Math.PI;
+          root.add(panel);
+        } else {
+          const ob = mesh(new THREE.CylinderGeometry(0.4, 0.8, 8, 4), M.parapet);
+          ob.position.y = 4;
+          root.add(ob);
+        }
+      };
+      if (m.params.kind !== 'gate' && m.params.kind !== 'mural') {
+        fallback(); // no kit piece for it: the plain mesh is all there is
+        return { root, colliders: [] };
       }
-      return { root, colliders: [] };
+      return { root, colliders: [], fallback };
     }
   }
 }
 
+/** An open cylinder whose vertex colours run from full at the foot to nothing at the top: a column of light with no cap. */
+function fadingColumn(radius: number, height: number, sides: number): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(radius, radius, height, sides, 10, true);
+  const pos = g.getAttribute('position');
+  const col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const t = pos.getY(i) / height + 0.5;
+    const v = (1 - t) ** 1.6 * THREE.MathUtils.smoothstep(t, 0, 0.06);
+    col.set([v, v, v], i * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
+
+/**
+ * The guidance column: a lit tube that is brightest in the middle of its width and dies away at both edges (the glow of a
+ * beam of light, not a slab: the brief keeps it a faint cue), and fades out smoothly well short of its top so it never runs
+ * up into the sky. The edges fall off with the angle between the surface and the eye (see `softEdge`); the fade with
+ * height is in the vertex colours, a slow start at the foot and an ease to nothing at the top.
+ */
+function guideColumn(radius: number, height: number): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(radius, radius, height, 16, 14, true);
+  const pos = g.getAttribute('position');
+  const col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const t = pos.getY(i) / height + 0.5;
+    const v = (1 - THREE.MathUtils.smoothstep(t, 0.0, 1.0)) ** 1.5 * THREE.MathUtils.smoothstep(t, 0, 0.08);
+    col.set([v, v, v], i * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
+
+/**
+ * A copy of the column material whose opacity falls to nothing where the tube turns away from the eye: across the width the
+ * brightness is 1 - (x / r)^2 (a smooth bell), so the beam has soft edges at any distance and from any side.
+ */
+function softEdge(base: THREE.Material): THREE.MeshBasicMaterial {
+  const m = base.clone() as THREE.MeshBasicMaterial;
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vEdgeN;\nvarying vec3 vEdgeV;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvEdgeN = normalize( normalMatrix * normal );\nvEdgeV = ( modelViewMatrix * vec4( position, 1.0 ) ).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vEdgeN;\nvarying vec3 vEdgeV;')
+      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.a *= pow( abs( dot( normalize( vEdgeN ), normalize( - vEdgeV ) ) ), 2.0 );');
+  };
+  m.customProgramCacheKey = () => 'guide-soft-edge';
+  return m;
+}
+
+/** Where a console stands in its cell: against the side it is named after. */
+export const CONSOLE_OFFSET = 1.35;
+/** The guidance column stands from 1.5 m over the cell floor and is 4.4 m tall: from the play camera it ends about a tenth of the frame below its top edge. */
+const GUIDE_FOOT = 1.5;
+const GUIDE_HEIGHT = 4.4;
+
+/**
+ * The cues of a console (floor ring, beacon, guidance column). Its body comes from the kit and is added under the
+ * node named `body`, which is already turned so the kit's front faces the player.
+ */
 export function consoleMesh(c: Interactable, M: Materials): THREE.Group {
   const g = new THREE.Group();
   const d = DIRS[c.facing];
-  const ped = mesh(new THREE.CylinderGeometry(0.42, 0.55, 1.05, 12), M.parapet);
-  ped.position.set(d[0] * 1.35, 0.52, d[2] * 1.35);
-  const top = mesh(new THREE.CylinderGeometry(0.52, 0.52, 0.08, 16), M.brass);
-  top.position.set(d[0] * 1.35, 1.08, d[2] * 1.35);
-  const holo = mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42), M.glow, false, false);
-  holo.position.set(d[0] * 1.35, 1.6, d[2] * 1.35);
-  holo.name = 'holo';
-  const ring = mesh(new THREE.RingGeometry(1.5, 1.62, 40), M.glowSoft, false, false);
+  const body = new THREE.Group();
+  body.name = 'body';
+  body.position.set(d[0] * CONSOLE_OFFSET, 0, d[2] * CONSOLE_OFFSET);
+  body.rotation.y = Math.atan2(-d[0], -d[2]);
+  const ring = mesh(new THREE.RingGeometry(1.5, 1.6, 40), M.glowSoft, false, false);
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.03;
   ring.name = 'ring';
-  const beacon = mesh(new THREE.CylinderGeometry(0.18, 0.18, 30, 8, 1, true), M.glowSoft, false, false);
-  beacon.position.set(d[0] * 1.35, 16, d[2] * 1.35);
+  const beacon = mesh(fadingColumn(0.18, 30, 8), M.column.clone(), false, false);
+  beacon.position.set(d[0] * CONSOLE_OFFSET, 16, d[2] * CONSOLE_OFFSET);
   beacon.visible = false;
   beacon.name = 'beacon';
   // faint guidance column, brightness set by the section's `beacon` tunable
-  const guide = mesh(new THREE.CylinderGeometry(0.5, 0.5, 14, 12, 1, true), M.glowSoft.clone(), false, false);
-  guide.position.set(d[0] * 1.35, 7.6, d[2] * 1.35);
+  const guide = mesh(guideColumn(0.55, GUIDE_HEIGHT), softEdge(M.column), false, false);
+  guide.position.set(d[0] * CONSOLE_OFFSET, GUIDE_FOOT + GUIDE_HEIGHT / 2, d[2] * CONSOLE_OFFSET);
   guide.name = 'guide';
   guide.visible = false;
-  g.add(ped, top, holo, ring, beacon, guide);
+  g.add(body, ring, beacon, guide);
   return g;
 }
 

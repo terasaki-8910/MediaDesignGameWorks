@@ -1,0 +1,150 @@
+{
+  "default": {
+    "maxFileBytes": 4000000,
+    "maxTriangles": 100000,
+    "maxDrawCalls": 40,
+    "maxMaterials": 8,
+    "maxTextureSize": 2048,
+    "maxTextureBytes": 6000000,
+    "requireUVs": true,
+    "requirePowerOfTwo": true
+  },
+  "files": {
+    "floor.glb": {
+      "maxFileBytes": 200000,
+      "maxTriangles": 2000,
+      "maxDrawCalls": 8,
+      "maxMaterials": 2,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 100000
+    },
+    "parapet.glb": {
+      "maxFileBytes": 500000,
+      "maxTriangles": 8000,
+      "maxDrawCalls": 22,
+      "maxMaterials": 2,
+      "maxTextureSize": 1024,
+      "maxTextureBytes": 300000
+    },
+    "pier.glb": {
+      "maxFileBytes": 400000,
+      "maxTriangles": 4000,
+      "maxDrawCalls": 10,
+      "maxMaterials": 2,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 150000
+    },
+    "console.glb": {
+      "maxFileBytes": 400000,
+      "maxTriangles": 7000,
+      "maxDrawCalls": 6,
+      "maxMaterials": 3,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 100000
+    },
+    "wanderer.glb": {
+      "maxFileBytes": 1500000,
+      "maxTriangles": 20000,
+      "maxDrawCalls": 4,
+      "maxMaterials": 2,
+      "maxTextureSize": 2048,
+      "maxTextureBytes": 1200000
+    },
+    "lamp.glb": {
+      "maxFileBytes": 300000,
+      "maxTriangles": 3000,
+      "maxDrawCalls": 4,
+      "maxMaterials": 3,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 100000
+    },
+    "materials.glb": {
+      "maxFileBytes": 1600000,
+      "maxTriangles": 8,
+      "maxDrawCalls": 2,
+      "maxMaterials": 2,
+      "maxTextureSize": 1024,
+      "maxTextureBytes": 1600000
+    },
+    "pylon.glb": {
+      "maxFileBytes": 400000,
+      "maxTriangles": 4000,
+      "maxDrawCalls": 4,
+      "maxMaterials": 2,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 100000
+    },
+    "city.glb": {
+      "maxFileBytes": 2800000,
+      "maxTriangles": 27000,
+      "maxDrawCalls": 24,
+      "maxMaterials": 1,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 400000
+    },
+    "cityprops.glb": {
+      "maxFileBytes": 400000,
+      "maxTriangles": 3000,
+      "maxDrawCalls": 10,
+      "maxMaterials": 1,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 1000
+    },
+    "buildings.glb": {
+      "maxFileBytes": 6200000,
+      "maxTriangles": 68000,
+      "maxDrawCalls": 170,
+      "maxMaterials": 11,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 300000
+    },
+    "cube.glb": {
+      "maxFileBytes": 150000,
+      "maxTriangles": 2200,
+      "maxDrawCalls": 8,
+      "maxMaterials": 5,
+      "maxTextureSize": 256,
+      "maxTextureBytes": 10000
+    },
+    "plate.glb": {
+      "maxFileBytes": 60000,
+      "maxTriangles": 700,
+      "maxDrawCalls": 6,
+      "maxMaterials": 5,
+      "maxTextureSize": 128,
+      "maxTextureBytes": 8000
+    },
+    "mural.glb": {
+      "maxFileBytes": 800000,
+      "maxTriangles": 7500,
+      "maxDrawCalls": 9,
+      "maxMaterials": 5,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 80000
+    },
+    "tower.glb": {
+      "maxFileBytes": 500000,
+      "maxTriangles": 7200,
+      "maxDrawCalls": 11,
+      "maxMaterials": 4,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 70000
+    },
+    "street.glb": {
+      "maxFileBytes": 200000,
+      "maxTriangles": 2700,
+      "maxDrawCalls": 8,
+      "maxMaterials": 3,
+      "maxTextureSize": 256,
+      "maxTextureBytes": 15000
+    },
+    "gate.glb": {
+      "maxFileBytes": 640000,
+      "maxTriangles": 13200,
+      "maxDrawCalls": 6,
+      "maxMaterials": 5,
+      "maxTextureSize": 512,
+      "maxTextureBytes": 70000
+    }
+  }
+}

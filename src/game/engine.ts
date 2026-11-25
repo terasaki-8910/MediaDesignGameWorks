@@ -1,8 +1,11 @@
 // Renderer, post-processing and adaptive resolution.
 import * as THREE from 'three';
 import {
-  BloomEffect, EffectComposer, EffectPass, RenderPass, SMAAEffect, ToneMappingEffect, ToneMappingMode, VignetteEffect,
+  BloomEffect, EffectComposer, EffectPass, RenderPass, SMAAEffect, ToneMappingEffect, VignetteEffect,
 } from 'postprocessing';
+
+import { AdaptiveScale } from './adaptiveScale.ts';
+import { LOOK } from './look.ts';
 
 export type Quality = 'low' | 'medium' | 'high';
 
@@ -13,10 +16,13 @@ export class Engine {
   readonly composer: EffectComposer;
   readonly bloom: BloomEffect;
   quality: Quality;
-  private scale = 1;
+  /** Off in review shots: the render scale stays where the quality setting put it. */
+  adaptive = true;
+  /** Runs right before each frame is drawn (the sun's shadow map follows the camera). */
+  beforeRender: (() => void) | null = null;
+  private readonly adaptiveScale: AdaptiveScale;
   private readonly exactPixelRatio: boolean;
   private frameTimes: number[] = [];
-  private sinceAdapt = 0;
 
   /** `exactPixelRatio` renders at the full device pixel ratio (the capture asks for exact output sizes). */
   constructor(canvas: HTMLCanvasElement, quality: Quality, exactPixelRatio = false) {
@@ -27,14 +33,17 @@ export class Engine {
     this.renderer.toneMapping = THREE.NoToneMapping; // done in post
     this.renderer.shadowMap.enabled = quality !== 'low';
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.info.autoReset = false; // counted per frame over all passes: see render()
     this.composer = new EffectComposer(this.renderer, { frameBufferType: THREE.HalfFloatType });
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloom = new BloomEffect({ intensity: 1.15, luminanceThreshold: 0.92, luminanceSmoothing: 0.18, mipmapBlur: true, radius: 0.72 });
-    const tone = new ToneMappingEffect({ mode: ToneMappingMode.AGX });
-    const vignette = new VignetteEffect({ darkness: 0.45, offset: 0.32 });
+    this.bloom = new BloomEffect({
+      intensity: LOOK.bloom.intensity, luminanceThreshold: LOOK.bloom.threshold, luminanceSmoothing: LOOK.bloom.smoothing, mipmapBlur: true, radius: 0.72,
+    });
+    const tone = new ToneMappingEffect({ mode: LOOK.toneMapping });
+    const vignette = new VignetteEffect({ darkness: 0.2, offset: 0.4 }) // light: the walkway in the lower corners must stay the brightest area;
     const effects = quality === 'low' ? [this.bloom, tone, vignette] : [this.bloom, tone, vignette, new SMAAEffect()];
     this.composer.addPass(new EffectPass(this.camera, ...effects));
-    this.scale = quality === 'high' ? 1 : quality === 'medium' ? 0.9 : 0.7;
+    this.adaptiveScale = new AdaptiveScale({ initial: quality === 'high' ? 1 : quality === 'medium' ? 0.9 : 0.7, max: quality === 'high' ? 1 : 0.9 });
     window.addEventListener('resize', () => this.resize());
     this.resize();
   }
@@ -42,7 +51,7 @@ export class Engine {
   resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const dpr = (this.exactPixelRatio ? window.devicePixelRatio : Math.min(window.devicePixelRatio, 2)) * this.scale;
+    const dpr = (this.exactPixelRatio ? window.devicePixelRatio : Math.min(window.devicePixelRatio, 2)) * this.adaptiveScale.scale;
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h, false);
     this.composer.setSize(w, h, false);
@@ -52,23 +61,28 @@ export class Engine {
   }
 
   render(dt: number) {
+    this.beforeRender?.();
+    this.renderer.info.reset();
     this.composer.render(dt);
   }
 
-  /** Record a frame time and nudge the render scale to hold ~60 fps (adaptive resolution). */
+  /** Draw calls and triangles of the last frame, summed over every pass (shadow map, scene, post), and what the GPU holds. */
+  frameInfo() {
+    const { render, memory } = this.renderer.info;
+    return { calls: render.calls, triangles: render.triangles, geometries: memory.geometries, textures: memory.textures };
+  }
+
+  /** Record a frame interval (ms); AdaptiveScale decides when the render scale goes down or up, and the change is applied here. */
   sample(ms: number) {
+    if (!this.adaptive) return;
     this.frameTimes.push(ms);
     if (this.frameTimes.length > 240) this.frameTimes.shift();
-    this.sinceAdapt += ms;
-    if (this.sinceAdapt < 2000 || this.frameTimes.length < 60) return;
-    this.sinceAdapt = 0;
-    const p95 = this.percentile(95);
-    const max = this.quality === 'high' ? 1 : 0.9;
-    const next = p95 > 22 ? Math.max(0.55, this.scale - 0.1) : p95 < 14 ? Math.min(max, this.scale + 0.05) : this.scale;
-    if (Math.abs(next - this.scale) > 1e-3) {
-      this.scale = next;
-      this.resize();
-    }
+    if (this.adaptiveScale.sample(ms)) this.resize();
+  }
+
+  /** No render scale change for `seconds` (a fold of the background must not get a resize hitch); a no-op in the review shots. */
+  hold(seconds: number) {
+    if (this.adaptive) this.adaptiveScale.hold(seconds);
   }
 
   percentile(p: number): number {
@@ -78,6 +92,6 @@ export class Engine {
   }
 
   get renderScale() {
-    return this.scale;
+    return this.adaptiveScale.scale;
   }
 }

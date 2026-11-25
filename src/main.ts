@@ -3,6 +3,7 @@ import { VirtualClock } from './game/clock.ts';
 import { DEMO_DEFAULTS, type DemoOptions } from './game/demo.ts';
 import { Game } from './game/game.ts';
 import { Hud } from './game/hud.ts';
+import { createShots } from './game/shots.ts';
 import revision from './revision.json';
 import area1 from './stages/area1.json';
 import tunables from './stages/tunables.json';
@@ -18,15 +19,18 @@ const isTouchOnly = matchMedia('(pointer: coarse)').matches && !matchMedia('(poi
 
 // ?demo=1 plays by itself (timings: &title= &establish= &browse= &hold= &end= in seconds);
 // ?capture=1 additionally hands the clock to tools/video/capture.ts; ?hud=0 hides the on-screen UI.
-const capture = params.has('capture');
-const clock = capture ? new VirtualClock() : null;
+// ?shots=1 is the review mode (src/game/shots.ts): the virtual clock too, but no demo and no telemetry;
+// with &ui=1 it also lists the HUD states for UI review, with &char=1 the two close views of the character.
+const shots = params.has('shots');
+const capture = params.has('capture') && !shots;
+const clock = capture || shots ? new VirtualClock() : null;
 clock?.install();
 const sec = (name: string, fallback: number) => {
   const v = Number(params.get(name));
   return params.has(name) && Number.isFinite(v) ? v : fallback;
 };
 const demo: DemoOptions | undefined =
-  params.has('demo') || capture
+  !shots && (params.has('demo') || capture)
     ? {
         titleSec: sec('title', DEMO_DEFAULTS.titleSec),
         establishSec: sec('establish', DEMO_DEFAULTS.establishSec),
@@ -36,19 +40,28 @@ const demo: DemoOptions | undefined =
       }
     : undefined;
 
-if (isTouchOnly && !demo) {
+if (isTouchOnly && !demo && !shots) {
   new Hud(hudRoot).mobileNotice(hudRoot);
 } else {
   const game = new Game(
     canvas,
     hudRoot,
     { stage: area1 as unknown as StageFile, tunables: tunables as Tunables, revision, build: __BUILD__ },
-    { demo, capture },
+    { demo, capture: capture || shots, shots },
   );
   if (demo) document.body.classList.add('demo');
   if (params.get('hud') === '0') hudRoot.style.display = 'none';
   if (params.has('debug')) (window as unknown as { __fold: unknown }).__fold = game.debugApi();
-  if (clock)
+  if (clock && shots)
+    (window as unknown as { __shots: unknown }).__shots = createShots(
+      game,
+      (dt, render) => {
+        clock.advance(dt);
+        game.advance(dt, render);
+      },
+      { ui: params.has('ui'), char: params.has('char') },
+    );
+  else if (clock)
     (window as unknown as { __capture: unknown }).__capture = {
       ready: () => game.ready,
       advance: (dt: number, render = true) => {

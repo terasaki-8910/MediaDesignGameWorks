@@ -7,24 +7,37 @@ import { nextAction, remainingActions, solveSection } from '../core/solver.ts';
 import type { Tunables } from '../core/tunables.ts';
 import type { Action, PuzzleSection, PuzzleState, StageFile } from '../core/types.ts';
 import { Sound } from './audio.ts';
-import { BackgroundCity, setupEnvironment } from './backdrop.ts';
+import { createBackground, setupEnvironment } from './backdrop.ts';
+import { pierKeepOut } from './foldcity/keepout.ts';
+import { pierFeet, planSlabs } from './kitLayout.ts';
+import type { Background } from './foldcity/foldcity.ts';
 import { CameraRig } from './camera.ts';
 import { DemoDirector, type DemoOptions } from './demo.ts';
 import { Engine } from './engine.ts';
 import { Hud, type Settings } from './hud.ts';
 import { Input } from './input.ts';
+import { Kit } from './kit.ts';
+import { giltTakesSky } from './look.ts';
 import { createMaterials } from './materials.ts';
 import { Player, cloakAvatar } from './player.ts';
 import { Telemetry, clientInfo, defaultConsent } from './telemetry.ts';
 import { loadVrmAvatar } from './vrmAvatar.ts';
+import { loadWandererAvatar, type WandererAvatar } from './wandererAvatar.ts';
 import { World, type EdgeMarker } from './world.ts';
 
 export interface Revision { revision: number; updated: string; recent: { date: string; summary: string }[] }
 export interface GameData { stage: StageFile; tunables: Tunables; revision: Revision; build: string }
-/** `demo` plays the game by itself; `capture` leaves the clock to the caller (see advance()). */
-export interface GameOptions { demo?: DemoOptions; capture?: boolean }
+/**
+ * `demo` plays the game by itself; `capture` leaves the clock to the caller (see advance());
+ * `shots` is the review mode (shots.ts): fixed scenes, no telemetry, no adaptive resolution.
+ */
+export interface GameOptions { demo?: DemoOptions; capture?: boolean; shots?: boolean }
 
-type Mode = 'title' | 'play' | 'fold' | 'anim' | 'pause' | 'finale' | 'clear';
+/** The HUD states the review shots show with `?ui=1` (shots.ts). */
+export type UiShot = 'fold' | 'fold-blocked' | 'hint' | 'pause' | 'controls' | 'clear';
+
+/** `shot` is a still scene for the review shots: nothing walks, folds or reacts to input. */
+type Mode = 'title' | 'play' | 'fold' | 'anim' | 'pause' | 'finale' | 'clear' | 'shot';
 
 interface FoldSession {
   console: string;
@@ -59,13 +72,13 @@ export class Game {
   readonly hud: Hud;
   readonly sound = new Sound();
   readonly telemetry: Telemetry;
-  readonly city: BackgroundCity;
+  readonly city: Background;
   readonly rig: CameraRig;
   readonly director: DemoDirector | null = null;
   mode: Mode = 'title';
   /** Walking direction set by the demo instead of the keyboard. */
   steer: { x: number; z: number } | null = null;
-  /** True once the gate model is in and shaders are compiled (the capture waits for this). */
+  /** True once the kit and the character are in and shaders are compiled (the capture waits for this). */
   ready = false;
   state: PuzzleState;
   settings: Settings;
@@ -84,22 +97,28 @@ export class Game {
   private automated = false;
   private telemetryAllowed = true;
   private introTimer = 0;
+  private readonly shots: boolean;
+  /** The character model, when it is the avatar in use (the review shots put it back into its rest pose). */
+  private wanderer: WandererAvatar | null = null;
 
   constructor(canvas: HTMLCanvasElement, hudRoot: HTMLElement, data: GameData, opts: GameOptions = {}) {
     this.data = data;
-    this.settings = loadSettings();
+    this.shots = !!opts.shots;
+    this.settings = loadSettings(this.shots);
     const stage = resolveSlots(data.stage);
     this.cs = new CompiledStage(stage);
     this.state = this.cs.initialState();
     this.engine = new Engine(canvas, this.settings.quality, opts.capture);
+    this.engine.adaptive = !this.shots;
     const M = createMaterials(stage.visualTheme.accent);
-    setupEnvironment(this.engine.scene, this.engine.renderer, stage.visualTheme);
+    const env = setupEnvironment(this.engine.scene, this.engine.renderer, this.settings.quality);
+    this.engine.beforeRender = () => env.sun.follow(this.engine.camera, this.player.pos.y);
     this.world = new World(this.cs, M);
     this.engine.scene.add(this.world.root);
-    const bounds = new THREE.Box3(new THREE.Vector3(-70, -200, -55), new THREE.Vector3(80, 200, 40));
-    this.city = new BackgroundCity(stage.visualTheme, new THREE.Vector3(4, 0, -6), bounds);
+    const query = new URLSearchParams(location.search);
+    this.city = createBackground(stage.visualTheme, { variant: query.get('city'), morph: query.get('morph'), debug: query.get('bgdebug'), farWindows: query.get('farwin') === '1', tune: query.get('bgtune'), buildings: query.get('bldg'), keepOut: pierKeepOut(pierFeet(planSlabs(this.cs))) });
     this.engine.scene.add(this.city.group);
-    this.player = new Player(cloakAvatar(M));
+    this.player = new Player({ object: new THREE.Group(), animate: () => {} }); // nothing until the character has loaded
     this.engine.scene.add(this.player.root);
     this.input = new Input(canvas);
     this.hud = new Hud(hudRoot);
@@ -107,32 +126,72 @@ export class Game {
     const params = new URLSearchParams(location.search);
     const playtest = params.has('playtest');
     const local = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && !params.has('telemetry');
-    // the demo is not a player: it must never reach the play data the improvement loop reads
-    this.telemetryAllowed = !local && !opts.demo;
+    // the demo and the review shots are not players: they must never reach the play data the improvement loop reads
+    this.telemetryAllowed = !local && !opts.demo && !this.shots;
     this.telemetry = new Telemetry(import.meta.env.VITE_TELEMETRY_URL ?? './api/telemetry', this.settings.telemetry && this.telemetryAllowed, playtest);
     this.exitKeys = new Set();
     this.run = this.newRun();
     this.enterSection(0, false);
     this.showTitle();
     // Automated browsers and the demo cannot hold pointer lock; do not treat that as the player pausing.
-    this.automated = navigator.webdriver === true || !!opts.demo;
+    this.automated = navigator.webdriver === true || !!opts.demo || this.shots;
     document.addEventListener('pointerlockchange', () => {
       if (this.automated) return;
       if (!document.pointerLockElement && (this.mode === 'play' || this.mode === 'fold')) this.openPause();
     });
     const vrmUrl = params.get('vrm') ?? './assets/player.vrm';
-    loadVrmAvatar(vrmUrl)
-      .then((a) => a && this.player.setAvatar(a))
-      .catch((e) => console.warn('VRM avatar not loaded:', e));
-    this.world
-      .loadGateModel('./assets/gate.glb')
-      .catch((e) => console.warn('gate model not loaded, keeping the procedural gate:', e))
-      .finally(() => {
-        this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
-        this.ready = true;
+    // The avatar: a VRM file if one is there, else the character model, else (loading failed) the old cloaked stand-in.
+    const character = loadVrmAvatar(vrmUrl)
+      .catch((e) => {
+        console.warn('VRM avatar not loaded:', e);
+        return null;
+      })
+      .then(async (vrm) => {
+        if (vrm) return this.player.setAvatar(vrm);
+        try {
+          this.wanderer = await loadWandererAvatar({ reduceMotion: () => this.settings.reduceMotion });
+          this.player.setAvatar(this.wanderer);
+        } catch (e) {
+          console.warn('character model not loaded, keeping the cloaked stand-in:', e);
+          this.player.setAvatar(cloakAvatar(M));
+        }
       });
+    const sky = env.sky.catch((e) => console.warn('sky not loaded, keeping the haze colour:', e));
+    const kit = Kit.load(this.engine.renderer)
+      .then((k) => this.world.applyKit(k))
+      .catch((e) => {
+        console.error('kit not loaded, showing the plain slabs:', e);
+        this.world.showColliders();
+      });
+    // (the city's shaders are compiled off the frame, against the scene as it is lit once the sky is in, before the city is shown)
+    const compileCity = async (o: THREE.Object3D) => {
+      await sky;
+      await this.engine.renderer.compileAsync(o, this.engine.camera, this.engine.scene);
+    };
+    const city = this.city.load('./assets/city.glb', this.shots || opts.capture ? undefined : compileCity).catch((e) => console.warn('background city not loaded:', e));
+    Promise.all([sky, kit, city, character]).finally(() => {
+      giltTakesSky(this.engine.scene, this.world.giltMaterials()); // before warmUp, so the gilt's shader is compiled once
+      this.world.ringTakesSky(this.engine.scene);
+      this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
+      if (['facing', 'range', 'dist', 'unit0', 'unit1', 'unit2'].includes(query.get('bgdebug') ?? '')) this.flattenForDebug();
+      this.ready = true;
+    });
     if (opts.demo) this.director = new DemoDirector(this, opts.demo);
     if (!opts.capture) requestAnimationFrame((t) => this.frame(t));
+  }
+
+  /** `?bgdebug=facing`: everything but the background city turns flat white and the sky black, so a script can count classes. */
+  private flattenForDebug() {
+    const white = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+    const black = new THREE.MeshBasicMaterial({ color: 0x000000, fog: false });
+    this.engine.scene.background = new THREE.Color(0x000000);
+    this.engine.bloom.intensity = 0;
+    this.engine.scene.traverse((o) => {
+      for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p === this.city.group) return;
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) mesh.material = o.parent === this.engine.scene && mesh.geometry.type === 'CircleGeometry' ? black : white;
+      else if ((o as THREE.Sprite).isSprite || (o as THREE.Points).isPoints || (o as THREE.Line).isLine) o.visible = false;
+    });
   }
 
   get section(): PuzzleSection {
@@ -149,10 +208,12 @@ export class Game {
     this.hud.title({
       revision: r.revision,
       updated: r.updated,
-      recent: r.recent.map((x) => `${x.date}　${x.summary}`),
+      recent: r.recent,
       consent: this.settings.telemetry,
       onConsent: (v) => this.applySettings({ ...this.settings, telemetry: v }),
-      onStart: () => this.begin(),
+      onStart: () => this.mode === 'title' && this.begin(),
+      onSettings: () =>
+        this.hud.pause(true, this.settings, (s) => this.applySettings(s), () => this.hud.pause(false), 'settings'),
     });
     // a slow establishing orbit behind the title
     this.rig.setCinematic(new THREE.Vector3(-58, 34, 46), new THREE.Vector3(2, 8, -4));
@@ -161,6 +222,91 @@ export class Game {
   /** Leave the title as if Start was pressed (the demo uses this). */
   startFromTitle() {
     if (this.mode === 'title') this.begin(true);
+  }
+
+  /**
+   * Review shots (shots.ts): jump to the start of section `index` in `state` without playing it. The player stands at
+   * the section's checkpoint, no fold is under way, no hint or toast is up, the HUD is hidden (the title shot keeps
+   * only the title) and everything that runs on time starts over at zero, so the same shot always looks the same.
+   * The caller then sets the camera and steps the simulation.
+   */
+  stageShot(index: number, state: PuzzleState, title: boolean) {
+    clearTimeout(this.introTimer);
+    this.time = this.finaleClock = this.perfClock = 0;
+    this.fold = null;
+    this.state = state;
+    this.world.resetForShot(state);
+    this.city.reset();
+    this.hud.resetForShot();
+    this.hud.setVisible(title);
+    this.rig.setFrame(null);
+    this.rig.setCinematic(null);
+    this.enterSection(index, false);
+    this.wanderer?.reset();
+    this.engine.scene.updateMatrixWorld(true); // the camera's collision rays must see this pose, not the last frame's
+    if (title) this.showTitle();
+    else this.mode = 'shot';
+    this.rig.cut();
+  }
+
+  /**
+   * Review shots with `?ui=1` (shots.ts): show one HUD state over the scene `stageShot` has just set up. It throws when
+   * the stage has no scene for the state, so a changed stage fails loudly instead of showing something else.
+   * `consoleId` is the console of `fold-blocked`.
+   */
+  uiShot(kind: UiShot, consoleId?: string) {
+    this.hud.setVisible(true);
+    const sec = this.section;
+    switch (kind) {
+      case 'fold':
+        this.foldShot(sec.consoles[0], false);
+        break;
+      case 'fold-blocked':
+        this.foldShot(consoleId ?? sec.consoles[0], true);
+        break;
+      case 'hint': {
+        // everything the play HUD can show at once: the section card, the hint and the prompt at a console
+        const next = nextAction(this.cs, sec.id, this.state, this.player.cell);
+        if (!next) throw new Error(`no next action in ${sec.id} to show a hint for`);
+        const c = this.cs.consoles.get(next.console)!;
+        this.player.place(c.at, 'E', this.cs.walkMap(this.state));
+        this.world.highlightConsole(next.console);
+        this.hud.toast(sec.name.ja, sec.name.en.toUpperCase(), 600000);
+        this.hud.hint(this.hintText(2, next));
+        this.hud.prompt(this.consolePrompt(next.console));
+        break;
+      }
+      case 'pause':
+        this.openPause();
+        break;
+      case 'controls':
+        this.hud.openControls();
+        break;
+      case 'clear':
+        this.clearShot();
+        break;
+    }
+  }
+
+  /** Fold Mode open at `consoleId` with its first free (or first blocked) option showing. */
+  private foldShot(consoleId: string, blocked: boolean) {
+    const options = this.cs.consoleActions(consoleId, this.state);
+    const index = options.findIndex((o) => (o.blockedBy.length > 0) === blocked);
+    if (index < 0) throw new Error(`console ${consoleId} has no ${blocked ? 'blocked' : 'free'} option to show`);
+    this.player.place(this.cs.consoles.get(consoleId)!.at, 'E', this.cs.walkMap(this.state));
+    if (blocked && !this.blockerFix(options[index].blockedBy)) throw new Error(`the blocked option of ${consoleId} has no fix hint to show`);
+    this.openFold(consoleId, index);
+    this.rig.cut();
+  }
+
+  /** The clear screen with made-up times (the shots never play the game): real section names and shortest move counts. */
+  private clearShot() {
+    this.mode = 'clear';
+    const sections = this.cs.stage.sections.map((s, i) => {
+      const optimal = solveSection(this.cs, s.id).optimal ?? 0;
+      return { name: s.name.ja, sec: 48 + i * 37, actions: optimal + (i === 1 ? 2 : 0), optimal };
+    });
+    this.hud.clear({ totalSec: sections.reduce((t, x) => t + x.sec, 0), sections }, () => {}, () => {});
   }
 
   private begin(keepCamera = false) {
@@ -192,6 +338,10 @@ export class Game {
     if (i === 0 || !announce) this.player.place(cp.at, cp.facing, this.cs.walkMap(this.state));
     this.world.highlightConsole(null);
     this.world.setGuidance(sec.consoles, this.data.tunables.sections[sec.id]?.beacon ?? 0);
+    // the city shows this section's structure; walking on from the section before, it folds there
+    const fold = announce && i > 0;
+    this.city.setSection?.(i, fold, this.settings.reduceMotion);
+    if (fold) this.engine.hold(5); // no resize hitch inside the 4 s fold of the background
     this.hud.hint(null);
     // a previous section's intro timer must not hide this section's text
     clearTimeout(this.introTimer);
@@ -232,7 +382,7 @@ export class Game {
     const wm = this.cs.walkMap(this.state);
     const tun = this.data.tunables;
     const lockedMove = this.mode !== 'play';
-    if (this.mode !== 'title' && this.mode !== 'pause' && this.mode !== 'clear')
+    if (this.mode !== 'title' && this.mode !== 'pause' && this.mode !== 'clear' && this.mode !== 'shot')
       this.player.update(dt, this.input, this.rig.yaw, wm, {
         locked: lockedMove, walkSpeed: tun.player.walkSpeed, dash: tun.player.dashMultiplier, steer: this.steer,
       });
@@ -244,7 +394,7 @@ export class Game {
         this.updateFold();
         break;
       case 'title': {
-        const a = this.time * 0.05;
+        const a = (this.shots ? 0 : this.time) * 0.05; // the shots keep the orbit where a player first sees it
         this.rig.setCinematic(new THREE.Vector3(4 + Math.cos(a) * 70, 34, -6 + Math.sin(a) * 70), new THREE.Vector3(2, 6, -4));
         break;
       }
@@ -288,8 +438,7 @@ export class Game {
     if (this.exitKeys.has(this.player.cell)) return this.clearSection();
     const here = this.consoleHere();
     if (here) {
-      const c = this.cs.consoles.get(here)!;
-      this.hud.prompt(`<kbd>E</kbd> ${c.label?.ja ?? 'コンソール'}を起動`);
+      this.hud.prompt(this.consolePrompt(here));
       if (this.input.hit('KeyE', 'Enter')) return this.openFold(here);
     } else this.hud.prompt(null);
     if (this.input.hit('KeyR')) this.resetSection('manual');
@@ -318,18 +467,24 @@ export class Game {
       this.telemetry.log({ type: 'hint', section: sec.id, tier: want === 2 ? 2 : 1 });
     }
     this.world.highlightConsole(next.console);
-    const c = this.cs.consoles.get(next.console)!;
-    this.hud.hint(
-      this.run.hintTier === 1
-        ? '光の柱が立っている操作盤を調べてみよう。'
-        : `「${c.label?.ja ?? '操作盤'}」で「${this.actionLabel(next)}」を試してみよう。`,
-    );
+    this.hud.hint(this.hintText(this.run.hintTier === 1 ? 1 : 2, next));
   }
 
-  private openFold(consoleId: string) {
+  /** Tier 1 only says where to look; tier 2 names the console and the move. */
+  private hintText(tier: 1 | 2, next: Action): string {
+    if (tier === 1) return '光の柱が立っている操作盤を調べてみよう。';
+    const c = this.cs.consoles.get(next.console)!;
+    return `「${c.label?.ja ?? '操作盤'}」で「${this.actionLabel(next)}」を試してみよう。`;
+  }
+
+  private consolePrompt(id: string): string {
+    return `<kbd>E</kbd> ${this.cs.consoles.get(id)!.label?.ja ?? 'コンソール'}を起動`;
+  }
+
+  private openFold(consoleId: string, index = 0) {
     const options = this.cs.consoleActions(consoleId, this.state);
     if (!options.length) return;
-    this.fold = { console: consoleId, options, index: 0, browsed: new Set([0]) };
+    this.fold = { console: consoleId, options, index, browsed: new Set([index]) };
     this.mode = 'fold';
     this.hud.prompt(null);
     this.world.setGuidanceHidden(true); // the guidance columns would stand in front of the preview
@@ -593,10 +748,14 @@ export class Game {
     if (this.mode === 'fold') this.closeFold(false);
     this.resumeMode = this.mode === 'anim' ? 'anim' : 'play';
     this.mode = 'pause';
+    document.exitPointerLock?.(); // the dialog is clicked with the mouse: it must not be captured by a lock that is still on
     this.hud.pause(true, this.settings, (s) => this.applySettings(s), () => {
       this.hud.pause(false);
       this.mode = this.resumeMode;
       this.input.requestLock();
+      // Escape is not a user gesture, so the browser may refuse the lock: take it on the next click instead
+      if (!this.automated)
+        window.addEventListener('pointerdown', () => (this.mode === 'play' || this.mode === 'fold') && this.input.requestLock(), { once: true });
     });
   }
 
@@ -696,7 +855,8 @@ function round1(x: number) {
   return Math.round(x * 10) / 10;
 }
 
-function loadSettings(): Settings {
+/** `shots` (review mode) renders at quality high unless the URL says `q=`. */
+function loadSettings(shots = false): Settings {
   const d: Settings = { sensitivity: 1, invertY: false, reduceMotion: false, quality: 'medium', telemetry: defaultConsent(), muted: false };
   let s = d;
   try {
@@ -707,5 +867,6 @@ function loadSettings(): Settings {
   }
   const q = new URLSearchParams(location.search).get('q');
   if (q === 'low' || q === 'medium' || q === 'high') s = { ...s, quality: q };
+  else if (shots) s = { ...s, quality: 'high' };
   return s;
 }
