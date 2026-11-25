@@ -19,3 +19,46 @@ jobs:
       - run: npm test
       - run: npm run validate
       - run: npm run build
+
+  # The browser checks (tests/e2e): the built game is served by `vite preview` and driven by Playwright's Chromium, which
+  # draws WebGL in software (SwiftShader: tests/e2e/browser.cjs passes the flags on Linux). The shots and the demo reject a
+  # blank frame (png.cjs), so a runner that drew nothing fails here instead of passing on an empty canvas.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BASE_URL: http://127.0.0.1:4196/
+      SHOTS_OUT: ${{ github.workspace }}/artifacts/shots
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      # (a cache hit makes the download a no-op; the system libraries come from apt every time and cannot be cached)
+      - run: npx playwright install chromium
+      - run: npx playwright install-deps chromium
+      - run: npm run build
+      - name: Serve the build
+        run: |
+          npx vite preview --port 4196 --strictPort --host 127.0.0.1 > preview.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf "$BASE_URL" > /dev/null && exit 0; sleep 1; done
+          cat preview.log
+          exit 1
+      - run: npm run e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-shots
+          path: |
+            artifacts/
+            preview.log
+          if-no-files-found: ignore
+          retention-days: 7
