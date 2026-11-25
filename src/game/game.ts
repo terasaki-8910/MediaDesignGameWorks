@@ -208,6 +208,7 @@ export class Game {
       .finally(() => {
         this.ready = true;
         performance.mark('fold:ready');
+        this.hud.setStartReady();
       });
     if (opts.demo) this.director = new DemoDirector(this, opts.demo);
     if (!opts.capture) requestAnimationFrame((t) => this.frame(t));
@@ -243,8 +244,9 @@ export class Game {
       updated: r.updated,
       recent: r.recent,
       consent: this.settings.telemetry,
+      ready: this.ready,
       onConsent: (v) => this.applySettings({ ...this.settings, telemetry: v }),
-      onStart: () => this.mode === 'title' && this.begin(),
+      onStart: () => this.mode === 'title' && this.ready && this.begin(),
       onSettings: () =>
         this.hud.pause(true, this.settings, (s) => this.applySettings(s), () => this.hud.pause(false), 'settings'),
     });

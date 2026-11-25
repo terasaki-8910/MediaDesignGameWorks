@@ -19,6 +19,8 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 await page.goto(`${BASE}?debug=1&q=low`, { waitUntil: 'load' });
 await page.waitForFunction(() => !!window.__fold, null, { timeout: 60000 });
+// Start is disabled and reads 読み込み中… until the scene has loaded, then takes the focus
+await page.waitForFunction(() => { const b = document.querySelector('.btn.primary'); return !!b && !b.disabled; }, null, { timeout: 60000 });
 console.log(`ui: ${await describeBackend(browser, page)}`);
 const F = (fn, ...a) => page.evaluate(fn, ...a);
 const focused = () => F(() => {
