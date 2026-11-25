@@ -3,7 +3,7 @@
 // Space to start, the controls panel and the settings dialog from the title, the pause dialog closed by Escape and by a
 // click on the backdrop, focus return, and the extra UI shots of `?shots=1&ui=1`.
 // Needs a running build: `npm run build && npm run preview` (or set BASE_URL to a deployment).
-// CI does not run this; install the browser once with `npx playwright install chromium`.
+// The e2e job of .github/workflows/ci.yml runs this (Linux, software WebGL); locally, install the browser once with `npx playwright install chromium`.
 const assert = require('node:assert/strict');
 const { describeBackend, launch } = require('./browser.cjs');
 const { blankReason, decodePng, frameStats } = require('./png.cjs');
@@ -19,6 +19,8 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 await page.goto(`${BASE}?debug=1&q=low`, { waitUntil: 'load' });
 await page.waitForFunction(() => !!window.__fold, null, { timeout: 60000 });
+// Start is disabled and reads 読み込み中… until the scene has loaded, then takes the focus
+await page.waitForFunction(() => { const b = document.querySelector('.btn.primary'); return !!b && !b.disabled; }, null, { timeout: 60000 });
 console.log(`ui: ${await describeBackend(browser, page)}`);
 const F = (fn, ...a) => page.evaluate(fn, ...a);
 const focused = () => F(() => {

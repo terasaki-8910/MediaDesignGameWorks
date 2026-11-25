@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import type { VisualTheme } from '../../core/types.ts';
 import { atmosphereUniforms, bindSky, FAR_WINDOWS, KEY_ELEVATION, patchShader, rowTone, TEX_LAYERS, TEX_NAMES, type AtmosphereParams, type AtmosphereUniforms } from './atmosphere.ts';
+import { breathe } from '../frames.ts';
 import { gltfLoader } from '../gltf.ts';
 import { LOOK } from '../look.ts';
 import { ATMOSPHERE, type Background, type Prepare } from './foldcity.ts';
@@ -26,14 +27,6 @@ export const MORPH_SECONDS = 4;
 const FADE_SECONDS = 0.35;
 /** Cast shadows are worked out this far along the sheet from the play area (and 150 m further across it): beyond, the haze has them. */
 const SHADOW_REACH = 700;
-
-/** Let the page draw a frame's worth of other work. Not a timer: the capture's virtual clock holds timers back. */
-const breathe = () =>
-  new Promise<void>((resolve) => {
-    const channel = new MessageChannel();
-    channel.port1.onmessage = () => resolve();
-    channel.port2.postMessage(0);
-  });
 
 /**
  * Settles once `o` has been drawn (true), or after `ms` milliseconds without a frame that draws it (false).

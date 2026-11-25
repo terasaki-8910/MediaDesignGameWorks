@@ -1,7 +1,7 @@
 // E2E check of the demo playback: it must solve every puzzle by itself, reach the finale, never send play data,
 // and draw something at five fixed points (the start of each puzzle, the finale and the end), not a blank frame.
 // Needs a running build: `npm run build && npm run preview` (or set BASE_URL to a deployment).
-// CI does not run this; install the browser once with `npx playwright install chromium`.
+// The e2e job of .github/workflows/ci.yml runs this (Linux, software WebGL); locally, install the browser once with `npx playwright install chromium`.
 const assert = require('node:assert/strict');
 const { describeBackend, launch } = require('./browser.cjs');
 const { blankReason, decodePng, frameStats } = require('./png.cjs');
