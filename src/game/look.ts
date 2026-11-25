@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { ToneMappingMode } from 'postprocessing';
+import { breathe } from './frames.ts';
 
 const sunAzimuth = (120 * Math.PI) / 180; // atan2(z, x) of the direction towards the sun: from the south-west
 const sunElevation = (12 * Math.PI) / 180;
@@ -173,7 +174,13 @@ export async function loadSky(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
   const fill = LOOK.fillTint.toArray();
   const one = THREE.DataUtils.toHalfFloat(1);
   // HDRLoader keeps the file's row order (top row first) and sets flipY, so row 0 is the zenith.
+  // (worked out in slices of about 30 ms, so the page keeps drawing: the whole is 0.4 s of work)
+  let slice = performance.now();
   for (let y = 0; y < h; y++) {
+    if (performance.now() - slice > 30) {
+      await breathe();
+      slice = performance.now();
+    }
     const elevation = (0.5 - (y + 0.5) / h) * Math.PI;
     // haze band: full at and below the horizon, gone 9 degrees up, so the blue of the sky shows in the play view
     const k = 1 - THREE.MathUtils.smoothstep(elevation, -0.01, 0.16);

@@ -5,6 +5,7 @@ import {
 } from 'postprocessing';
 
 import { AdaptiveScale } from './adaptiveScale.ts';
+import { breathe } from './frames.ts';
 import { LOOK } from './look.ts';
 
 export type Quality = 'low' | 'medium' | 'high';
@@ -73,13 +74,59 @@ export class Engine {
    * compile against the screen builds programs that are never used, and the real ones are then built one after another,
    * inside the first frame that draws the object (2.3 s at load, on the machine this was measured on).
    */
-  precompile(object: THREE.Object3D, scene: THREE.Scene = this.scene): Promise<unknown> {
+  async precompile(object: THREE.Object3D, scene: THREE.Scene = this.scene): Promise<void> {
     const before = this.renderer.getRenderTarget();
     this.renderer.setRenderTarget(this.composer.inputBuffer); // (compileAsync reads it while it starts: the wait below does not)
+    let compiling: Promise<unknown>;
     try {
-      return this.renderer.compileAsync(object, this.camera, scene).catch(() => {});
+      compiling = this.renderer.compileAsync(object, this.camera, scene);
     } finally {
       this.renderer.setRenderTarget(before);
+    }
+    await compiling.catch(() => {});
+    await this.finishPrograms();
+    await this.uploadTextures(object);
+  }
+
+  /**
+   * A compiled program still has to be looked at once before it is used (its link status, its uniforms: the graphics driver
+   * finishes the shader there, 20 to 80 ms each). Taken in the frame that first draws, a dozen of them make a frame of
+   * 0.4 s; here they are taken a few at a time, between frames.
+   */
+  private async finishPrograms() {
+    let t0 = performance.now();
+    for (const program of [...(this.renderer.info.programs ?? [])]) {
+      program.getUniforms();
+      program.getAttributes();
+      if (performance.now() - t0 > 20) {
+        await breathe();
+        t0 = performance.now();
+      }
+    }
+  }
+
+  /** The textures of `object`'s materials go to the GPU a few at a time too (decoding and uploading them in the first frame that draws them took 0.26 s for the kit). */
+  private async uploadTextures(object: THREE.Object3D) {
+    const textures = new Set<THREE.Texture>();
+    const take = (value: unknown) => {
+      if ((value as THREE.Texture | null)?.isTexture) textures.add(value as THREE.Texture);
+    };
+    object.traverse((o) => {
+      for (const m of [(o as THREE.Mesh).material].flat()) {
+        if (!m) continue;
+        for (const value of Object.values(m)) take(value);
+        // (a patched shader's own uniforms: what the material reads that it has no property for)
+        const compiled = (this.renderer.properties.get(m) as { uniforms?: Record<string, THREE.IUniform> }).uniforms;
+        for (const u of Object.values(compiled ?? (m as THREE.ShaderMaterial).uniforms ?? {})) take(u.value);
+      }
+    });
+    let t0 = performance.now();
+    for (const texture of textures) {
+      this.renderer.initTexture(texture);
+      if (performance.now() - t0 > 20) {
+        await breathe();
+        t0 = performance.now();
+      }
     }
   }
 

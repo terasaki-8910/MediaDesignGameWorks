@@ -1,7 +1,7 @@
 // E2E check of the help a stuck player gets: hints keep their clock through folds that do not bring the goal closer,
 // and in the Fold Gate the Fold Mode panel says what moves the tower out of the street's way and what that frees.
 // Needs a running build: `npm run build && npm run preview` (or set BASE_URL to a deployment).
-// CI does not run this; install the browser once with `npx playwright install chromium`.
+// The e2e job of .github/workflows/ci.yml runs this (Linux, software WebGL); locally, install the browser once with `npx playwright install chromium`.
 const assert = require('node:assert/strict');
 const { describeBackend, launch } = require('./browser.cjs');
 // the improvement loop tunes this (src/stages/tunables.json), so the test reads it instead of repeating the number

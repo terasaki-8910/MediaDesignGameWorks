@@ -3,7 +3,7 @@
 // Space to start, the controls panel and the settings dialog from the title, the pause dialog closed by Escape and by a
 // click on the backdrop, focus return, and the extra UI shots of `?shots=1&ui=1`.
 // Needs a running build: `npm run build && npm run preview` (or set BASE_URL to a deployment).
-// CI does not run this; install the browser once with `npx playwright install chromium`.
+// The e2e job of .github/workflows/ci.yml runs this (Linux, software WebGL); locally, install the browser once with `npx playwright install chromium`.
 const assert = require('node:assert/strict');
 const { describeBackend, launch } = require('./browser.cjs');
 const { blankReason, decodePng, frameStats } = require('./png.cjs');
