@@ -4,16 +4,16 @@
 
 A ring of gilt bronze 9.1 m across that sits in a bronze saddle on a plinth of ashlar (references A1 and A2: stone
 carrying gilt, large dressed blocks, plain strong steps). Frame: the deco module's; the origin is the floor centre of
-the gate's cell, the ring stands in the XZ plane (it faces north and south) with its centre 6.15 m up.
+the gate's cell, the ring stands in the XZ plane (it faces north and south) with its centre 6.62 m up.
 
 Pieces (nodes):
   gate      an empty with
             gate_stone   two steps 3.96 m long and 3.3 m deep, and on them a plinth: a moulded base (plinth course,
-                         torus, cavetto), a die with a raised tablet and a cartouche on its front and its back, and a
-                         capital (fillet, ovolo, corona) 1.47 m up;
-            gate_saddle  the cradle the ring sits in, in the set pieces' bronze (M_bronze_trim): 3.2 m long, its bed
-                         following the ring's underside 8 mm below it, a lip before and behind the ring that rises
-                         20 cm up its faces, a stop block across each end and four straps over the lips;
+                         torus, cavetto), a die 0.69 m high with a raised tablet and a cartouche on its front and its
+                         back, and a capital (fillet, ovolo, corona) 1.8 m up;
+            gate_saddle  the cradle the ring sits in, in the set pieces' bronze (M_bronze_trim): 2.9 m long, its bed
+                         following the ring's underside 8 mm below it (a quarter of a metre of bronze under the ring's
+                         lowest point), a lip before and behind the ring that rises 20 cm up its faces, a stop block across each end and four straps over the lips;
             gate_ring    the ring, modelled: on each face a raised outer bead and a raised inner bead with a hollow
                          (a cavetto) between them, so no part of it is a flat face that mirrors the sun as one patch;
                          and inside them a thin plate, sunk behind the beads and fluted like a sunburst, with sixteen
@@ -27,8 +27,11 @@ Pieces (nodes):
   CoreDisc  the portal's disc (5.9 m across, UVs, one side, facing south): the game draws its own shader on it. Its
             node stands at the ring's centre.
 All the stone stands inside the gate's own cell (4 m square): 1.98 m to each side, 1.75 m to the front, 1.55 m to the
-back (the parapet behind stands at 1.68 m). The player walks the two cells beside it, under the ring's line: the ring's
-underside is 2.04 m up at the cell's edge and rises from there (the script fails under 2.0 m). Nothing crosses anything
+back (the parapet behind stands at 1.68 m). The player walks the two cells beside it, under the ring's line, and may
+come into the goal's cell from one of them: the finale stops the figure a step inside the cell's edge, 2 m from the gate's
+middle, so its head (it is 2.05 m tall) can reach to about 1.63 m from the middle. There the ring's underside is 2.36 m up,
+at the cell's edge 2.51 m, and it rises from there (the script fails under 2.35 m: until 2026-11-25 the ring stood 0.47 m
+lower, 3 to 6 cm over the figure's head). Nothing crosses anything
 else: the script fails if the ring, the saddle or the gilt trim meet the stone, the saddle the ring, or the disc anything.
 """
 import math
@@ -41,7 +44,7 @@ import bmesh
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fc_kit as K  # noqa: E402
 
-RING_Z = 6.15
+RING_Z = 6.62
 R_OUT = 4.56  # the ring's outer radius
 R_IN = 3.88  # the inner edge of its moulded band
 RING_DEEP = 0.3  # half its depth, at the outer bead
@@ -50,9 +53,11 @@ R_DISC = 2.94  # the game lets it breathe to 1.03 of this: still inside the fram
 DEEP = 0.93  # half the depth of the plinth, at its base and its capital
 WIDE = 1.98  # everything of stone keeps this near the middle: the goal's cell is 2 m to each side
 COURSE = 0.56
-HEAD_ROOM = 2.0  # the ring's underside is at least this high wherever a player can stand (from the cell's edge outwards)
-PLINTH_TOP = 1.47
-SADDLE = 1.6  # half the saddle's length
+HEAD_ROOM = 2.35  # the ring's underside is at least this high wherever a player's head can be
+HEAD_REACH = 0.35  # how far a head can reach into the goal's cell: a step of 0.2 m past its edge before the finale stops the figure, and half a head
+DIE_RISE = 0.33  # how much taller the die is than the first one (0.36 m): the plinth carries the ring higher
+PLINTH_TOP = 1.47 + DIE_RISE
+SADDLE = 1.45  # half the saddle's length (with its stop blocks it ends 1.52 m from the middle: clear of where a head can be)
 SADDLE_GAP = 0.008  # between the saddle's bed and the ring
 LIP = (RING_DEEP + 0.01, RING_DEEP + 0.1)  # the saddle's lips, from the ring's middle plane
 
@@ -104,16 +109,17 @@ rect_loft(bm, [(WIDE, 1.65, 0.0, c), (WIDE, 1.65, 0.23, c), (WIDE - 0.03, 1.62, 
 D = DEEP
 rect_loft(bm, [(1.68, D, 0.5, c), (1.68, D, 0.62, c), (1.665, D - 0.015, 0.64, c), (1.68, D, 0.665, c), (1.68, D, 0.7, c), (1.665, D - 0.015, 0.725, c),
                (1.62, D - 0.06, 0.74, c), (1.58, D - 0.1, 0.78, c), (1.56, D - 0.12, 0.84, c),
-               (1.56, D - 0.12, 1.2, c), (1.575, D - 0.105, 1.2, c), (1.575, D - 0.105, 1.23, c), (1.6, D - 0.08, 1.25, c), (1.64, D - 0.04, 1.29, c),
-               (1.66, D - 0.02, 1.33, c), (1.68, D, 1.34, c), (1.68, D, 1.44, c), (1.65, D - 0.03, PLINTH_TOP, c)])
+               *((hx, hy, z + DIE_RISE, cc) for hx, hy, z, cc in (
+                   (1.56, D - 0.12, 1.2, c), (1.575, D - 0.105, 1.2, c), (1.575, D - 0.105, 1.23, c), (1.6, D - 0.08, 1.25, c), (1.64, D - 0.04, 1.29, c),
+                   (1.66, D - 0.02, 1.33, c), (1.68, D, 1.34, c), (1.68, D, 1.44, c), (1.65, D - 0.03, 1.47, c)))])
 DIE = D - 0.12  # the die's faces
-PANEL = (1.14, 0.9, 1.14)  # the raised tablet on the die's front and back: half its length, its lower and upper edge
+PANEL = (1.14, 0.92, 1.45)  # the raised tablet on the die's front and back: half its length, its lower and upper edge
 for sy in (-1, 1):
     ya, yb = sorted((sy * (DIE - 0.02), sy * (DIE + 0.035)))
     K.box(bm, (-PANEL[0], ya, PANEL[1]), (PANEL[0], yb, PANEL[2]), 0)
     # a cartouche lying in its middle
     ya, yb = sorted((sy * (DIE - 0.02), sy * (DIE + 0.07)))
-    oval = [(0.3 * math.sin(2 * math.pi * i / 16), (PANEL[1] + PANEL[2]) / 2 + 0.075 * math.cos(2 * math.pi * i / 16)) for i in range(16)]
+    oval = [(0.32 * math.sin(2 * math.pi * i / 16), (PANEL[1] + PANEL[2]) / 2 + 0.115 * math.cos(2 * math.pi * i / 16)) for i in range(16)]
     a = [bm.verts.new((x, ya, z)) for x, z in oval]
     b = [bm.verts.new((x, yb, z)) for x, z in oval]
     faces = [bm.faces.new((a[i], a[(i + 1) % 16], b[(i + 1) % 16], b[i])) for i in range(16)] + [bm.faces.new(a), bm.faces.new(list(reversed(b)))]
@@ -247,7 +253,7 @@ for sx in (-1, 1):
 for sy in (-1, 1):
     # a laurel wreath round each cartouche, and an orb on each corner of the capital
     mid = (PANEL[1] + PANEL[2]) / 2
-    path = [(0.37 * math.sin(t), sy * (DIE + 0.075), mid + 0.115 * math.cos(t)) for t in (math.radians(8 + 344 * i / 20) for i in range(21))]
+    path = [(0.39 * math.sin(t), sy * (DIE + 0.075), mid + 0.155 * math.cos(t)) for t in (math.radians(8 + 344 * i / 20) for i in range(21))]
     K.tube(bm, path, 0.022, 5, 0)
     for sx in (-1, 1):
         cx, cy, top = sx * 1.36, sy * 0.68, PLINTH_TOP
@@ -308,10 +314,17 @@ if wide > WIDE + 1e-4:
 reach = max(abs(v.co.y) for v in ring.data.vertices if math.hypot(v.co.x, v.co.z - RING_Z) > R_IN - 0.01)
 if reach > RING_DEEP + 1e-4:
     raise RuntimeError(f"the ring is {reach:.3f} m deep to a side: the saddle's lips leave room for {RING_DEEP}")
-# head room: the player walks the cells beside the goal's, under the ring's line (the ring is a polygon inside this circle)
-if ring_under(WIDE) < HEAD_ROOM:
-    raise RuntimeError(f"at the edge of the goal's cell the ring's underside is {ring_under(WIDE):.3f} m up: a player walks there, and needs {HEAD_ROOM} m")
-print(f"head room under the ring at the cell's edge ({WIDE} m from the middle): {ring_under(WIDE):.3f} m")
+# head room: the player walks the cells beside the goal's, under the ring's line; the figure's head reaches a little into
+# the goal's cell (the ring is a polygon inside this circle, so the circle is the lower bound)
+under = ring_under(WIDE - HEAD_REACH)
+if under < HEAD_ROOM:
+    raise RuntimeError(f"{WIDE - HEAD_REACH:.2f} m from the gate's middle the ring's underside is {under:.3f} m up: a player's head can be there, and needs {HEAD_ROOM} m")
+# and nothing that stands on the plinth or hangs over it (the cradle's ends, the orbs, the ring's own vertices) is in that
+# reach below that height
+low = min((v.co.z for ob in parts for v in ob.data.vertices if abs(v.co.x) > WIDE - HEAD_REACH and v.co.z > PLINTH_TOP + 0.01), default=99.0)
+if low < HEAD_ROOM:
+    raise RuntimeError(f"a part of the gate is {low:.3f} m up where a player's head can be ({WIDE - HEAD_REACH:.2f} m from the middle and further): it needs {HEAD_ROOM} m")
+print(f"head room under the ring: {under:.3f} m where a head can reach ({WIDE - HEAD_REACH:.2f} m from the middle), {ring_under(WIDE):.3f} m at the cell's edge ({WIDE} m); the lowest vertex there is {low:.3f} m up")
 root = bpy.data.objects.new("gate", None)
 bpy.context.collection.objects.link(root)
 for ob in parts:
