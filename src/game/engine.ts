@@ -66,6 +66,23 @@ export class Engine {
     this.composer.render(dt);
   }
 
+  /**
+   * Compiles the shaders `object` draws with, off the frame (`compileAsync`: the graphics driver links them on its own
+   * threads), and settles once they are ready; the object itself need not be in the scene yet. The scene is drawn into the
+   * composer's buffer, not to the screen, and three picks a program by what it draws into (the output colour space): a
+   * compile against the screen builds programs that are never used, and the real ones are then built one after another,
+   * inside the first frame that draws the object (2.3 s at load, on the machine this was measured on).
+   */
+  precompile(object: THREE.Object3D, scene: THREE.Scene = this.scene): Promise<unknown> {
+    const before = this.renderer.getRenderTarget();
+    this.renderer.setRenderTarget(this.composer.inputBuffer); // (compileAsync reads it while it starts: the wait below does not)
+    try {
+      return this.renderer.compileAsync(object, this.camera, scene).catch(() => {});
+    } finally {
+      this.renderer.setRenderTarget(before);
+    }
+  }
+
   /** Draw calls and triangles of the last frame, summed over every pass (shadow map, scene, post), and what the GPU holds. */
   frameInfo() {
     const { render, memory } = this.renderer.info;

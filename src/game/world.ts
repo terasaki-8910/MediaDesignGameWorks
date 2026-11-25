@@ -464,22 +464,25 @@ export class World {
     this.gateOpening = true;
   }
 
-  /** Compile every material once (including the Fold Mode ghosts) so the first fold does not stutter. */
-  warmUp(renderer: THREE.WebGLRenderer, camera: THREE.Camera, scene: THREE.Scene) {
+  /**
+   * Compile every material once (including the Fold Mode ghosts) so the first fold does not stutter; resolves when they are
+   * ready. `compile` is the engine's (it compiles for the pass that draws, `Engine.precompile`). Nothing of this is drawn: the
+   * ghosts stay hidden and the probe too, compiling needs the objects but not their being seen.
+   */
+  warmUp(compile: (scene: THREE.Object3D) => Promise<unknown>, scene: THREE.Scene): Promise<void> {
     for (const g of this.cs.stage.groups) {
       const ghost = this.ghostFor(g.id);
-      ghost.visible = true;
       ghost.traverse((o) => {
         if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).material = this.M.ghost;
       });
     }
     const probe = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), this.M.blockedFlash);
+    probe.visible = false;
     this.overlay.add(probe);
     this.warmProbe = probe;
-    renderer
-      .compileAsync(scene, camera)
+    return compile(scene)
       .catch(() => {})
-      .finally(() => this.endWarmUp());
+      .then(() => this.endWarmUp());
   }
 
   /** Hide the warm-up ghosts and drop the probe; safe to call again (compileAsync settles on its own schedule). */
