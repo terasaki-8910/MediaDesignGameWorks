@@ -78,7 +78,7 @@ export class Game {
   mode: Mode = 'title';
   /** Walking direction set by the demo instead of the keyboard. */
   steer: { x: number; z: number } | null = null;
-  /** True once the gate model and the character are in and shaders are compiled (the capture waits for this). */
+  /** True once the kit and the character are in and shaders are compiled (the capture waits for this). */
   ready = false;
   state: PuzzleState;
   settings: Settings;
@@ -156,9 +156,6 @@ export class Game {
           this.player.setAvatar(cloakAvatar(M));
         }
       });
-    const gate = this.world
-      .loadGateModel('./assets/gate.glb')
-      .catch((e) => console.warn('gate model not loaded, keeping the procedural gate:', e));
     const sky = env.sky.catch((e) => console.warn('sky not loaded, keeping the haze colour:', e));
     const kit = Kit.load(this.engine.renderer)
       .then((k) => this.world.applyKit(k))
@@ -172,8 +169,9 @@ export class Game {
       await this.engine.renderer.compileAsync(o, this.engine.camera, this.engine.scene);
     };
     const city = this.city.load('./assets/city.glb', this.shots || opts.capture ? undefined : compileCity).catch((e) => console.warn('background city not loaded:', e));
-    Promise.all([gate, sky, kit, city, character]).finally(() => {
+    Promise.all([sky, kit, city, character]).finally(() => {
       giltTakesSky(this.engine.scene, this.world.giltMaterials()); // before warmUp, so the gilt's shader is compiled once
+      this.world.ringTakesSky(this.engine.scene);
       this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
       if (['facing', 'range', 'dist', 'unit0', 'unit1', 'unit2'].includes(query.get('bgdebug') ?? '')) this.flattenForDebug();
       this.ready = true;

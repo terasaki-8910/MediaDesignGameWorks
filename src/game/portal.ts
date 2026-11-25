@@ -1,4 +1,5 @@
-// The Core Gate's surface: a slow swirl with a bright rim, instead of a flat emissive disc that blooms to plain white.
+// The Core Gate's surface: a membrane of dark cyan glass in its bronze frame, with a slow swirl of veins in it, instead of a
+// flat emissive disc that blooms to plain white. It gives little light until the gate opens.
 // Works on the Blender gate's CoreDisc and on the procedural fallback disc alike.
 import * as THREE from 'three';
 
@@ -24,9 +25,16 @@ export function portalMaterial(accent: THREE.Color): THREE.ShaderMaterial {
         float arms = sin(a * 3.0 + r * 10.0 - t * 1.7) * 0.5 + 0.5;
         float ripple = sin(r * 22.0 - t * 2.4) * 0.5 + 0.5;
         float depth = 1.0 - smoothstep(0.0, 1.0, r);
-        vec3 col = uColor * (0.12 + 0.4 * arms * depth + 0.14 * ripple * depth);
-        col += uColor * pow(depth, 3.0) * (0.7 + 1.3 * uOpen); // light from deep inside, stronger once the fold is open
-        col += mix(uColor, vec3(1.0), 0.35) * smoothstep(0.8, 1.0, r) * 1.4; // bright rim against the brass ring
+        // a membrane of dark glass: a deep body, the swirl as faint veins in it, and little light of its own until it opens
+        vec3 body = uColor * vec3(0.5, 0.82, 0.9);
+        vec3 col = body * (0.1 + 0.05 * (1.0 - depth));
+        float veins = smoothstep(0.55, 1.0, arms) * (0.35 + 0.65 * depth);
+        col += uColor * (0.12 * veins + 0.05 * ripple * depth);
+        col += uColor * pow(depth, 3.0) * (0.14 + 1.9 * uOpen); // light from deep inside, once the fold is open
+        // what a pane of glass shows: a band of the sky across it, and a thin bright line where it meets its frame
+        float sheen = smoothstep(0.2, 0.0, abs(vP.y * 0.8 - vP.x * 0.6 - 0.34)) * (1.0 - r * r);
+        col += vec3(0.75, 0.9, 1.0) * 0.07 * sheen;
+        col += mix(uColor, vec3(1.0), 0.25) * smoothstep(0.93, 1.0, r) * 0.32;
         gl_FragColor = vec4(col, 1.0);
         #include <colorspace_fragment>
       }`,

@@ -42,14 +42,14 @@ URL に `?shots=1` を付けると、美術レビュー用に8つの固定カメ
 | 場所 | 内容 |
 |---|---|
 | `src/core/` | 描画に依存しないパズルの中核。ステージのコンパイル、接続の導出、干渉判定、ソルバー、検証器。ゲームと Node のツールで共有する |
-| `src/game/` | three.js のゲーム本体。手続き生成の建築、背景都市、移動、カメラ、Fold Mode、音、テレメトリ |
+| `src/game/` | three.js のゲーム本体。部材キットから組む建築（床板は `kitLayout.ts`、パスキューブ・壁画・塔は `setPieces.ts`。道筋はステージのデータから並べる）、背景都市、移動、カメラ、Fold Mode、音、テレメトリ |
 | `src/stages/` | ステージデータ（`area1.json`）と調整用の数値（`tunables.json`）。改善ループが変更するのはここだけ |
 | `api/` | Vercel Function。`telemetry.ts` はプレイログを受け取って Vercel Blob に保存し、`telemetry-export.ts` は改善ループにログを渡す（GitHub Actions の OIDC トークンで認証し、前日までのログを日ごとにまとめる） |
 | `tools/ai/` | 改善ループの集計・判定・提案の検証・適用 |
 | `tools/units-view.cjs`、`tools/units-count.py` | 背景の建物の単位を並べて描くツールと、ショットに見えている単位の種類を数えるツール |
 | `tools/video/`、`video/` | デモ再生を1コマずつ書き出すツールと、その設定（`video/demo.yaml`） |
 | `ai/` | エージェントへの指示（`prompts/`）、出力形式（`schemas/`）、改善履歴（`history/log.json`） |
-| `art/blender/` | Blender（4.4.3）の Python スクリプトで生成するアセット（`gen_gate.py` → `public/assets/gate.glb`、`gen_floor.py` などの部材キット → `public/assets/kit/*.glb`、`gen_buildings.py` → 背景の都市の質感付きの建物79種とそのテクスチャ `public/assets/buildings.glb`、`gen_city.py` → 比較用（`?bldg=old`）の以前の建物12種（オスマン様式の4〜12階の集合住宅、アール・デコの段状の量塊と塔、ドーム、鐘楼。それぞれ、太い柱と引っ込んだ開口の正面・屋根窓・煙突・張り出した軒・段状の頂部を形で作った近景用と、テクスチャを貼った四角形を主にした遠景用の2つ）`public/assets/city.glb`、`gen_cityprops.py` → 並木・広場の噴水と記念柱・大聖堂・橋脚の足元 `public/assets/cityprops.glb`、この2つの共通部分（建物の正面を描いたテクスチャと形の部品）は `city_kit.py`、全体の共通部分は `fc_kit.py`） |
+| `art/blender/` | Blender（4.4.3）の Python スクリプトで生成するアセット（`gen_floor.py` などの部材キットと、パズルの見せ場（`gen_cube.py` パスキューブ、`gen_plate.py` 渡し板、`gen_mural.py` 壁画、`gen_tower.py` 腕の塔、`gen_street.py` 街路の縁石と門型アーチ、`gen_gate.py` 門）→ `public/assets/kit/*.glb`、`gen_buildings.py` → 背景の都市の質感付きの建物79種とそのテクスチャ `public/assets/buildings.glb`、`gen_city.py` → 比較用（`?bldg=old`）の以前の建物12種（オスマン様式の4〜12階の集合住宅、アール・デコの段状の量塊と塔、ドーム、鐘楼。それぞれ、太い柱と引っ込んだ開口の正面・屋根窓・煙突・張り出した軒・段状の頂部を形で作った近景用と、テクスチャを貼った四角形を主にした遠景用の2つ）`public/assets/city.glb`、`gen_cityprops.py` → 並木・広場の噴水と記念柱・大聖堂・橋脚の足元 `public/assets/cityprops.glb`、この2つの共通部分（建物の正面を描いたテクスチャと形の部品）は `city_kit.py`、全体の共通部分は `fc_kit.py`） |
 | `art/textures/` | Poly Haven（CC0）から取得したテクスチャの原本（`node art/fetch-textures.mjs` で再取得できる） |
 | `.github/workflows/` | `ci.yml`（テストとビルド）、`improve.yml`（毎日の改善ループ） |
 | `docs/` | 設計書（`design/`）と公開・運用の手順（`SETUP.md`） |
