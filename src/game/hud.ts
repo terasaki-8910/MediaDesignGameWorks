@@ -29,10 +29,15 @@ export interface TitleOptions {
   /** Newest first. */
   recent: RevisionEntry[];
   consent: boolean;
+  /** False while the scene is still loading: Start is disabled and says so until setStartReady(). */
+  ready: boolean;
   onConsent(v: boolean): void;
   onStart(): void;
   onSettings(): void;
 }
+
+const START_LABEL = '歩きはじめる';
+const LOADING_LABEL = '読み込み中…';
 
 const h = (tag: string, cls = '', html = '') => {
   const e = document.createElement(tag);
@@ -176,7 +181,11 @@ export class Hud {
       h('p', 'sub', '折り畳まれた都市を歩き、建築を折り直して道を作る'),
     );
 
-    const start = button('歩きはじめる', 'btn primary');
+    const start = button(o.ready ? START_LABEL : LOADING_LABEL, 'btn primary');
+    if (!o.ready) {
+      start.disabled = true;
+      start.setAttribute('aria-busy', 'true');
+    }
     start.addEventListener('click', () => o.onStart());
     const controls = button('操作方法');
     controls.addEventListener('click', () => this.openControls());
@@ -204,6 +213,17 @@ export class Hud {
     t.style.opacity = '1';
     this.statusEl.style.visibility = 'hidden';
     if (!this.dialog) start.focus({ preventScroll: true });
+  }
+
+  /** Loading has finished: Start becomes available and, if nothing else has the focus, takes it. */
+  setStartReady() {
+    const s = this.startBtn;
+    if (!s || !s.disabled) return;
+    s.disabled = false;
+    s.textContent = START_LABEL;
+    s.removeAttribute('aria-busy');
+    const idle = !document.activeElement || document.activeElement === document.body;
+    if (this.titleShown && !this.dialog && idle) s.focus({ preventScroll: true });
   }
 
   /** "都市改訂 第N版": the latest entry in full, earlier ones as a line each, so the title stays readable as the log grows. */

@@ -8,7 +8,7 @@ unit of the lot's family whose own proportions come nearest and fits it to the b
 many sizes rather than stretched: `--table` writes their measures for the game (units.ts).
   h<w>_<h><seed>  a row of two to four Haussmann houses between party walls, each house with its own storeys, eaves,
                   stone, front (one of two), roof (mansard, tall pavilion roof, two-tier mansard, an attic storey behind
-                  a terrace, a flat roof behind a parapet), dormer rhythm and chimney stacks; some end in a blank gable
+                  a terrace, a flat roof behind a parapet), upper roof, dormer rhythm and chimney stacks; some end in a blank gable
                   wall with its flues, some in a corner rotunda under a slate dome. Lengths 26 to 53 m, heights 11 to 46 m.
   t<h>            a tower house: a slender house under a stepped stone crown between two lower wings
   d<w>_<h>        an Art Deco mass: plinth, giant piers before bands of glazing, setbacks with parapets, a stepped crown
@@ -16,14 +16,28 @@ many sizes rather than stretched: `--table` writes their measures for the game (
                   same kind, for the lots where the plan allows only about half the height)
   monument, fountain, pier_foot   the plazas' centrepieces and the feet of the play area's piers (one model each)
 
+Roofs (the city is seen from above as much as from the street: its walls stand round the play area). Over a mansard's
+slates the upper roof is one of four kinds, the house's own, all with their ridge at the same height: two slopes of zinc
+to a ridge along the street (hipped where the house stands free, a gable of render at a party wall), two ridges with a
+valley between, the same with a gabled cross wing and its two valleys, or a nearly flat deck with a glazed lantern, a
+rail and planters. Ridges and hips have caps of new zinc, valleys gutters of lead, the slopes a roof light or two.
+Dormers are small gables (near: front, window, cheeks; far: the two slopes and the front as one triangle). The flues come
+up in long narrow stacks along the party walls and the cross walls, on one side of the ridge, on both or astride it, a
+pot to each flue (far: the stack's head in the pots' colour). A flat roof is a paved terrace inside its coping with a
+storey set back on it under a low hipped roof, a roof light, planters and on some a water tank; so are the terraces of
+the Art Deco masses. Everything of a roof is drawn from the roof's own generator, the same numbers for the near and the
+far model, and no unit's footprint or height differs from what it was before the roofs were made (2026-11-25).
+
 Materials: eight tiled layers of 512 x 256 px, shared by every building (the game puts them into one array texture and
 draws everything with the city's one material, one draw call). They are made here from Poly Haven photographs (CC0, see
 docs/asset-manifest.json) and carried in this file as plain images on a small mesh, `tx_set`:
   0 limestone   sandstone_blocks_08, less saturated, at the city's stone colour                  6.0 x 6.0 m a tile
   1 facade      the same stone with a rusticated ground floor arcade and two storeys of windows painted in: surrounds,
                 head mouldings, shaded reveals, glass, curtains, shutters, sills                 11.6 x 10.8 m, four bays
-  2 slate       grey_roof_tiles_02 at the city's slate colour, with broad patches               8.0 x 8.0 m
-  3 zinc        blue_metal_plate, nearly grey, at the city's zinc colour, standing seams        4.6 x 4.6 m
+  2 slate       grey_roof_tiles_02 at the city's slate colour, with broad patches and the runs
+                rain leaves down a slope                                                        8.0 x 8.0 m
+  3 zinc        sheets between batten rolls 0.58 m apart, each sheet its own tone, welts across,
+                rain runs (drawn here; blue_metal_plate gives the fine scuffs)                  4.6 x 4.6 m
   4 glazing     the Art Deco glazing: panes in bronze frames, each pane its own tone           5.8 x 7.4 m
   5 facade_b    a second front: shop fronts under a fascia, a carriage door, windows between open shutters, windows
                 under keystones                                                                 11.6 x 10.8 m, four bays
@@ -42,7 +56,8 @@ the layer's mask, so the same stone streaks differently on every wall (atmospher
 
 No normal map: the walls are seen from 120 m and more, where a texel of it is a fraction of a pixel, and the city's
 light has no specular term to show it. Origin: ground centre of the footprint; +X is the long side. Deterministic:
-every random number comes from a seed written here.
+every random number comes from a seed written here. The meshes are Draco-compressed (fc_kit.export; the game reads them
+through src/game/gltf.ts): the file came from 5.8 MB to under 2 MB.
 """
 import math
 import os
@@ -54,7 +69,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fc_kit as K  # noqa: E402
-from city_kit import BAY, FACES, GILT, GLASS, STONE_RGB, SLATE_RGB, ZINC_RGB, Shell, finished, mul  # noqa: E402
+from city_kit import BAY, FACES, GILT, GLASS, LEAF, SKYLIGHT, STONE_RGB, SLATE_RGB, TANK, ZINC_RGB, Shell, finished, mul  # noqa: E402
 
 opts = K.script_args()
 OUT = opts.get("out", "public/assets/buildings.glb")
@@ -78,6 +93,10 @@ IRON = K.srgb("#6E6961")  # a rail seen from afar: iron bars and the stone behin
 LEAD = (0.84, 0.86, 0.9)  # the zinc layer as lead sheet (a dome)
 WOOD = K.srgb("#4F463D")
 WATER = K.srgb("#6E8A90")
+OVER = (0.1, 0.32)  # how far a face that lies on another stands off it: near model, far model
+CAP = K.srgb("#838C96")  # new zinc on a ridge or a hip: a step lighter than the sheets beside it
+GUTTER = K.srgb("#474E57")  # the lead of a valley's gutter, and what gathers in it
+PAVE = (0.74, 0.78, 0.86)  # a paved terrace: the limestone layer as cool grey slabs (the game brings every layer to one tone with distance, so a tint is all of the difference)
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -232,6 +251,7 @@ def noise(rng, sx, sy):
 def layers():
     """The layers as linear RGB [8, TH, TW, 3] and their masks [8, TH, TW] (rows from the bottom)."""
     rng = np.random.default_rng(2411)
+    rng2 = np.random.default_rng(2511)  # (the roofs' own: what is added to them leaves the other layers as they were)
     n = len(NAMES)
     rgb = np.zeros((n, TH, TW, 3))
     mask = np.zeros((n, TH, TW))
@@ -251,17 +271,34 @@ def layers():
     # 2 slate: the photo's slates at the city's slate colour, broad patches of weathering over them
     slate = pool(toned(photo("grey_roof_tiles_02"), SLATE_RGB, 0.6, 1.0), TW, TH)
     slate *= (0.93 + 0.14 * noise(rng, 40, 20))[..., None]
+    # rain: runs down the slope (V runs up it), a hand wide and two or three metres long, darker where the water goes
+    run_s = noise(rng2, 5.0, 75.0)
+    slate *= (1.0 - 0.08 * run_s ** 1.5)[..., None]
+    slate *= lin(*SLATE_RGB) / slate.reshape(-1, 3).mean(axis=0)
     rgb[SLATE] = slate
-    mask[SLATE] = stretch(0.5 * noise(rng, 26, 14) + 0.5 * noise(rng, 3.0, 30.0))
+    mask[SLATE] = stretch(0.3 * noise(rng, 26, 14) + 0.15 * noise(rng, 3.0, 30.0) + 0.55 * run_s)
 
-    # 3 zinc: a painted steel plate with its seams and scuffs, taken nearly grey at the city's zinc colour
-    zinc = pool(toned(photo("blue_metal_plate"), ZINC_RGB, 0.22, 0.55), TW, TH)
-    zinc *= (0.96 + 0.08 * noise(rng, 50, 24))[..., None]
-    for x in range(0, TW, TW // 8):  # standing seams every 0.58 m: a line of shade and the roll's light beside it
-        zinc[:, x:x + 2] *= 0.88
-        zinc[:, x + 2:x + 4] *= 1.04
+    # 3 zinc: sheets between batten rolls 0.58 m apart that run down the slope, each sheet of its own tone (they are
+    # laid and replaced one by one), a welt across every 2.3 m, staggered from strip to strip; rain runs down them. The
+    # photo of a steel plate gives only its fine scuffs (its own plates' edges made a grid 4.6 m wide of every roof)
+    plate = pool(toned(photo("blue_metal_plate"), ZINC_RGB, 0.22, 0.55), TW, TH)
+    scuff = np.clip(luma(plate) / np.maximum(blur(luma(plate), 5.0, 5.0), 1e-6), 0.95, 1.05)
+    zinc = np.broadcast_to(lin(*ZINC_RGB), (TH, TW, 3)) * scuff[..., None]
+    zinc = zinc * (0.96 + 0.08 * noise(rng, 50, 24))[..., None]
+    strip, welt = TW // 8, TH // 2
+    for i, x in enumerate(range(0, TW, strip)):
+        at = int(rng2.integers(0, welt))
+        for k in range(TH // welt):
+            rows = (np.arange(TH) - at) % TH // welt == k
+            zinc[rows, x:x + strip] *= 0.96 + 0.08 * rng2.random()
+        zinc[(np.arange(TH) - at) % welt < 2, x:x + strip] *= 0.93  # the welts
+        zinc[:, x:x + 2] *= 0.88  # the roll: its shade and its light
+        zinc[:, x + 2:x + 5] *= 1.05
+    run_z = noise(rng2, 4.0, 70.0)
+    zinc *= (1.0 - 0.07 * run_z ** 1.5)[..., None]
+    zinc *= lin(*ZINC_RGB) / zinc.reshape(-1, 3).mean(axis=0)
     rgb[ZINC] = zinc
-    mask[ZINC] = stretch(0.4 * noise(rng, 30, 16) + 0.6 * noise(rng, 2.5, 36.0))
+    mask[ZINC] = stretch(0.25 * noise(rng, 30, 16) + 0.15 * noise(rng, 2.5, 36.0) + 0.6 * run_z)
 
     # 6 render: a lime render gone grey, patched and mouldy (party walls, gables, stacks)
     render = pool(toned(photo("grey_plaster_03"), RENDER_RGB, 0.5, 1.5), TW, TH)
@@ -576,6 +613,54 @@ class TShell(Shell):
             self.tring(c, r * math.cos(a0), z0 + h * math.sin(a0), top_r if last else r * math.cos(a1), z0 + h * (math.sin(a1) if not last else (1.0 if top_r < 1e-6 else 0.97)), seg, layer, tint,
                        0.8 if k == 0 else 0.3, 0.3 if k == 0 else 0.15, cap=ZINC if last and top_r > 1e-6 else None)
 
+    def tup(self, pts, layer, tint=(1.0, 1.0, 1.0), w=0.0, ws=None):
+        """`tface`, wound so that the face looks up."""
+        nz = sum(pts[i][0] * pts[(i + 1) % len(pts)][1] - pts[(i + 1) % len(pts)][0] * pts[i][1] for i in range(len(pts)))
+        if nz < 0:
+            pts, ws = pts[::-1], ws[::-1] if ws else None
+        self.tface(pts, layer, tint, w, ws=ws)
+
+    def tquad(self, pts, toward, layer, tint=(1.0, 1.0, 1.0), w=0.0, ws=None):
+        """`tface`, wound so that the face looks towards `toward`."""
+        n = [0.0, 0.0, 0.0]
+        for i in range(len(pts)):  # (Newell's method: the polygon's normal)
+            a, b = pts[i], pts[(i + 1) % len(pts)]
+            n[0] += (a[1] - b[1]) * (a[2] + b[2])
+            n[1] += (a[2] - b[2]) * (a[0] + b[0])
+            n[2] += (a[0] - b[0]) * (a[1] + b[1])
+        if n[0] * toward[0] + n[1] * toward[1] + n[2] * toward[2] < 0:
+            pts, ws = pts[::-1], ws[::-1] if ws else None
+        self.tface(pts, layer, tint, w, ws=ws)
+
+    def cap(self, a, b, half, colour, lift=0.1, roll=0.0):
+        """A cap of sheet metal along the line from a to b (a ridge, a hip, a valley's gutter), in a plain colour: a strip
+        `half` wide to each side lying `lift` over the line; with `roll` its middle stands that much higher (a ridge
+        roll: two faces)."""
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        length = math.hypot(dx, dy)
+        if length < 0.3:
+            return
+        px, py = -dy / length * half, dx / length * half
+        la, lb = (a[0] - px, a[1] - py, a[2] + lift), (b[0] - px, b[1] - py, b[2] + lift)
+        ra, rb = (a[0] + px, a[1] + py, a[2] + lift), (b[0] + px, b[1] + py, b[2] + lift)
+        if roll > 0.0:
+            ma, mb = (a[0], a[1], a[2] + lift + roll), (b[0], b[1], b[2] + lift + roll)
+            self.quad([la, ma, mb, lb], mul(colour, 0.94), (0.0, 0.0, 1.0))
+            self.quad([ma, ra, rb, mb], colour, (0.0, 0.0, 1.0))
+        else:
+            self.quad([la, ra, rb, lb], colour, (0.0, 0.0, 1.0))
+
+    def paved(self, lo, hi, z, rim, coping, paving, w=0.45):
+        """The top of a terrace at z: a coping `rim` wide round it and the paving inside, side by side in one plane (a
+        second face a few centimetres over the first would flicker from where the city is seen)."""
+        (x0, y0), (x1, y1) = lo, hi
+        a = [(x0, y0, z), (x1, y0, z), (x1, y1, z), (x0, y1, z)]
+        b = [(x0 + rim, y0 + rim, z), (x1 - rim, y0 + rim, z), (x1 - rim, y1 - rim, z), (x0 + rim, y1 - rim, z)]
+        for i in range(4):
+            j = (i + 1) % 4
+            self.tface([a[i], a[j], b[j], b[i]], LIME, coping, 0.3)
+        self.tface(b, LIME, paving, w)
+
     def rail_run(self, p0, p1, z0, h=1.0):
         """An iron balcony rail from p0 to p1 (left to right seen from outside): a band of one tone, the iron and what
         shows through it (bars would be finer than a pixel from where the walls are seen)."""
@@ -593,7 +678,7 @@ def stone_tint(rnd, value=0.09, warm=0.04):
 
 
 def stacks(s, near, rnd, x0, x1, y_half, rz, ridge, count, tall=0.0):
-    """Chimney stacks: render under soot, each where its flues come up, with its row of pots as one block (near)."""
+    """Chimney stacks standing free on a flat roof: render under soot, each with its row of pots as one block (near)."""
     for i in range(count):
         x = x0 + 1.0 + (x1 - x0 - 2.0) * (i + 0.2 + 0.6 * rnd.random()) / count
         side = -1 if rnd.random() < 0.5 else 1
@@ -604,15 +689,23 @@ def stacks(s, near, rnd, x0, x1, y_half, rz, ridge, count, tall=0.0):
             s.box((x - 0.2, y - l * 0.75, rz + h), (x + 0.2, y + l * 0.75, rz + h + 0.6), POT)
 
 
-def dormers(s, near, rnd, x0, x1, hy, top, roof, inset, tint, zinc, rhythm, seed, sides="SN", h=None):
-    """Dormers on the long slopes: a stone front under a zinc cap, standing out of the slates; their rhythm is the
-    house's own. Far: none (at its distance a dormer is under a pixel)."""
-    if not near or rhythm == "none":
+def dormers(s, near, r2, x0, x1, hy, top, roof, inset, tint, zinc, rhythm, seed, sides="SN", h=None):
+    """Dormers on the long slopes, each a small gable: a stone front with its window under two slopes of zinc that run
+    back into the slates (every fourth house has them hipped at the front too, the capucine); their rhythm is the house's
+    own. Far: the two slopes and the front as one triangle (a dormer is three pixels there: a row of small gables).
+    `r2` is the roof's own generator: what is drawn from it does not depend on the level of detail."""
+    dw, wall = 0.62 + 0.14 * r2.random(), (h or (2.2 + 0.5 * r2.random())) - 0.75
+    hipped = r2.random() < 0.25
+    if rhythm == "none":
         return
     bays = max(1, round((x1 - x0) / BAY))
     bw = (x1 - x0) / bays
-    dw, dh = 0.62 + 0.14 * rnd.random(), h or (2.2 + 0.5 * rnd.random())
-    back = inset * (0.6 + dh) / roof + 0.15
+    out = lambda z: hy + 0.1 - (inset + 0.1) * (z - top) / roof  # noqa: E731  (how far out the slates are at a height)
+    zb = top + 0.5
+    ze = min(zb + wall, top + roof - 0.9 * dw - 0.25)
+    za = ze + 0.9 * dw
+    yf = out(zb) - 0.02
+    cap = mul(zinc, 1.12)
     for i in range(bays):
         if (rhythm == "other" and i % 2 == seed % 2) or (rhythm == "pairs" and i % 3 == 2):
             continue
@@ -620,10 +713,173 @@ def dormers(s, near, rnd, x0, x1, hy, top, roof, inset, tint, zinc, rhythm, seed
         for sy, side in ((-1, "S"), (1, "N")):
             if side not in sides:
                 continue
-            y0, y1 = sorted((sy * (hy - 0.3), sy * (hy - back)))
-            s.tbox((x - dw, y0, top + 0.6), (x + dw, y1, top + 0.6 + dh), LIME, mul(tint, 1.04), top=ZINC, top_tint=mul(zinc, 1.12), w0=0.15, w1=0.7, wt=0.3, walls="SEW" if sy < 0 else "NEW")
-            u0, u1 = sorted(((x - dw + 0.2) * -sy, (x + dw - 0.2) * -sy))
-            s.panel(side, 0.0, 0.0, u0, u1, top + 0.95, top + 0.35 + dh, GLASS, hy - 0.26)
+            P = lambda dx, y, z: (x - sy * dx, sy * y, z)  # noqa: E731  (dx to the left seen from outside)
+            el, er, apex = P(dw, yf, ze), P(-dw, yf, ze), P(0.0, yf - (0.45 if hipped else 0.0), za)
+            bl, br = P(dw, out(ze), ze), P(-dw, out(ze), ze)  # where the eaves run into the slates
+            back = P(0.0, out(za), za)
+            s.tup([er, apex, back, br], ZINC, cap, ws=[0.3, 0.15, 0.3, 0.6])
+            s.tup([apex, el, bl, back], ZINC, mul(cap, 0.9), ws=[0.15, 0.3, 0.6, 0.3])
+            fl, fr = P(dw, yf, zb), P(-dw, yf, zb)
+            out_n = (0.0, sy, 0.0)
+            if not near:
+                s.tquad([fl, fr, P(0.0, yf, za)], out_n, LIME, mul(tint, 0.86), ws=[0.15, 0.15, 0.6])
+                continue
+            if hipped:
+                s.tquad([fl, fr, er, el], out_n, LIME, mul(tint, 0.97), ws=[0.15, 0.15, 0.7, 0.7])
+                s.tup([el, er, apex], ZINC, mul(cap, 1.05), w=0.3)
+            else:
+                s.tquad([fl, fr, er, P(0.0, yf, za), el], out_n, LIME, mul(tint, 0.97), ws=[0.15, 0.15, 0.7, 0.5, 0.7])
+            s.tquad([fr, br, er], (sy * 1.0, 0.0, 0.0), ZINC, mul(cap, 0.8), w=0.5)  # the cheeks
+            s.tquad([bl, fl, el], (-sy * 1.0, 0.0, 0.0), ZINC, mul(cap, 0.8), w=0.5)
+            s.quad([P(dw - 0.2, yf + 0.04, zb + 0.3), P(-dw + 0.2, yf + 0.04, zb + 0.3), P(-dw + 0.2, yf + 0.04, ze - 0.05), P(dw - 0.2, yf + 0.04, ze - 0.05)], GLASS, out_n)
+
+
+def pitched(s, xa, xb, iy, z0, z1, hip_w, hip_e, layer, tint, gt, w_eaves=0.6):
+    """Two slopes over a rectangle up to a ridge along it: hipped at a free end, closed by a gable of render where it
+    stands against a party wall. Returns the ridge's two ends (x)."""
+    hips = (1 if hip_w else 0) + (1 if hip_e else 0)
+    run = min(iy, max(0.0, (xb - xa - 1.0) / max(hips, 1)))
+    ra, rb = xa + (run if hip_w else 0.0), xb - (run if hip_e else 0.0)
+    s.tslope([(xa, -iy, z0), (xb, -iy, z0), (rb, 0.0, z1), (ra, 0.0, z1)], layer, mul(tint, 1.03), w_eaves, 0.25)
+    s.tslope([(xb, iy, z0), (xa, iy, z0), (ra, 0.0, z1), (rb, 0.0, z1)], layer, mul(tint, 0.95), w_eaves + 0.15, 0.3)
+    for pts, hip in (([(xa, iy, z0), (xa, -iy, z0), (ra, 0.0, z1)], hip_w), ([(xb, -iy, z0), (xb, iy, z0), (rb, 0.0, z1)], hip_e)):
+        if hip:
+            s.tslope(pts, layer, mul(tint, 0.99), w_eaves, 0.25)
+        else:
+            s.tface(pts, RENDER, gt, ws=[0.7, 0.7, 1.0])
+    return ra, rb
+
+
+def skylights(s, near, r2, xa, xb, iy, z0, z1, count, keep=None):
+    """Roof lights lying in the upper slopes (tabatieres): a pane each, a little over the sheets. Far: the first only.
+    `keep` (x0, x1, sy) is a stretch of one slope they stay off (a cross gable stands there)."""
+    for k in range(count):
+        sy = -1 if r2.random() < 0.5 else 1
+        x = xa + 0.9 + (xb - xa - 1.8) * r2.random()
+        t = 0.28 + 0.3 * r2.random()
+        hw, hl = 0.45 + 0.2 * r2.random(), 0.55 + 0.35 * r2.random()
+        if xb - xa < 2.4 or (keep and keep[2] == sy and keep[0] - hw < x < keep[1] + hw) or (not near and k > 0):
+            continue
+        length = math.hypot(iy, z1 - z0)
+        uy, uz = -sy * iy / length, (z1 - z0) / length  # up the slope
+        c = (x, sy * iy * (1.0 - t), z0 + (z1 - z0) * t + OVER[0 if near else 1] * 1.2)
+        pts = [(c[0] + ax * hw, c[1] + al * hl * uy, c[2] + al * hl * uz) for ax, al in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+        s.quad(pts, SKYLIGHT, (0.0, 0.0, 1.0))
+
+
+def terrasson(s, near, r2, kind, xa, xb, iy, z0, z1, hip_w, hip_e, layer, tint, zinc, gt, stone):
+    """The upper roof of a mansard, over the rectangle from xa to xb and `iy` to either side, from z0 up to its ridge at
+    z1 whatever its kind (the unit's height is the same with each):
+      "hip"    two slopes to a ridge along the street, hipped where the house stands free, a gable at a party wall;
+      "m"      two ridges with a valley between them (a deep house between party walls: its gutter runs along the middle);
+      "cross"  the same as "hip" with a gabled wing to the street or to the court, a valley on each side of it;
+      "deck"   a nearly flat deck of zinc with a glazed lantern on a kerb (a stair's or a studio's verriere).
+    Ridges and hips have their caps of zinc, valleys their gutters of lead; roof lights lie in the slopes."""
+    cap, lead = mul(CAP, zinc[0]), mul(GUTTER, zinc[0])
+    half = 0.26 if near else 0.34
+    roll = 0.1 if near else 0.0
+    # how far a cap, a gutter or a pane lies over the sheets: a near model is seen from 60 to 400 m, a far one from
+    # 300 m to a kilometre and more, where the depth buffer no longer tells 10 cm apart
+    over = OVER[0 if near else 1]
+    gutter = 0.2 if near else 0.45  # (a gutter lies in a valley: over the slopes that rise beside it)
+    # (these are drawn from r2 before the kinds part: the same numbers for both levels of detail)
+    lights = 1 + r2.randrange(3)
+    side = -1 if r2.random() < 0.5 else 1
+    at, size = r2.random(), r2.random()
+    if kind == "m":
+        v = z0 + 0.3 * (z1 - z0)
+        h = iy / 2
+        s.tslope([(xa, -iy, z0), (xb, -iy, z0), (xb, -h, z1), (xa, -h, z1)], layer, mul(tint, 1.03), 0.6, 0.25)
+        s.tslope([(xa, -h, z1), (xb, -h, z1), (xb, 0.0, v), (xa, 0.0, v)], layer, mul(tint, 0.94), 0.9, 0.3)
+        s.tslope([(xb, h, z1), (xa, h, z1), (xa, 0.0, v), (xb, 0.0, v)], layer, mul(tint, 1.0), 0.9, 0.25)
+        s.tslope([(xb, iy, z0), (xa, iy, z0), (xa, h, z1), (xb, h, z1)], layer, mul(tint, 0.95), 0.75, 0.3)
+        for x, nx in ((xa, -1.0), (xb, 1.0)):  # the two gables: render, weathered from the top
+            for pts in ([(x, 0.0, z0), (x, -iy, z0), (x, -h, z1), (x, 0.0, v)], [(x, iy, z0), (x, 0.0, z0), (x, 0.0, v), (x, h, z1)]):
+                s.tquad(pts, (nx, 0.0, 0.0), RENDER, gt, w=0.85)
+        for y in (-h, h):
+            s.cap((xa, y, z1), (xb, y, z1), half, cap, lift=over, roll=roll)
+        s.cap((xa, 0.0, v), (xb, 0.0, v), 0.34, lead, lift=gutter)
+        for k in range(lights):
+            sy = -1 if r2.random() < 0.5 else 1
+            x, hw = xa + 0.9 + (xb - xa - 1.8) * r2.random(), 0.45 + 0.2 * r2.random()
+            if near or k == 0:
+                length = math.hypot(h, z1 - z0)
+                uy, uz = -sy * h / length, (z1 - z0) / length
+                c = (x, sy * (iy - 0.45 * h), z0 + 0.45 * (z1 - z0) + over * 1.2)
+                s.quad([(c[0] + ax * hw, c[1] + al * 0.6 * uy, c[2] + al * 0.6 * uz) for ax, al in ((-1, -1), (1, -1), (1, 1), (-1, 1))], SKYLIGHT, (0.0, 0.0, 1.0))
+        return
+    if kind == "deck":
+        zd = z0 + 0.3
+        pitched(s, xa, xb, iy, z0, zd, hip_w, hip_e, layer, mul(tint, 0.95), gt, 0.5)
+        lx = min(4.6, max(1.6, 0.26 * (xb - xa)))
+        ly = 0.36 * iy
+        xc = xa + lx + 1.0 + (xb - xa - 2 * lx - 2.0) * at
+        zk = min(zd + 0.7, z1 - 0.8)
+        s.tbox((xc - lx, -ly, z0), (xc + lx, ly, zk), ZINC, mul(zinc, 0.86), w0=0.6, w1=0.3, lid=False)
+        s.thip(xc - lx, xc + lx, -ly, ly, zk, z1, GLAZING, (0.8, 0.82, 0.85))
+        r = max(lx - ly, 0.0)
+        if r > 0.3:
+            s.cap((xc - r, 0.0, z1), (xc + r, 0.0, z1), 0.2, cap, lift=over)
+        if near:
+            # what stands on a deck: planters along one edge, and a rail before them
+            ye = side * (iy - 1.5)
+            for k in (-1, 1):
+                px = xc + k * (lx + 1.4)
+                if xa + 1.3 < px < xb - 1.3:
+                    s.tbox((px - 0.9, ye - 0.4, zd - 0.25), (px + 0.9, ye + 0.4, zd + 0.5), RENDER, mul(stone, 0.9), w0=0.5, w1=0.3, lid=False)
+                    s.quad([(px - 0.9, ye - 0.4, zd + 0.5), (px + 0.9, ye - 0.4, zd + 0.5), (px + 0.9, ye + 0.4, zd + 0.5), (px - 0.9, ye + 0.4, zd + 0.5)], LEAF, (0.0, 0.0, 1.0))
+            p0, p1 = ((xa + 0.3, -(iy - 0.25)), (xb - 0.3, -(iy - 0.25))) if side < 0 else ((xb - 0.3, iy - 0.25), (xa + 0.3, iy - 0.25))
+            s.rail_run(p0, p1, z0 + 0.02, 0.95)
+        return
+    ra, rb = pitched(s, xa, xb, iy, z0, z1, hip_w, hip_e, layer, tint, gt)
+    s.cap((ra, 0.0, z1), (rb, 0.0, z1), half, cap, lift=over, roll=roll)
+    for x, r, hip in ((xa, ra, hip_w), (xb, rb, hip_e)):
+        if hip:
+            for sy in (-1, 1):
+                s.cap((x, sy * iy, z0), (r, 0.0, z1), half, cap, lift=over)
+    keep = None
+    ww = min(2.5, 0.34 * iy) * (0.8 + 0.2 * size)
+    if kind == "cross" and rb - ra > 2 * ww + 1.6:
+        # the wing: its ridge runs level from the main ridge out over the eaves, its two slopes meet the main slope in valleys
+        xc = ra + ww + 0.8 + (rb - ra - 2 * ww - 1.6) * at
+        A, B, F, M = (xc - ww, side * iy, z0), (xc + ww, side * iy, z0), (xc, side * iy, z1), (xc, 0.0, z1)
+        s.tup([A, F, M], layer, mul(tint, 1.04), ws=[0.8, 0.2, 0.2])
+        s.tup([B, F, M], layer, mul(tint, 0.94), ws=[0.8, 0.2, 0.2])
+        s.tquad([A, B, F], (0.0, side, 0.0), LIME, mul(stone, 1.02), ws=[0.3, 0.3, 0.8])
+        s.cap(F, M, half, cap, lift=over, roll=roll)
+        s.cap(A, M, 0.26, lead, lift=gutter)
+        s.cap(B, M, 0.26, lead, lift=gutter)
+        if near and z1 - z0 >= 1.5:
+            zo, yo = z0 + 0.2 * (z1 - z0), side * (iy + 0.04)
+            s.quad([(xc - 0.3, yo, zo), (xc + 0.3, yo, zo), (xc + 0.3, yo, zo + 0.5), (xc - 0.3, yo, zo + 0.5)], GLASS, (0.0, side, 0.0))
+        keep = (xc - ww, xc + ww, side)
+    skylights(s, near, r2, ra, rb, iy, z0, z1, lights, keep)
+
+
+def party_stacks(s, near, r2, lines, iy, rz, ridge, tall=0.0):
+    """Chimney stacks where the flues come up: along the party walls and the cross walls of a house (`lines`: their x),
+    each a long narrow wall of render under soot across the roof, on one side of the ridge, on both, or astride it, with
+    its row of pots (near: a pot to each flue; far: the head of the stack in the pots' colour)."""
+    for x in lines:
+        mode = r2.random()
+        parts = []
+        for sy in ((-1, 1) if mode < 0.45 else (-1,) if mode < 0.65 else (1,) if mode < 0.85 else (0,)):
+            half = 0.9 + 1.1 * r2.random()
+            parts.append((sy * iy * (0.34 + 0.24 * r2.random()), min(half, 0.42 * iy)))
+        for y, half in parts:
+            w, h = 0.27 + 0.09 * r2.random(), ridge + 1.3 + 1.5 * r2.random() + tall
+            soot = mul(SOOT, 0.9 + 0.2 * r2.random())
+            tones = [0.86 + 0.28 * r2.random() for _ in range(5)]
+            s.tbox((x - w, y - half, rz - 0.4), (x + w, y + half, rz + h), RENDER, soot, w0=0.35, w1=1.0, wt=0.95, lid=False)
+            top = [(x - w, y - half, rz + h), (x + w, y - half, rz + h), (x + w, y + half, rz + h), (x - w, y + half, rz + h)]
+            if not near:
+                s.face(top, mul(POT, 0.88))
+                continue
+            s.tface(top, RENDER, mul(soot, 0.8), 0.95)
+            n = max(2, min(5, round(2 * half / 0.72)))
+            for k in range(n):
+                py = y - half + 2 * half * (k + 0.5) / n
+                s.frustum(0.17, 0.17, rz + h, 0.11, 0.11, rz + h + 0.6, mul(POT, tones[k]), top=mul(POT, 0.55 * tones[k]), c=(x, py))
 
 
 def house(s, lod, x0, x1, hy, floors, seed, tint, layer=FACADE, storey=3.08, ground=4.64, roof="mansard", roof_h=4.8, inset=1.5, dormer="each", chimneys=2, sides="SN", gable=None, balcony=(2, -1)):
@@ -681,14 +937,30 @@ def house(s, lod, x0, x1, hy, floors, seed, tint, layer=FACADE, storey=3.08, gro
     zinc = (0.92 + 0.14 * rnd.random(),) * 3
     slopes = "".join(side for side in "SENW" if side in "SN" or side in sides)
     gt = mul(tint, 0.9)
+    r2 = random.Random(seed * 7919 + 13)  # the roof's own numbers: the same for the near and the far model
 
     if roof == "terrace":
         # a flat roof of zinc behind a parapet; the stair's lantern, a tank or two stacks on it
-        s.tbox((x0 - 0.1, -hy - 0.15, top), (x1 + 0.1, hy + 0.15, top + 0.9), LIME, mul(tint, 1.06), top=ZINC, top_tint=mul(zinc, 0.92), w0=0.7, w1=0.25, wt=0.5)
+        # (a coping round it, the paving a little lower inside: the parapet's own shade is what draws the terrace from above)
+        s.tbox((x0 - 0.1, -hy - 0.15, top), (x1 + 0.1, hy + 0.15, top + 0.9), LIME, mul(tint, 1.06), w0=0.7, w1=0.25, lid=False)
+        s.paved((x0 - 0.1, -hy - 0.15), (x1 + 0.1, hy + 0.15), top + 0.9, 0.45, mul(tint, 1.1), mul(PAVE, zinc[0]))
         deck = top + 0.9
         lx = x0 + 1.5 + (x1 - x0 - 6.5) * rnd.random()
-        s.tbox((lx, -2.0, deck), (lx + 3.5, 2.0, deck + 2.5), RENDER, mul(tint, 0.98), top=ZINC, top_tint=zinc, w0=0.4, w1=0.9, wt=0.4)
+        # the storey set back on the terrace (the stair comes up in it): render under a low roof of zinc, a band of
+        # glazing to the terrace on either side
+        pl = max(3.5, (0.42 + 0.2 * r2.random()) * (x1 - x0 - 3.0))
+        pa = min(max(lx + 1.75 - pl / 2, x0 + 1.5), x1 - 1.5 - pl)
+        py = hy - 3.4
+        s.tbox((pa, -py, deck), (pa + pl, py, deck + 2.5), RENDER, mul(tint, 0.98), w0=0.4, w1=0.9, lid=False)
+        pitched(s, pa - 0.3, pa + pl + 0.3, py + 0.3, deck + 2.5, deck + 3.2, True, True, ZINC, zinc, gt, 0.5)
+        ra = min(py + 0.3, (pl + 0.6 - 1.0) / 2)
+        s.cap((pa - 0.3 + ra, 0.0, deck + 3.2), (pa + pl + 0.3 - ra, 0.0, deck + 3.2), 0.26, mul(CAP, zinc[0]), lift=OVER[0 if near else 1])
+        for sy in (-1, 1):
+            o = OVER[0 if near else 1]
+            q0, q1 = ((pa + 0.6, -py - o), (pa + pl - 0.6, -py - o)) if sy < 0 else ((pa + pl - 0.6, py + o), (pa + 0.6, py + o))
+            s.tface([(q0[0], q0[1], deck + 0.5), (q1[0], q1[1], deck + 0.5), (q1[0], q1[1], deck + 2.2), (q0[0], q0[1], deck + 2.2)], GLAZING, (0.86, 0.86, 0.88), 0.3)
         stacks(s, near, rnd, x0, x1, hy - 2.0, deck, 0.6, max(1, chimneys - 1))
+        terrace_things(s, near, r2, x0 + 0.6, x1 - 0.6, -hy + 0.5, hy - 0.5, deck, tint, keep=(pa - 0.8, pa + pl + 0.8))
         return deck + 1.2
     if roof == "crown":
         # a stepped crown of stone: an attic behind the cornice, two more steps, a blunt lantern block (no point)
@@ -731,8 +1003,18 @@ def house(s, lod, x0, x1, hy, floors, seed, tint, layer=FACADE, storey=3.08, gro
     s.tfrustum((x0, -hy - 0.1), (x1, hy + 0.1), top, (ix0, -hy + inset), (ix1, hy - inset), top + roof_h, SLATE, slate, slopes, gable_tint=gt)
     rz = top + roof_h
     iy = hy - inset
-    dormers(s, near, rnd, x0 + (inset * 0.5 if "W" in slopes else 0.0), x1 - (inset * 0.5 if "E" in slopes else 0.0), hy, top, roof_h, inset, tint, zinc, dormer, seed,
+    dormers(s, near, r2, x0 + (inset * 0.5 if "W" in slopes else 0.0), x1 - (inset * 0.5 if "E" in slopes else 0.0), hy, top, roof_h, inset, tint, zinc, dormer, seed,
             h=3.0 if roof == "pavilion" else None)
+    # the corners of a house that stands free: a roll of zinc down each arris of the slates
+    roll_colour = mul(CAP, zinc[0])
+    for x, ix, side in ((x0, ix0, "W"), (x1, ix1, "E")):
+        if side in slopes:
+            sx = -1 if side == "W" else 1
+            for sy in (-1, 1):
+                o = OVER[0 if near else 1] * 0.8
+                a, b = (x + sx * o, sy * (hy + 0.1 + o), top), (ix + sx * o, sy * (iy + o), rz)
+                d = 0.13
+                s.quad([(a[0] - sx * d, a[1] + sy * d, a[2]), (a[0] + sx * d, a[1] - sy * d, a[2]), (b[0] + sx * d, b[1] - sy * d, b[2]), (b[0] - sx * d, b[1] + sy * d, b[2])], roll_colour, (sx, sy, 0.4))
     if near:
         s.tbox((ix0 - 0.25, -iy - 0.25, rz - 0.1), (ix1 + 0.25, iy + 0.25, rz + 0.12), ZINC, mul(zinc, 1.15), w0=0.5, w1=0.2, wt=0.2)
         rz += 0.12
@@ -749,8 +1031,26 @@ def house(s, lod, x0, x1, hy, floors, seed, tint, layer=FACADE, storey=3.08, gro
         ix0, ix1, iy = j0, j1, jy
         rz += 2.6
     ridge = (0.2 if roof_h < 4.0 else 0.3) * iy
-    s.thip(ix0, ix1, -iy, iy, rz, rz + ridge, SLATE if roof == "pavilion" else ZINC, slate if roof == "pavilion" else zinc)
-    stacks(s, near, rnd, ix0, ix1, iy, rz, ridge, chimneys, 1.2 if roof == "pavilion" else 0.0)
+    # the upper roof: its kind is the house's own (the ridge is as high with each)
+    hip_w, hip_e = "W" in slopes, "E" in slopes
+    pick = r2.random()
+    kind = "hip"
+    if roof != "pavilion":
+        if pick < 0.24 and not hip_w and not hip_e and iy >= 4.5 and ix1 - ix0 >= 6.0:
+            kind = "m"
+        elif pick < 0.46 and iy >= 3.5:
+            kind = "cross"
+        elif pick < 0.64 and iy >= 4.5 and ix1 - ix0 >= 9.0 and ridge >= 1.3:
+            kind = "deck"
+    terrasson(s, near, r2, kind, ix0, ix1, iy, rz, rz + ridge, hip_w, hip_e, SLATE if roof == "pavilion" else ZINC, slate if roof == "pavilion" else zinc, zinc, gt, tint)
+    # the flues: along the party wall to the east (the next house's west wall is the same wall), and along the cross
+    # walls of a long house
+    lines = [x1 - 0.42] if "E" not in sides and gable != "E" else []
+    inner = max(0, round((x1 - x0) / 9.5) - 1)
+    lines += [x0 + (x1 - x0) * (k + 1 + 0.3 * (r2.random() - 0.5)) / (inner + 1) for k in range(inner)]
+    if not lines:
+        lines = [x0 + (x1 - x0) * (0.35 + 0.3 * r2.random())]
+    party_stacks(s, near, r2, [min(max(x, ix0 + 0.5), ix1 - 0.5) for x in lines], iy, rz, ridge, 1.2 if roof == "pavilion" else 0.0)
     if gable:
         # the gable wall's flues: a stepped stack rising through the end of the roof (the Paris mur pignon)
         sx = -1 if gable == "W" else 1
@@ -761,6 +1061,34 @@ def house(s, lod, x0, x1, hy, floors, seed, tint, layer=FACADE, storey=3.08, gro
             s.tbox((xa, -hy * 0.78, top), (xb, hy * 0.78, top + roof_h * 0.6), RENDER, mul(SOOT, 1.0), w0=0.5, w1=0.9, wt=0.8)
             s.box(((xa + xb) / 2 - 0.2, -hy * 0.34, rz + ridge + 1.6), ((xa + xb) / 2 + 0.2, hy * 0.34, rz + ridge + 2.2), POT)
     return rz + ridge
+
+
+def terrace_things(s, near, r2, x0, x1, y0, y1, z, tint, keep=None, tank=0.4):
+    """What stands on a flat roof: a glazed roof light, planters along an edge (near), and on some a water tank.
+    `keep` (x0, x1) is a stretch that is taken (a stair's lantern)."""
+    free = lambda a, b: not keep or b < keep[0] or a > keep[1]  # noqa: E731
+    xs = [x0 + (x1 - x0) * (0.12 + 0.76 * r2.random()) for _ in range(4)]
+    side = -1 if r2.random() < 0.5 else 1
+    has_tank, tone = r2.random() < tank, 0.9 + 0.2 * r2.random()
+    ye = y0 if side < 0 else y1
+    if x1 - x0 < 6.0 or y1 - y0 < 5.0:
+        return
+    # a roof light: panes in their frames, a little over the roof
+    lx = xs[0]
+    if free(lx - 1.6, lx + 1.6):
+        yc = (y0 + y1) / 2 - side * 0.2 * (y1 - y0)
+        zl = z + (0.2 if near else 0.45)
+        s.tup([(lx - 1.5, yc - 0.9, zl), (lx + 1.5, yc - 0.9, zl), (lx + 1.5, yc + 0.9, zl), (lx - 1.5, yc + 0.9, zl)], GLAZING, (0.8, 0.82, 0.85), 0.3)
+    for k, px in enumerate(xs[1:3]):
+        if free(px - 1.6, px + 1.6):
+            ya, yb = sorted((ye, ye - side * 1.0)) if k == 0 else sorted((-ye, -ye + side * 1.0))
+            if near:
+                s.tbox((px - 1.5, ya, z), (px + 1.5, yb, z + 0.55), RENDER, mul(tint, 0.9), w0=0.5, w1=0.3, lid=False)
+            s.quad([(px - 1.5, ya, z + 0.55), (px + 1.5, ya, z + 0.55), (px + 1.5, yb, z + 0.55), (px - 1.5, yb, z + 0.55)], LEAF, (0.0, 0.0, 1.0))
+    tx = xs[3]
+    if has_tank and free(tx - 1.4, tx + 1.4):
+        c = (tx, (y0 + y1) / 2 + side * 0.22 * (y1 - y0))
+        s.cylinder(c, 1.05, z, z + 1.9, mul(TANK, tone), 6, top=mul(TANK, tone * 0.8))
 
 
 ROOF_OVER = {"mansard": lambda hy: 0.62 + 4.8 + 0.3 * (hy - 1.5), "low": lambda hy: 0.62 + 3.4 + 0.2 * (hy - 1.5), "pavilion": lambda hy: 0.62 + 7.0 + 0.3 * (hy - 3.0),
@@ -939,8 +1267,30 @@ def deco_stone(s, near, rnd, x, y, z0, z1, tint, c=(0.0, 0.0)):
             s.twall(a1, b1, z0, z1, LIME, mul(col, 0.88), 0.3, 0.9)
 
 
-def parapet(s, x, y, z, tint, c=(0.0, 0.0), out=0.35, h=1.35, top=ZINC):
-    s.tbox((c[0] - x - out, c[1] - y - out, z), (c[0] + x + out, c[1] + y + out, z + h), LIME, mul(tint, 1.1), top=top, top_tint=(0.94, 0.94, 0.95), w0=0.75, w1=0.2, wt=0.5, bottom=True)
+def parapet(s, x, y, z, tint, c=(0.0, 0.0), out=0.35, h=1.35):
+    """A parapet round a terrace (the terrace lies level with its top: paved slabs inside a coping)."""
+    lo, hi = (c[0] - x - out, c[1] - y - out), (c[0] + x + out, c[1] + y + out)
+    s.tbox((*lo, z), (*hi, z + h), LIME, mul(tint, 1.1), w0=0.75, w1=0.2, bottom=True, lid=False)
+    s.paved(lo, hi, z + h, out + 0.1, mul(tint, 1.08), PAVE)
+
+
+def strip(s, near, r2, xa, xb, hy, z, tint):
+    """A strip of terrace `hy` to either side, between xa and xb: a roof light lying in it, near also a planter at an end,
+    and on some a water tank."""
+    xc = (xa + xb) / 2
+    at, has_tank, tone, end = r2.random(), r2.random() < 0.35, 0.9 + 0.2 * r2.random(), -1 if r2.random() < 0.5 else 1
+    if xb - xa < 1.6:
+        return
+    hw = min(0.9, (xb - xa) / 2 - 0.25)
+    yc = (at - 0.5) * hy
+    zl = z + (0.2 if near else 0.45)
+    s.tup([(xc - hw, yc - 1.6, zl), (xc + hw, yc - 1.6, zl), (xc + hw, yc + 1.6, zl), (xc - hw, yc + 1.6, zl)], GLAZING, (0.8, 0.82, 0.85), 0.3)
+    if near:
+        ya, yb = sorted((end * (hy - 0.2), end * (hy - 2.4)))
+        s.tbox((xc - hw, ya, z), (xc + hw, yb, z + 0.55), RENDER, mul(tint, 0.9), w0=0.5, w1=0.3, lid=False)
+        s.quad([(xc - hw, ya, z + 0.55), (xc + hw, ya, z + 0.55), (xc + hw, yb, z + 0.55), (xc - hw, yb, z + 0.55)], LEAF, (0.0, 0.0, 1.0))
+    if has_tank and xb - xa > 2.2:
+        s.cylinder((xc, -end * (hy - 1.6)), min(1.0, (xb - xa) / 2 - 0.15), z, z + 1.7, mul(TANK, tone), 6, top=mul(TANK, tone * 0.8))
 
 
 def d_block(lod, width, height, seed, stone=False):
@@ -970,6 +1320,13 @@ def d_block(lod, width, height, seed, stone=False):
         if near and k == len(shares) - 1 and x > 6.0:  # on the top terrace: the lift's house
             lx = (rnd.random() - 0.5) * (x - 4.0)
             s.tbox((lx - 1.6, y - 3.6, z1 + 0.45), (lx + 1.6, y - 1.2, z1 + 2.2), RENDER, mul(tint, 0.95), top=ZINC, w0=0.4, w1=0.9, wt=0.4)
+        if k == len(shares) - 1:
+            # the strips of terrace beside the crown, at each end: a roof light, a planter, on some a tank
+            r2 = random.Random(seed * 7919 + 17)
+            wide = (2.8 if k == 0 else 3.2) - 0.4 - 0.5
+            for sx in (-1, 1):
+                xa, xb = sorted((sx * (x - 0.3), sx * (x - 0.3 - wide)))
+                strip(s, near, r2, xa, xb, y - 0.6, z1 + 0.45, tint)
         if k < len(shares) - 1 and near:
             for sx in (-1, 1):
                 for sy in (-1, 1):  # a stone pylon on each corner of the terrace
@@ -1315,7 +1672,12 @@ for name, family, make, single in UNITS:
             rows.append({"name": name, "family": family, "w": hi[0] - lo[0], "d": hi[1] - lo[1], "h": reach, "top": hi[2], "cx": (hi[0] + lo[0]) / 2, "cz": -(hi[1] + lo[1]) / 2, "tris": tris})
 objects.append(texture_set())
 bpy.context.view_layer.update()
-K.export(OUT, objects)
+# Draco: positions to 14 bits (4 mm over the longest unit), the layers' UVs to 14 (a tile's row is 1/256 of one of the
+# dozen tiles a unit's UVs span), normals to 10; the colours with the layer code in their alpha are shorts, kept exactly.
+# Level 0 is Draco's sequential coding, which keeps the triangles in the order they were made: faces that lie a
+# centimetre over another (the fountain's water over its basin) are told apart by that order where the depth buffer no
+# longer can, and the denser coding of the higher levels reorders them (the water came out in stripes; 1.5 MB against 1.9)
+K.export(OUT, objects, draco={"position": 14, "normal": 10, "texcoord": 14, "level": 0})
 print(f"UNITS {len(rows)}: near {sum(r['tris'][0] for r in rows)} triangles, far {sum(r['tris'][-1] for r in rows if len(r['tris']) > 1)}")
 
 if TABLE:

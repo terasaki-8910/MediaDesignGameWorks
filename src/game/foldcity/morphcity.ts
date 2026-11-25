@@ -2,9 +2,10 @@
 // structure in each puzzle section and folds from one into the next when a section is cleared. The ground is one mesh
 // whose vertices follow the sheet, the buildings are one BatchedMesh whose instances ride it.
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { VisualTheme } from '../../core/types.ts';
 import { atmosphereUniforms, bindSky, FAR_WINDOWS, KEY_ELEVATION, patchShader, rowTone, TEX_LAYERS, TEX_NAMES, type AtmosphereParams, type AtmosphereUniforms } from './atmosphere.ts';
+import { breathe } from '../frames.ts';
+import { gltfLoader } from '../gltf.ts';
 import { LOOK } from '../look.ts';
 import { ATMOSPHERE, type Background, type Prepare } from './foldcity.ts';
 import { buildSheetGround, type SheetGround } from './ground.ts';
@@ -26,14 +27,6 @@ export const MORPH_SECONDS = 4;
 const FADE_SECONDS = 0.35;
 /** Cast shadows are worked out this far along the sheet from the play area (and 150 m further across it): beyond, the haze has them. */
 const SHADOW_REACH = 700;
-
-/** Let the page draw a frame's worth of other work. Not a timer: the capture's virtual clock holds timers back. */
-const breathe = () =>
-  new Promise<void>((resolve) => {
-    const channel = new MessageChannel();
-    channel.port1.onmessage = () => resolve();
-    channel.port2.postMessage(0);
-  });
 
 /**
  * Settles once `o` has been drawn (true), or after `ms` milliseconds without a frame that draws it (false).
@@ -285,7 +278,7 @@ export class MorphCity implements Background {
     // draws the city is then an ordinary frame, where compiling in that frame held the page for about a second
     const stage = new THREE.Group();
     // the buildings, and beside them the props (trees, fountains, the piers' feet): one batch, the buildings' material
-    const loader = new GLTFLoader();
+    const loader = gltfLoader(); // (buildings.glb is Draco-compressed: gltf.ts)
     let t0 = performance.now();
     const lap = (name: string) => {
       this.timings[name] = Math.round(performance.now() - t0);

@@ -209,7 +209,7 @@
       "license": "own",
       "source": "art/blender/gen_buildings.py (with art/blender/city_kit.py)",
       "author": "terasaki-8910",
-      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py and city_kit.py, run through game3d blender.mjs): the background city's buildings, 79 textured units (rows of Haussmann houses, tower houses, Art Deco masses, five landmarks, three props), each a near and a far model, and eleven 512 x 256 images (eight tiled layers and their weathering masks) made by the script from the Poly Haven textures listed below (CC0-1.0: sandstone_blocks_08, large_sandstone_blocks, grey_roof_tiles_02, blue_metal_plate, grey_plaster_03, concrete_wall_003) and its own drawing (windows, shop fronts, glazing)",
+      "tool": "Blender 4.4.3 (bpy script with art/blender/fc_kit.py and city_kit.py, run through game3d blender.mjs): the background city's buildings, 79 textured units (rows of Haussmann houses, tower houses, Art Deco masses, five landmarks, three props), each a near and a far model, and eleven 512 x 256 images (eight tiled layers and their weathering masks) made by the script from the Poly Haven textures listed below (CC0-1.0: sandstone_blocks_08, large_sandstone_blocks, grey_roof_tiles_02, blue_metal_plate, grey_plaster_03, concrete_wall_003) and its own drawing (windows, shop fronts, glazing, the zinc sheets); meshes Draco-compressed by Blender's glTF exporter (KHR_draco_mesh_compression)",
       "attribution": ""
     },
     {
@@ -241,7 +241,7 @@
       "license": "CC0-1.0",
       "source": "https://polyhaven.com/a/blue_metal_plate",
       "author": "Rob Tuytel",
-      "tool": "Poly Haven 1K diffuse (JPG), fetched by art/fetch-textures.mjs; taken nearly grey, the zinc sheet of the textured buildings (layer 3)",
+      "tool": "Poly Haven 1K diffuse (JPG), fetched by art/fetch-textures.mjs; the fine scuffs of the zinc sheets of the textured buildings (layer 3; the sheets, their batten rolls and welts are drawn by the script)",
       "attribution": ""
     },
     {

@@ -1,6 +1,6 @@
 // E2E smoke test in a real browser: walk the route with simulated input and use the first console.
 // Needs a running build: `npm run build && npm run preview` (or set BASE_URL to a deployment).
-// CI does not run this; install the browser once with `npx playwright install chromium`.
+// The e2e job of .github/workflows/ci.yml runs this (Linux, software WebGL); locally, install the browser once with `npx playwright install chromium`.
 const assert = require('node:assert/strict');
 const { describeBackend, launch } = require('./browser.cjs');
 

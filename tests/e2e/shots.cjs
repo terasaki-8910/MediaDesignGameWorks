@@ -1,7 +1,7 @@
 // E2E check of the review shots (?shots=1): the eight shots exist in order, none is a blank frame, the same shot looks
 // the same whatever was shown before, and nothing reaches the telemetry endpoint.
 // Needs a running build: `npm run build && npm run preview` (or set BASE_URL to a deployment).
-// CI does not run this; install the browser once with `npx playwright install chromium`.
+// The e2e job of .github/workflows/ci.yml runs this (Linux, software WebGL); locally, install the browser once with `npx playwright install chromium`.
 // SHOTS_OUT=<dir> also saves the eight PNGs there, for looking at.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

@@ -19,7 +19,7 @@ import { Input } from './input.ts';
 import { Kit } from './kit.ts';
 import { giltTakesSky } from './look.ts';
 import { createMaterials } from './materials.ts';
-import { Player, cloakAvatar } from './player.ts';
+import { Player, cloakAvatar, type Avatar } from './player.ts';
 import { Telemetry, clientInfo, defaultConsent } from './telemetry.ts';
 import { loadVrmAvatar } from './vrmAvatar.ts';
 import { loadWandererAvatar, type WandererAvatar } from './wandererAvatar.ts';
@@ -140,6 +140,19 @@ export class Game {
       if (!document.pointerLockElement && (this.mode === 'play' || this.mode === 'fold')) this.openPause();
     });
     const vrmUrl = params.get('vrm') ?? './assets/player.vrm';
+    // Wall-clock play compiles what it is about to show off the frame (see `precompile`); the capture and the review shots
+    // draw frames on demand under a virtual clock, which holds back the timers that compileAsync polls with.
+    const live = !opts.capture;
+    const sky = env.sky.catch((e) => console.warn('sky not loaded, keeping the haze colour:', e));
+    // (a program is made for the sky the scene has, so what is compiled waits for it)
+    const compile = async (o: THREE.Object3D) => {
+      await sky;
+      await this.engine.precompile(o);
+    };
+    const takeSky = () => {
+      giltTakesSky(this.engine.scene, this.world.giltMaterials()); // before anything is compiled, so the gilt's shader is compiled once
+      this.world.ringTakesSky(this.engine.scene);
+    };
     // The avatar: a VRM file if one is there, else the character model, else (loading failed) the old cloaked stand-in.
     const character = loadVrmAvatar(vrmUrl)
       .catch((e) => {
@@ -147,35 +160,56 @@ export class Game {
         return null;
       })
       .then(async (vrm) => {
-        if (vrm) return this.player.setAvatar(vrm);
-        try {
-          this.wanderer = await loadWandererAvatar({ reduceMotion: () => this.settings.reduceMotion });
-          this.player.setAvatar(this.wanderer);
-        } catch (e) {
-          console.warn('character model not loaded, keeping the cloaked stand-in:', e);
-          this.player.setAvatar(cloakAvatar(M));
+        let avatar: Avatar;
+        if (vrm) avatar = vrm;
+        else {
+          try {
+            this.wanderer = await loadWandererAvatar({ reduceMotion: () => this.settings.reduceMotion });
+            avatar = this.wanderer;
+          } catch (e) {
+            console.warn('character model not loaded, keeping the cloaked stand-in:', e);
+            avatar = cloakAvatar(M);
+          }
         }
+        if (live) await compile(avatar.object); // it joins the scene with its shaders ready
+        this.player.setAvatar(avatar);
+        performance.mark('fold:character');
       });
-    const sky = env.sky.catch((e) => console.warn('sky not loaded, keeping the haze colour:', e));
     const kit = Kit.load(this.engine.renderer)
-      .then((k) => this.world.applyKit(k))
+      .then(async (k) => {
+        if (live) {
+          // Nothing of the world is drawn until the kit is in (the colliders are never drawn), so it is hidden for the moment
+          // its shaders take: the first frame to draw it would otherwise build them all, one after another.
+          await sky;
+          this.world.root.visible = false;
+        }
+        this.world.applyKit(k);
+        if (live) {
+          takeSky();
+          await this.engine.precompile(this.world.root);
+          this.world.root.visible = true;
+        }
+        performance.mark('fold:kit');
+      })
       .catch((e) => {
+        this.world.root.visible = true;
         console.error('kit not loaded, showing the plain slabs:', e);
         this.world.showColliders();
       });
     // (the city's shaders are compiled off the frame, against the scene as it is lit once the sky is in, before the city is shown)
-    const compileCity = async (o: THREE.Object3D) => {
-      await sky;
-      await this.engine.renderer.compileAsync(o, this.engine.camera, this.engine.scene);
-    };
-    const city = this.city.load('./assets/city.glb', this.shots || opts.capture ? undefined : compileCity).catch((e) => console.warn('background city not loaded:', e));
-    Promise.all([sky, kit, city, character]).finally(() => {
-      giltTakesSky(this.engine.scene, this.world.giltMaterials()); // before warmUp, so the gilt's shader is compiled once
-      this.world.ringTakesSky(this.engine.scene);
-      this.world.warmUp(this.engine.renderer, this.engine.camera, this.engine.scene);
-      if (['facing', 'range', 'dist', 'unit0', 'unit1', 'unit2'].includes(query.get('bgdebug') ?? '')) this.flattenForDebug();
-      this.ready = true;
-    });
+    const city = this.city.load('./assets/city.glb', live ? compile : undefined).catch((e) => console.warn('background city not loaded:', e));
+    Promise.all([sky, kit, city, character])
+      .then(async () => {
+        if (!live) takeSky(); // (once the sky and the kit are both in; the live path did it when the kit came in)
+        const warmed = this.world.warmUp(compile, this.engine.scene);
+        if (live) await warmed; // (the review shots and the capture do not wait: their frames are drawn on demand)
+        if (['facing', 'range', 'dist', 'unit0', 'unit1', 'unit2'].includes(query.get('bgdebug') ?? '')) this.flattenForDebug();
+      })
+      .finally(() => {
+        this.ready = true;
+        performance.mark('fold:ready');
+        this.hud.setStartReady();
+      });
     if (opts.demo) this.director = new DemoDirector(this, opts.demo);
     if (!opts.capture) requestAnimationFrame((t) => this.frame(t));
   }
@@ -210,8 +244,9 @@ export class Game {
       updated: r.updated,
       recent: r.recent,
       consent: this.settings.telemetry,
+      ready: this.ready,
       onConsent: (v) => this.applySettings({ ...this.settings, telemetry: v }),
-      onStart: () => this.mode === 'title' && this.begin(),
+      onStart: () => this.mode === 'title' && this.ready && this.begin(),
       onSettings: () =>
         this.hud.pause(true, this.settings, (s) => this.applySettings(s), () => this.hud.pause(false), 'settings'),
     });
