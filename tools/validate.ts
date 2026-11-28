@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { tunableErrors, type Tunables } from '../src/core/tunables.ts';
 import type { StageFile } from '../src/core/types.ts';
 import { validateStage, type StageReport } from '../src/core/validate.ts';
+import { DEFAULT_STAGE_ID } from '../src/game/stageSelect.ts';
 
 export function validateAll(root = '.'): { reports: StageReport[]; tunableIssues: string[]; ok: boolean } {
   const dir = join(root, 'src/stages');
@@ -15,7 +16,13 @@ export function validateAll(root = '.'): { reports: StageReport[]; tunableIssues
     .map((f) => JSON.parse(readFileSync(join(dir, f), 'utf8')) as StageFile);
   const reports = stages.map((s) => validateStage(s));
   const tunables = JSON.parse(readFileSync(join(dir, 'tunables.json'), 'utf8')) as Tunables;
-  const tunableIssues = tunableErrors(tunables, stages.flatMap((s) => s.sections.map((x) => x.id)));
+  // The tunables belong to the stage the improvement loop tunes (the default one). A section of another stage, a prototype,
+  // plays with the defaults (src/game/stageSelect.ts) unless it has an entry, and an entry it has is checked all the same.
+  const tuned = (s: StageFile) => s.stageId === DEFAULT_STAGE_ID;
+  const tunableIssues = tunableErrors(
+    tunables,
+    stages.flatMap((s) => s.sections.map((x) => x.id).filter((id) => tuned(s) || id in tunables.sections)),
+  );
   return { reports, tunableIssues, ok: reports.every((r) => r.ok) && tunableIssues.length === 0 };
 }
 

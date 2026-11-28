@@ -89,6 +89,58 @@ export class Player {
     return this.jump > 0;
   }
 
+  /** Which way the avatar faces, as a yaw (its forward is (-sin yaw, 0, -cos yaw)). */
+  get yaw() {
+    return this.facing;
+  }
+
+  /**
+   * Swinging on a thread or riding a turning group (v0.5): the game, not the keys, puts the player at `pos` facing `yaw`. The
+   * cell stays the one they left until `land`; the walking and the jump are over for the moment.
+   */
+  carry(dt: number, pos: THREE.Vector3, yaw: number, airborne: boolean) {
+    this.pos.copy(pos);
+    this.facing = yaw;
+    this.vel.set(0, 0);
+    this.jump = this.vy = 0;
+    this.speed = 0;
+    this.avatar.animate(dt, 0, airborne);
+    this.sync();
+  }
+
+  /**
+   * Come down from a ride on `cell` (a key): where the carrying has put them, `at` (kept inside the cell, off its walls), on the
+   * floor of its tile, still, facing `yaw`. Not at the middle of the cell: a rider who stood at the edge steps off at the edge.
+   */
+  dismount(cell: string, wm: WalkMap, at: THREE.Vector3, yaw: number) {
+    const t = wm.tiles.get(cell);
+    const c = (t?.cell ?? (cell.split(',').map(Number) as unknown as Vec3));
+    this.cell = cell;
+    this.pos.set(
+      Math.min(c[0] * CELL + CELL - R, Math.max(c[0] * CELL + R, at.x)),
+      t?.floorY ?? at.y,
+      Math.min(c[2] * CELL + CELL - R, Math.max(c[2] * CELL + R, at.z)),
+    );
+    this.vel.set(0, 0);
+    this.jump = this.vy = 0;
+    this.speed = 0;
+    this.facing = yaw;
+    this.sync();
+  }
+
+  /** Come down on `cell` (a key): in the middle of it, on the floor of its tile, still, facing `yaw` when it is given. */
+  land(cell: string, wm: WalkMap, yaw?: number) {
+    const t = wm.tiles.get(cell);
+    const f = cellFloor(t?.cell ?? (cell.split(',').map(Number) as unknown as Vec3));
+    this.cell = cell;
+    this.pos.set(f[0], t?.floorY ?? f[1], f[2]);
+    this.vel.set(0, 0);
+    this.jump = this.vy = 0;
+    this.speed = 0;
+    if (yaw !== undefined) this.facing = yaw;
+    this.sync();
+  }
+
   /** `steer` (world XZ, length up to 1) replaces the keyboard, for the demo playback. */
   update(
     dt: number, input: Input, camYaw: number, wm: WalkMap,

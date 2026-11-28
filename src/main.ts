@@ -4,17 +4,22 @@ import { DEMO_DEFAULTS, type DemoOptions } from './game/demo.ts';
 import { Game } from './game/game.ts';
 import { Hud } from './game/hud.ts';
 import { createShots } from './game/shots.ts';
+import { pickStage } from './game/stageSelect.ts';
 import revision from './revision.json';
-import area1 from './stages/area1.json';
 import tunables from './stages/tunables.json';
 import type { Tunables } from './core/tunables.ts';
 import type { StageFile } from './core/types.ts';
 
 declare const __BUILD__: string;
 
+// Every stage file of src/stages (tunables.json is not one). `?stage=<name>` picks one by its file's name; area1 is the game.
+const stageFiles = import.meta.glob<StageFile>(['./stages/*.json', '!./stages/tunables.json'], { eager: true, import: 'default' });
+
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const hudRoot = document.getElementById('hud')!;
 const params = new URLSearchParams(location.search);
+const picked = pickStage(stageFiles, params.get('stage'));
+if (picked.warning) console.warn(picked.warning);
 const isTouchOnly = matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
 
 // ?demo=1 plays by itself (timings: &title= &establish= &browse= &hold= &end= in seconds);
@@ -46,7 +51,7 @@ if (isTouchOnly && !demo && !shots) {
   const game = new Game(
     canvas,
     hudRoot,
-    { stage: area1 as unknown as StageFile, tunables: tunables as Tunables, revision, build: __BUILD__ },
+    { stage: picked.stage, tunables: tunables as Tunables, revision, build: __BUILD__ },
     { demo, capture: capture || shots, shots },
   );
   if (demo) document.body.classList.add('demo');

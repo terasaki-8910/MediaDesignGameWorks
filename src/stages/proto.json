@@ -1,0 +1,109 @@
+{
+  "schema": "fold-city/stage@1",
+  "stageId": "proto",
+  "version": "0.1.0",
+  "title": { "ja": "試作：糸と把手と乗る", "en": "Prototype: threads, handles, riding" },
+  "seed": 5,
+  "modules": [
+    { "id": "s_a", "type": "tile", "at": [-17, 3, 6], "params": { "size": [2, 1] } },
+    { "id": "s_t1", "type": "tether", "at": [-16, 3, 6], "params": { "facing": "E" } },
+
+    { "id": "s_b", "type": "tile", "at": [-12, 3, 6], "params": { "size": [4, 1] } },
+    { "id": "s_t2", "type": "tether", "at": [-12, 3, 6], "params": { "facing": "W" } },
+    { "id": "s_ring", "type": "tether", "at": [-9, 3, 6], "group": "g_ring", "params": { "facing": "N" } },
+
+    { "id": "s_c", "type": "tile", "at": [-3, 3, 6], "params": { "size": [2, 1] } },
+    { "id": "s_t3", "type": "tether", "at": [-3, 3, 6], "params": { "facing": "W" } },
+    { "id": "s_t4", "type": "tether", "at": [-2, 3, 6], "params": { "facing": "E" } },
+
+    { "id": "s_d", "type": "tile", "at": [1, 3, 6], "params": { "size": [1, 1] } },
+    { "id": "s_t5", "type": "tether", "at": [1, 3, 6], "params": { "facing": "W" } },
+    { "id": "s_t6", "type": "tether", "at": [1, 3, 6], "params": { "facing": "E" } },
+
+    { "id": "s_e", "type": "tile", "at": [4, 3, 6], "params": { "size": [2, 1] } },
+    { "id": "s_t7", "type": "tether", "at": [4, 3, 6], "params": { "facing": "W" } },
+
+    { "id": "s_bridge", "type": "bridge", "at": [6, 3, 6], "group": "g_bridge", "params": { "length": 3, "inset": 0.4 } },
+    { "id": "s_f", "type": "tile", "at": [9, 3, 6], "params": { "size": [1, 1] } },
+
+    { "id": "r_a", "type": "tile", "at": [10, 3, 6], "params": { "size": [3, 2] } },
+    { "id": "r_ferry", "type": "bridge", "at": [11, 3, 5], "yaw": 1, "group": "g_ferry", "params": { "length": 3, "inset": 0.4 } },
+    { "id": "r_c", "type": "tile", "at": [13, 3, 4], "params": { "size": [3, 1] } },
+    { "id": "r_street", "type": "bridge", "at": [14, 3, 3], "yaw": 1, "group": "g_street", "params": { "length": 3 } },
+    { "id": "r_d", "type": "tile", "at": [13, 3, 0], "params": { "size": [3, 1] } },
+    { "id": "r_gate", "type": "deco", "at": [14, 3, 0], "params": { "kind": "gate", "size": 1 } }
+  ],
+  "groups": [
+    {
+      "id": "g_ring", "kind": "states", "pivot": [-34, 12, 26], "axis": "y", "states": [0, 1, 2, 3], "initial": 0, "durationMs": 700,
+      "label": { "ja": "糸の輪", "en": "Thread ring" },
+      "stateLabels": [
+        { "ja": "北を向いている", "en": "Facing north" }, { "ja": "西を向いている", "en": "Facing west" },
+        { "ja": "南を向いている", "en": "Facing south" }, { "ja": "東を向いている", "en": "Facing east" }
+      ]
+    },
+    {
+      "id": "g_bridge", "kind": "states", "pivot": [30, 12, 26], "axis": "y", "states": [1, 0], "initial": 0, "durationMs": 1800,
+      "label": { "ja": "回転橋", "en": "Turning bridge" },
+      "stateLabels": [{ "ja": "縦向き", "en": "Lengthwise" }, { "ja": "横向き", "en": "Crosswise" }]
+    },
+    {
+      "id": "g_ferry", "kind": "states", "pivot": [46, 12, 18], "axis": "y", "states": [0, 1], "initial": 0, "durationMs": 1800,
+      "label": { "ja": "渡し板", "en": "Ferry plank" },
+      "stateLabels": [{ "ja": "運河へ突き出している", "en": "Jutting out" }, { "ja": "運河を横切っている", "en": "Across the canal" }]
+    },
+    {
+      "id": "g_street", "kind": "states", "pivot": [58, 11.4, 16], "axis": "x", "states": [3, 0], "initial": 0, "durationMs": 3200,
+      "label": { "ja": "折り畳まれた街路", "en": "Folded street" },
+      "stateLabels": [{ "ja": "垂れ下がっている", "en": "Hanging" }, { "ja": "水平になっている", "en": "Level" }]
+    }
+  ],
+  "interactables": [],
+  "handles": [
+    { "id": "h_ring", "at": [-10, 3, 5], "controls": "g_ring", "reach": 3, "label": { "ja": "輪の把手", "en": "Ring handle" } },
+    { "id": "h_bridge", "at": [4, 3, 5], "controls": "g_bridge", "reach": 4, "label": { "ja": "橋の把手", "en": "Bridge handle" } },
+    { "id": "h_ferry", "at": [13, 3, 6], "controls": "g_ferry", "reach": 3, "label": { "ja": "渡し板の把手", "en": "Ferry handle" } },
+    { "id": "h_street", "at": [16, 3, 3], "controls": "g_street", "reach": 3, "label": { "ja": "街路の把手", "en": "Street handle" } }
+  ],
+  "sections": [
+    {
+      "id": "p_threads",
+      "name": { "ja": "糸と輪", "en": "Threads and rings" },
+      "groups": ["g_ring", "g_bridge"],
+      "consoles": [],
+      "handles": ["h_ring", "h_bridge"],
+      "start": "cp_1",
+      "exit": [[9, 3, 6]],
+      "intent": { "teaches": ["tether", "handle", "chain"], "optimalActions": { "min": 2, "max": 2 }, "mustUse": ["h_ring", "h_bridge"], "maxDeadEndStates": 0 },
+      "intro": {
+        "ja": "虚空の縁に、金の輪が浮かんでいる。向かい合う輪の間には、見えない糸が張れそうだ。",
+        "en": "Gilt rings hang at the edge of the void. Rings that face each other look as if they could carry a thread."
+      }
+    },
+    {
+      "id": "p_ferry",
+      "name": { "ja": "渡し板と街路", "en": "Ferry and street" },
+      "groups": ["g_ferry", "g_street"],
+      "consoles": [],
+      "handles": ["h_ferry", "h_street"],
+      "start": "cp_2",
+      "exit": [[14, 3, 0]],
+      "intent": { "teaches": ["ride", "handle"], "optimalActions": { "min": 2, "max": 2 }, "mustUse": ["h_ferry", "h_street"], "maxDeadEndStates": 0 },
+      "intro": {
+        "ja": "一枚の渡し板が、運河へ突き出している。街路は折り畳まれ、空から垂れ下がっている。",
+        "en": "A ferry plank juts out over the canal. The street hangs folded from the sky."
+      }
+    }
+  ],
+  "checkpoints": [
+    { "id": "cp_1", "at": [-17, 3, 6], "facing": "E" },
+    { "id": "cp_2", "at": [11, 3, 7], "facing": "N" }
+  ],
+  "goal": { "at": [14, 3, 0] },
+  "visualTheme": {
+    "sky": ["#140f3a", "#f0a7a0", "#2a2346"],
+    "fog": { "color": "#9a7f9e", "density": 0.0042 },
+    "accent": "#5ff2ff",
+    "city": { "seed": 5, "count": 200, "radius": [85, 360] }
+  }
+}

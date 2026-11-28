@@ -134,6 +134,36 @@ export class Sound {
     n.stop(t + 0.3);
   }
 
+  /** A swing on a thread: a rush of air that rises and falls over the swing, and the thread's thin note under it. */
+  swing(seconds: number, gentle = false) {
+    if (!this.ctx || !this.master) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const len = Math.max(0.4, seconds);
+    const n = this.noise(len + 0.3);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = 0.9;
+    bp.frequency.setValueAtTime(500, t);
+    bp.frequency.linearRampToValueAtTime(1500, t + len * 0.5);
+    bp.frequency.linearRampToValueAtTime(700, t + len);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(gentle ? 0.1 : 0.28, t + len * 0.45);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + len + 0.1);
+    n.connect(bp).connect(g).connect(this.master);
+    n.start(t);
+    n.stop(t + len + 0.3);
+    this.tone(660, Math.min(0.3, len), 'sine', gentle ? 0.02 : 0.05, 0, 990);
+  }
+
+  /** Coming down from a swing: a soft knock of a foot on stone. */
+  land(gentle = false) {
+    const k = gentle ? 0.5 : 1;
+    this.tone(120, 0.2, 'sine', 0.14 * k, 0, 70);
+    this.tone(240, 0.1, 'triangle', 0.03 * k);
+  }
+
   /** The paths a fold joined: one note for each, each one step higher than the last (foldFeel.joinNotes); no path, no note. */
   joined(count: number) {
     joinNotes(count).forEach((f, i) => {

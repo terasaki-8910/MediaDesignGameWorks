@@ -67,6 +67,8 @@ const KEYS: { caps?: string[]; label?: string; text: string }[] = [
   { caps: ['WASD'], text: '移動（Shiftでダッシュ、Spaceでジャンプ）' },
   { label: 'マウス', text: '視点（クリックで固定）。Fold Mode では空きをドラッグして全体を見回す' },
   { label: 'ドラッグ', text: 'Fold Mode で、取っ手か建築をドラッグして回す。離すと一番近い状態に吸い付く' },
+  { caps: ['Space'], text: '糸で渡る（金の輪のあるマスで）。渡っている終わりぎわにもう一度押すと、続けて渡る。ほかの場所ではジャンプ' },
+  { caps: ['Q', 'E'], text: '光っている把手を回す（届く範囲で、カメラが向いている把手を）。操作盤のマスでは E は Fold Mode' },
   { caps: ['E'], text: 'コンソールを起動・決定' },
   { caps: ['A', 'D'], text: '変形先を選ぶ（Fold Mode）' },
   { caps: ['R'], text: 'パズルをやり直す' },
@@ -94,6 +96,9 @@ export class Hud {
   private titleEl = h('div', 'layer title interactive');
   private toastEl = h('div', 'toast');
   private promptEl = h('div', 'prompt');
+  private chainEl = h('div', 'chain');
+  private promptHtml = '';
+  private chainTimer = 0;
   private panelEl = h('div', 'panel');
   private hintEl = h('div', 'hint');
   private statusEl = h('div', 'status-bar');
@@ -114,7 +119,7 @@ export class Hud {
     this.toastEl.setAttribute('role', 'status');
     this.hintEl.setAttribute('role', 'status');
     // later siblings paint on top: the dialogs go over the title
-    root.append(this.toastEl, this.statusEl, this.promptEl, this.panelEl, this.hintEl, this.flashEl, this.titleEl, this.controlsEl, this.pauseEl, this.clearEl);
+    root.append(this.toastEl, this.statusEl, this.promptEl, this.chainEl, this.panelEl, this.hintEl, this.flashEl, this.titleEl, this.controlsEl, this.pauseEl, this.clearEl);
     // Capture phase on window: this runs before the game's own key handler, which swallows Tab and Space and would
     // otherwise see the Escape that closes a dialog.
     window.addEventListener('keydown', (e) => this.onKey(e), true);
@@ -303,6 +308,7 @@ export class Hud {
     this.statusEl.style.visibility = '';
     this.hint(null);
     this.prompt(null);
+    this.chain(0);
     this.fold(null);
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   }
@@ -319,8 +325,22 @@ export class Hud {
   }
 
   prompt(html: string | null) {
-    if (html) this.promptEl.innerHTML = html;
+    if (html && html !== this.promptHtml) {
+      this.promptHtml = html;
+      this.promptEl.innerHTML = html;
+    }
     this.promptEl.classList.toggle('show', !!html);
+  }
+
+  /**
+   * The count of swings joined without a landing in between (v0.5), while a chain runs and for a moment after it: nothing for
+   * fewer than two. `hold` is how long it stays once the chain is over (milliseconds).
+   */
+  chain(n: number, hold = 0) {
+    clearTimeout(this.chainTimer);
+    if (n >= 2) this.chainEl.innerHTML = `連鎖 <b>×${n}</b>`;
+    this.chainEl.classList.toggle('show', n >= 2);
+    if (n >= 2 && hold > 0) this.chainTimer = window.setTimeout(() => this.chainEl.classList.remove('show'), hold);
   }
 
   fold(p: FoldPanel | null) {
@@ -416,9 +436,12 @@ export class Hud {
     this.openDialog(el, onClose, close);
   }
 
-  clear(stats: ClearStats, onFeedback: (f: { fun?: number; difficulty?: number; clarity?: number; text?: string }) => void, onAgain: () => void) {
+  clear(
+    stats: ClearStats, onFeedback: (f: { fun?: number; difficulty?: number; clarity?: number; text?: string }) => void, onAgain: () => void,
+    heading = '第一区画 踏破',
+  ) {
     this.clearEl.innerHTML = '';
-    const box = dialogBox('第一区画 踏破', 'wide');
+    const box = dialogBox(heading, 'wide');
     box.tabIndex = -1; // focus lands on the dialog itself; Tab then goes to the first rating
     const rows = stats.sections
       .map((s) => `<tr><td>${escapeHtml(s.name)}</td><td>${fmt(s.sec)}</td><td>変形 ${s.actions} 回（最短 ${s.optimal}）</td></tr>`)
