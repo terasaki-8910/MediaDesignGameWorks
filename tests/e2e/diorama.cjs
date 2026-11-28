@@ -7,9 +7,11 @@
 const assert = require('node:assert/strict');
 const { describeBackend, launch } = require('./browser.cjs');
 const { blankReason, decodePng, frameStats } = require('./png.cjs');
+const { loadStage } = require('./stage.cjs');
 
 (async () => {
 const BASE = process.env.BASE_URL ?? 'http://localhost:4173/';
+const S1 = (await loadStage()).tunables.sections.s1_first_fold; // (the improvement loop tunes the hint times)
 const browser = await launch();
 const page = await browser.newPage({ viewport: { width: 640, height: 360 } });
 page.setDefaultTimeout(180000);
@@ -74,7 +76,7 @@ assert.equal(r.mode, 'play');
 assert.ok(near(r.fov, WIDE) && r.far < 12, `closing Fold Mode returns to the follow camera (${r.far.toFixed(1)} m)`);
 
 // a hint that helps the player choose (they have been stuck for a while) stays up in Fold Mode; only the intro text steps aside
-await run(25, false);
+await run(S1.firstHintSec, false);
 r = await run(0.1);
 assert.ok(r.hint, 'the hint a stuck player gets is on screen');
 await F(() => window.__fold.openFold('c1'));
@@ -85,8 +87,15 @@ await F(() => window.__fold.press('Escape'));
 await run(1.6);
 
 // a step ends the establishing view of the next puzzle early; a key held on entering it does not
-await F(() => window.__fold.act('c1', 'c1:set1'));
-await run(2.5);
+// (the first puzzle's own plan, console by console; the exit has to be in reach of where the player ends up before they are put there)
+for (const key of await F(() => window.__fold.solve())) {
+  const id = key.split(':')[0];
+  await F((c) => window.__fold.teleport(window.__fold.game.cs.consoles.get(c).at), id);
+  await run(0.1);
+  assert.ok(await F(([c, k]) => window.__fold.act(c, k), [id, key]), `${key} is possible`);
+  await run(2.5);
+}
+assert.equal(await F(() => { const g = window.__fold.game; const wm = g.cs.walkMap(g.state); return wm.region.get(g.player.cell) === wm.region.get(g.section.exit[0].join(',')); }), true, 'the first puzzle is solved: the exit is in reach');
 await F(() => window.__fold.hold('KeyW', true)); // the player runs through the exit holding W
 await F(() => window.__fold.teleport(window.__fold.game.section.exit[0]));
 r = await run(0.5);

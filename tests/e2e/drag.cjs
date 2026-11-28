@@ -180,7 +180,13 @@ await settled();
 let s = await state();
 assert.equal(s.g_b1, 1 - initial.g_b1, 'the bridge has turned: the section\'s state changed');
 await F(() => window.__fold.simulate(4));
-assert.equal(await F(() => { const g = window.__fold.game; const wm = g.cs.walkMap(g.state); return wm.region.get(g.player.cell) === wm.region.get(g.section.exit[0].join(',')); }), true, 'and its two ends are joined');
+// (the far bridge first is the wrong fold of this puzzle: the walk map follows the turn all the same, and the other console is cut off)
+assert.deepEqual(await F(() => {
+  const g = window.__fold.game;
+  const wm = g.cs.walkMap(g.state);
+  const region = (id) => wm.region.get(g.cs.consoles.get(id).at.join(','));
+  return [wm.region.get(g.player.cell) === region('c1'), wm.region.get(g.player.cell) === region('c0')];
+}), [true, false], 'and the walk map follows it: the player is cut off from the near bridge console');
 await flush();
 await until(() => sent.some((e) => e.type === 'action' && e.console === 'c1' && e.ok === true), 'the fold is logged as one by the keys');
 assert.ok(sent.some((e) => e.type === 'preview' && e.console === 'c1' && e.committed === true));
@@ -200,6 +206,17 @@ await page.mouse.up();
 await page.waitForFunction(() => window.__fold.mode() === 'play', null, { timeout: 120000, polling: 100 });
 await settled();
 assert.equal((await state()).g_b1, 1, 'letting go of it past the middle turns it all the way');
+
+// ---- 2b. the near bridge: its handle turns it too, and that fold brings the goal closer ----
+v = await openAt(0, initial, 'c0');
+assert.equal(v.group, 'g_b0');
+assert.deepEqual(rounded(v.angles), [-90], 'one stop, a quarter turn the one way');
+await dragTo('handle', -90);
+await page.mouse.up();
+await page.waitForFunction(() => window.__fold.mode() === 'play', null, { timeout: 120000, polling: 100 });
+await settled();
+assert.equal((await state()).g_b0, 1 - initial.g_b0, 'the near bridge has turned');
+assert.equal(await F(() => window.__fold.game.run.remaining), 1, 'and one fold is left: it leads on');
 
 // ---- 3. the cube: three stops, the keys as before, the drag on the other side of the axis ----
 v = await openAt(1, initial, 'c_roll');
@@ -324,7 +341,7 @@ assert.equal((await state()).g_street, 1 - initial.g_street, 'the street is down
 // ---- 6. a narrow window (a phone held upright): the panel is at its tallest; the handle is above it and as large as a finger needs ----
 await page.setViewportSize({ width: 360, height: 640 });
 const narrow = [];
-for (const [index, id, st] of [[0, 'c1', initial], [1, 'c_roll', initial], [1, 'c_yaw', initial], [2, 'c_t1', initial], [2, 'c_h', initial], [blocked.index, blocked.console, blocked.state]]) {
+for (const [index, id, st] of [[0, 'c0', initial], [0, 'c1', initial], [1, 'c_roll', initial], [1, 'c_yaw', initial], [2, 'c_t1', initial], [2, 'c_h', initial], [blocked.index, blocked.console, blocked.state]]) {
   v = await openAt(index, st, id);
   const panelTop = await F(() => document.querySelector('.panel.show').getBoundingClientRect().top);
   const w = await F(() => window.innerWidth);

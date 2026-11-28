@@ -699,7 +699,7 @@ export class Game {
 
   /** Tier 1 only says where to look; tier 2 names the console and the move. */
   private hintText(tier: 1 | 2, next: Action): string {
-    if (tier === 1) return '光の柱が立っている操作盤を調べてみよう。';
+    if (tier === 1) return '脈打つように光っている操作盤を調べてみよう。';
     const c = this.cs.consoles.get(next.console)!;
     return `「${c.label?.ja ?? '操作盤'}」で「${this.actionLabel(next)}」を試してみよう。`;
   }
