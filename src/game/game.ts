@@ -444,6 +444,7 @@ export class Game {
   private measureQuality() {
     const { p50, typical } = this.probe!;
     this.probe = null;
+    if (this.settings.quality !== 'auto') return; // (the player chose a tier while it was measuring: theirs stands)
     Object.assign(this.autoInfo, { p50, typical, measured: true });
     // (the median of the time, not of the frames: the same for steady frames, and it also sees short and long frames by turns)
     this.applyQuality(stepDownFor(this.engine.quality, typical));
