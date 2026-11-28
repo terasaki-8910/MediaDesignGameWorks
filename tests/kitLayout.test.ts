@@ -24,16 +24,24 @@ test('every cell of a tile or bridge module gets one paved top and one underside
 });
 
 test('edges another slab can stand against are plain, open edges are moulded', () => {
-  // the turning bridge: plain ends (the roads meet them), moulded sides, no cornice turning round its corners
-  const bridge = plan.modules.get('m_bridge1')!;
-  assert.equal(count(bridge, 'edge_flush'), 2);
-  assert.equal(count(bridge, 'edge_cornice'), 6);
-  assert.equal(count(bridge, 'corner_outer'), 0);
-  // the road ends that face the bridge in its other state are plain too, and get a wall instead of a balustrade
-  const west = cellFloor([-6, 3, 0]);
-  const east = cellFloor([-2, 3, 0]);
-  assert.ok(plan.flushEdges.has(edgeKey(west[0], west[1], west[2], 'E')));
-  assert.ok(plan.flushEdges.has(edgeKey(east[0], east[1], east[2], 'W')));
+  // the turning bridges: plain ends (the roads meet them), moulded sides, no cornice turning round its corners
+  for (const id of ['m_bridge0', 'm_bridge1']) {
+    const bridge = plan.modules.get(id)!;
+    assert.equal(count(bridge, 'edge_flush'), 2, id);
+    assert.equal(count(bridge, 'edge_cornice'), 6, id);
+    assert.equal(count(bridge, 'corner_outer'), 0, id);
+  }
+  // the fixed edges that face a bridge in one of its states are plain too, and get a wall instead of a balustrade: the plaza's
+  // east side (the near bridge's west end), the far bridge's north and south ends (the deck and the balcony), and the next road
+  const flush = (cell: [number, number, number], side: 'N' | 'E' | 'S' | 'W') => {
+    const f = cellFloor(cell);
+    return plan.flushEdges.has(edgeKey(f[0], f[1], f[2], side));
+  };
+  assert.ok(flush([-9, 3, 0], 'E'));
+  assert.ok(flush([-4, 3, -2], 'S'));
+  assert.ok(flush([-4, 3, 2], 'N'));
+  assert.ok(flush([-2, 3, 0], 'W'));
+  assert.ok(!flush([-4, 3, -2], 'E'), 'an open edge of the deck stays moulded');
   // the start plaza is open all round: four outer corners, and two inner corners where the road leaves it
   const plaza = new THREE.Box3(new THREE.Vector3(-44.5, 0, -4.5), new THREE.Vector3(-31.5, 99, 8.5));
   const corners = plan.world.filter((p) => p.piece === 'corner_inner' && plaza.containsPoint(position(p.matrix)));
@@ -61,22 +69,24 @@ test('piers stand under fixed walkways and clear every box in every combination 
   }
 });
 
-test('pylons flank the road where it leaves the start plaza, and the turning bridge rests on a pivot pier', () => {
+test('pylons flank the road where it leaves the start plaza, and each turning bridge rests on a pivot pier', () => {
   const pylons = plan.world.filter((p) => p.piece === 'pylon').map((p) => position(p.matrix));
-  const start = pylons.filter((c) => c.x > -32 && c.x < -29);
-  assert.equal(start.length, 2, 'two pylons east of the start plaza');
-  assert.ok(start.some((c) => c.z < 0) && start.some((c) => c.z > 4), 'one on each side of the road (z 0..4)');
+  const start = pylons.filter((c) => c.x < -30);
+  assert.equal(start.length, 2, 'two pylons at the start plaza');
+  assert.ok(start.some((c) => c.x < -38) && start.some((c) => c.x > -38), 'one on each side of the road that leaves its north edge (x -40..-36)');
+  assert.ok(start.every((c) => c.z < -4 && c.z > -6), 'at the plaza\'s north edge (z -4)');
   // and two more before the gate, beside the goal's plaza (cells 10..12, -7..-5), clear of everything that folds
   const gate = pylons.filter((c) => c.z < -12);
   assert.equal(gate.length, 2, 'two pylons at the gate plaza');
   assert.equal(pylons.length, 4);
   const pivots = plan.world.filter((p) => p.piece === 'pier_pivot').map((p) => position(p.matrix));
-  assert.deepEqual(pivots.map((c) => [c.x, c.y, c.z]), [[-14, 12, 2]]);
+  assert.deepEqual(pivots.map((c) => [c.x, c.y, c.z]), [[-26, 12, 2], [-14, 12, 2]]);
 });
 
-test('the walking line runs along the roads, onto the turning bridge and into the plaza', () => {
+test('the walking line runs along the roads, onto the turning bridges and into the plaza', () => {
   assert.ok(plan.walkWorld.length > 10);
+  assert.ok((plan.walkModules.get('m_bridge0') ?? []).length >= 2);
   assert.ok((plan.walkModules.get('m_bridge1') ?? []).length >= 2);
-  // from the plaza cell where the first road arrives to the plaza's middle
-  assert.ok(plan.walkWorld.some((w) => w.a.distanceTo(new THREE.Vector3(-34, 12, 2)) < 0.01 && w.b.distanceTo(new THREE.Vector3(-38, 12, 2)) < 0.01));
+  // from the plaza cell where the north road arrives to the plaza's middle
+  assert.ok(plan.walkWorld.some((w) => w.a.distanceTo(new THREE.Vector3(-38, 12, -2)) < 0.01 && w.b.distanceTo(new THREE.Vector3(-38, 12, 2)) < 0.01));
 });

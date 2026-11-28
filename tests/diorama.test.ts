@@ -62,7 +62,7 @@ test('a section\'s puzzle is its moving groups and everything the player can wal
     for (const id of ids) assert.ok(got.has(id), `${sec.id} has ${id} (got ${[...got].join(', ')})`);
     return got;
   };
-  const a = has(s1, 'm_start', 'm_road1', 'm_bridge1', 'm_road2');
+  const a = has(s1, 'm_start', 'm_link', 'm_north', 'm_deck', 'm_balcony', 'm_bridge0', 'm_bridge1', 'm_road2');
   assert.ok(!a.has('m_cube') && !a.has('m_street'), 'the first puzzle stops at its exit');
   const b = has(s2, 'm_road2', 'm_cube', 'm_bal_n', 'm_bal_s', 'plate_w', 'plate_n', 'plate_s', 'plate_e', 'm_road3');
   assert.ok(!b.has('m_bridge1') && !b.has('m_n0') && !b.has('m_street'), 'the second puzzle is neither side\'s');

@@ -5,6 +5,7 @@
 const assert = require('node:assert/strict');
 const { describeBackend, launch } = require('./browser.cjs');
 const { blankReason, decodePng, frameStats } = require('./png.cjs');
+const { loadStage } = require('./stage.cjs');
 
 // Where in the demo the frame is rendered and looked at: the nth cue of a type.
 const POINTS = [
@@ -17,6 +18,7 @@ const POINTS = [
 
 (async () => {
 const BASE = process.env.BASE_URL ?? 'http://localhost:4173/';
+const st = await loadStage();
 const browser = await launch();
 const page = await browser.newPage({ viewport: { width: 360, height: 640 } });
 page.setDefaultTimeout(180000);
@@ -60,7 +62,8 @@ for (const f of frames) {
 assert.ok(r.done, `the demo ends by itself (stopped at ${r.t.toFixed(1)} s)`);
 const count = (type) => cues.filter((c) => c.type === type).length;
 assert.equal(count('section'), 3, 'all three puzzles are played');
-assert.equal(count('fold'), 6, 'each puzzle with its optimal number of folds (1 + 2 + 3)');
+const folds = st.sections.map((s) => s.plan.length);
+assert.equal(count('fold'), folds.reduce((a, b) => a + b, 0), `each puzzle with its optimal number of folds (${folds.join(' + ')}, from the solver)`);
 assert.equal(count('finale'), 1);
 assert.equal(sent, 0, 'the demo never sends telemetry');
 assert.deepEqual(errors, []);

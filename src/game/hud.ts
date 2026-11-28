@@ -18,6 +18,8 @@ export interface FoldPanel {
   frees: string[];
   opens: number;
   closes: number;
+  /** The group is held near the pose it started in (Fold Mode's drag): the line says that letting go moves nothing, and there is no option to count. */
+  rest?: boolean;
 }
 
 export interface ClearStats {
@@ -63,7 +65,10 @@ const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([di
 /** The key list of the "操作方法" panel: key caps (or a plain label for the mouse) and what they do. */
 const KEYS: { caps?: string[]; label?: string; text: string }[] = [
   { caps: ['WASD'], text: '移動（Shiftでダッシュ、Spaceでジャンプ）' },
-  { label: 'マウス', text: '視点（クリックで固定）。Fold Mode では全体を見回す' },
+  { label: 'マウス', text: '視点（クリックで固定）。Fold Mode では空きをドラッグして全体を見回す' },
+  { label: 'ドラッグ', text: 'Fold Mode で、取っ手か建築をドラッグして回す。離すと一番近い状態に吸い付く' },
+  { caps: ['Space'], text: '糸で渡る（金の輪のあるマスで）。渡っている終わりぎわにもう一度押すと、続けて渡る。ほかの場所ではジャンプ' },
+  { caps: ['Q', 'E'], text: '光っている把手を回す（届く範囲で、カメラが向いている把手を）。操作盤のマスでは E は Fold Mode' },
   { caps: ['E'], text: 'コンソールを起動・決定' },
   { caps: ['A', 'D'], text: '変形先を選ぶ（Fold Mode）' },
   { caps: ['R'], text: 'パズルをやり直す' },
@@ -91,6 +96,9 @@ export class Hud {
   private titleEl = h('div', 'layer title interactive');
   private toastEl = h('div', 'toast');
   private promptEl = h('div', 'prompt');
+  private chainEl = h('div', 'chain');
+  private promptHtml = '';
+  private chainTimer = 0;
   private panelEl = h('div', 'panel');
   private hintEl = h('div', 'hint');
   private statusEl = h('div', 'status-bar');
@@ -111,7 +119,7 @@ export class Hud {
     this.toastEl.setAttribute('role', 'status');
     this.hintEl.setAttribute('role', 'status');
     // later siblings paint on top: the dialogs go over the title
-    root.append(this.toastEl, this.statusEl, this.promptEl, this.panelEl, this.hintEl, this.flashEl, this.titleEl, this.controlsEl, this.pauseEl, this.clearEl);
+    root.append(this.toastEl, this.statusEl, this.promptEl, this.chainEl, this.panelEl, this.hintEl, this.flashEl, this.titleEl, this.controlsEl, this.pauseEl, this.clearEl);
     // Capture phase on window: this runs before the game's own key handler, which swallows Tab and Space and would
     // otherwise see the Escape that closes a dialog.
     window.addEventListener('keydown', (e) => this.onKey(e), true);
@@ -300,6 +308,7 @@ export class Hud {
     this.statusEl.style.visibility = '';
     this.hint(null);
     this.prompt(null);
+    this.chain(0);
     this.fold(null);
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   }
@@ -316,24 +325,42 @@ export class Hud {
   }
 
   prompt(html: string | null) {
-    if (html) this.promptEl.innerHTML = html;
+    if (html && html !== this.promptHtml) {
+      this.promptHtml = html;
+      this.promptEl.innerHTML = html;
+    }
     this.promptEl.classList.toggle('show', !!html);
+  }
+
+  /**
+   * The count of swings joined without a landing in between (v0.5), while a chain runs and for a moment after it: nothing for
+   * fewer than two. `hold` is how long it stays once the chain is over (milliseconds).
+   */
+  chain(n: number, hold = 0) {
+    clearTimeout(this.chainTimer);
+    if (n >= 2) this.chainEl.innerHTML = `連鎖 <b>×${n}</b>`;
+    this.chainEl.classList.toggle('show', n >= 2);
+    if (n >= 2 && hold > 0) this.chainTimer = window.setTimeout(() => this.chainEl.classList.remove('show'), hold);
   }
 
   fold(p: FoldPanel | null) {
     this.panelEl.classList.toggle('show', !!p);
     if (!p) return;
-    const status = p.blocked
+    const status = p.rest
+      ? `<div class="status ok">ここで離すと、そのまま戻ります</div>`
+      : p.blocked
       ? `<div class="status blocked">干渉しています：${escapeHtml(p.blocked)}</div>` +
         (p.fix ? `<div class="status fix">${escapeHtml(p.fix)}</div>` : '')
       : `<div class="status ok">${p.opens ? `新しく行ける場所 ${p.opens} マス` : '行ける場所は増えません'}${p.closes ? ` ・ 行けなくなる場所 ${p.closes} マス` : ''}</div>` +
         p.frees.map((f) => `<div class="status frees">${escapeHtml(f)}</div>`).join('');
     this.panelEl.innerHTML =
       `<div class="head">FOLD MODE ・ ${escapeHtml(p.title)}</div>` +
-      `<div class="opt"><span class="arrow" aria-hidden="true">◀</span><span class="name">${escapeHtml(p.label)}</span><span class="arrow" aria-hidden="true">▶</span>` +
-      `<span class="count">${p.index + 1} / ${p.count}</span></div>` +
+      (p.rest
+        ? `<div class="opt"><span class="name">${escapeHtml(p.label)}</span></div>`
+        : `<div class="opt"><span class="arrow" aria-hidden="true">◀</span><span class="name">${escapeHtml(p.label)}</span><span class="arrow" aria-hidden="true">▶</span>` +
+          `<span class="count">${p.index + 1} / ${p.count}</span></div>`) +
       status +
-      `<div class="help"><kbd>A</kbd><kbd>D</kbd> 選択　<kbd>E</kbd> 実行　<kbd>Esc</kbd> 戻る　マウス 見回す</div>`;
+      `<div class="help"><kbd>A</kbd><kbd>D</kbd> 選択　<kbd>E</kbd> 実行　<kbd>Esc</kbd> 戻る　<span>ドラッグで回す</span>　<span>空きをドラッグで見回す</span></div>`;
   }
 
   hint(text: string | null) {
@@ -409,9 +436,12 @@ export class Hud {
     this.openDialog(el, onClose, close);
   }
 
-  clear(stats: ClearStats, onFeedback: (f: { fun?: number; difficulty?: number; clarity?: number; text?: string }) => void, onAgain: () => void) {
+  clear(
+    stats: ClearStats, onFeedback: (f: { fun?: number; difficulty?: number; clarity?: number; text?: string }) => void, onAgain: () => void,
+    heading = '第一区画 踏破',
+  ) {
     this.clearEl.innerHTML = '';
-    const box = dialogBox('第一区画 踏破', 'wide');
+    const box = dialogBox(heading, 'wide');
     box.tabIndex = -1; // focus lands on the dialog itself; Tab then goes to the first rating
     const rows = stats.sections
       .map((s) => `<tr><td>${escapeHtml(s.name)}</td><td>${fmt(s.sec)}</td><td>変形 ${s.actions} 回（最短 ${s.optimal}）</td></tr>`)

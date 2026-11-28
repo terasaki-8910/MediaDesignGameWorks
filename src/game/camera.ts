@@ -39,7 +39,11 @@ export class CameraRig {
   private weight = 0; // 0 on the follow camera, 1 in the diorama, between during a move
   private ray = new THREE.Raycaster();
   private initialised = false;
+  private atRest = false;
   private blend = 0; // 1 right after leaving a framing or cinematic shot, easing back to 0
+  /** v0.5: how much of a swing's sway the follow camera has (0 to 1: it trails the player more loosely and stands a little back), and how much it is asked for. */
+  private sway = 0;
+  swayWanted = 0;
   private readonly camera: THREE.PerspectiveCamera;
   private readonly colliders: () => THREE.Object3D[];
 
@@ -128,6 +132,7 @@ export class CameraRig {
       } else if (mode === 'follow') this.blend = 1;
     }
     this.blend = Math.max(0, this.blend - dt / 0.9);
+    this.sway += ((s.reduceMotion ? 0 : this.swayWanted) - this.sway) * (1 - Math.exp(-dt * 7)); // (none with reduceMotion)
     let desiredPos: THREE.Vector3;
     let desiredLook: THREE.Vector3;
     let desiredFov = portrait ? FOLLOW_FOV.tall : FOLLOW_FOV.wide;
@@ -169,14 +174,14 @@ export class CameraRig {
         Math.sin(this.pitch),
         Math.cos(this.yaw) * Math.cos(this.pitch),
       );
-      let dist = s.distance * (portrait ? 1.15 : 1);
+      let dist = s.distance * (portrait ? 1.15 : 1) * (1 + 0.12 * this.sway);
       this.ray.set(target, off);
       this.ray.far = dist;
       const hit = this.ray.intersectObjects(this.colliders(), false)[0];
       if (hit) dist = Math.max(1.4, hit.distance - 0.45);
       desiredPos = target.clone().addScaledVector(off, dist);
       desiredLook = target;
-      sharpness = s.reduceMotion ? 14 : 14 - 11 * this.blend;
+      sharpness = s.reduceMotion ? 14 : 14 - 11 * this.blend - 6 * this.sway;
     }
     const weightWanted = mode === 'diorama' ? 1 : 0;
     if (!this.initialised) {
@@ -203,6 +208,8 @@ export class CameraRig {
       this.fov += (desiredFov - this.fov) * k;
       this.weight += (weightWanted - this.weight) * (1 - Math.exp(-dt * (s.reduceMotion ? 50 : 4)));
     }
+    // (in the diorama, with its move over and the camera on its pose: what is on screen stands still from here)
+    this.atRest = mode === 'diorama' && !this.move && this.weight > 0.999 && this.pos.distanceToSquared(desiredPos) < 0.01 && Math.abs(this.fov - desiredFov) < 0.02;
     this.camera.position.copy(this.pos);
     this.camera.lookAt(this.look);
     // the lens is the rig's to set while the diorama has any hold on it (Engine.resize sets the follow camera's, and does so afresh at each change of the render scale)
@@ -221,5 +228,10 @@ export class CameraRig {
 
   get position() {
     return this.pos;
+  }
+
+  /** True once the camera has come to rest in the diorama (a test waits for it before it reads where things are on screen). */
+  get arrived() {
+    return this.atRest;
   }
 }

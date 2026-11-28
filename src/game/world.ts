@@ -2,22 +2,34 @@
 // from the walk map, gap plates, consoles, fold animations and Fold Mode previews.
 import * as THREE from 'three';
 import type { CompiledStage, WalkMap } from '../core/compile.ts';
-import { CELL, DIRS, SIDES, cellFloor, cellKey, type Mat3, type Side } from '../core/math.ts';
-import type { Action, CubeFace, Id, PuzzleState } from '../core/types.ts';
+import { CELL, DIRS, SIDES, cellFloor, cellKey, type Mat3, type Side, type Vec3 } from '../core/math.ts';
+import type { Action, CubeFace, Id, PuzzleState, StepAction } from '../core/types.ts';
 import type { DirName } from '../core/math.ts';
 import { Dust } from './dust.ts';
 import { exitMarks, exitPad, exitPlacements } from './exitMarker.ts';
-import { Shake, feelOf, foldCurve, foldSeconds, jointsOf, STOP_AT, type Feel, type Joints } from './foldFeel.ts';
+import { Shake, feelOf, foldCurve, foldSeconds, jointsOf, settleCurve, settleSeconds, STOP_AT, type Feel, type Joints } from './foldFeel.ts';
+import { DragHandle } from './dragHandle.ts';
 import type { Kit } from './kit.ts';
 import { RAIL_LINE, edgeKey, isStreet, planSlabs, sideMatrix } from './kitLayout.ts';
-import { buildModuleMesh, consoleMesh, faceArmsUV } from './kitMeshes.ts';
+import { buildModuleMesh, consoleMesh, faceArmsUV, handleMesh } from './kitMeshes.ts';
 import { LOOK } from './look.ts';
 import type { Materials } from './materials.ts';
 import { portalMaterial, prepareDisc } from './portal.ts';
 import { MURAL_FACES, TOWER_PUT_AWAY, cubeFaceRoles, cubePlacements, faceInlays, muralPlacements, toneByFacing, towerPlacements } from './setPieces.ts';
 import { muralLetters } from './textures.ts';
+import { Thread, threadMaterial } from './thread.ts';
 
 export interface EdgeMarker { pos: THREE.Vector3; side: Side; kind: 'open' | 'close' }
+
+/** A handle in the world: its node, the part that turns, the material of its glyph (lit by itself), and how lit it is (0 to 1). */
+interface HandleParts { node: THREE.Group; spin: THREE.Object3D; glyph: THREE.MeshBasicMaterial; level: number; pivot: Vec3; point: Vec3 }
+
+/** The brightness of a tether's core and of a handle's glyph (multiples of the accent): at rest, and when it counts (joined; targeted). */
+const TETHER_GLOW = { alone: 0.45, joined: 3.4 };
+const HANDLE_GLOW = { rest: 1.6, target: 4.6 };
+/** How fast the lights follow what they are told (per second), and how fast a handle's glyph turns (radians per second). */
+const GLOW_RATE = 12;
+const HANDLE_SPIN = 0.7;
 
 /** `glass` is the console's own copy of M_console_glass once the kit is in (its cyan light is driven per console). */
 interface ConsoleParts { glass: THREE.MeshStandardMaterial | null; beacon: THREE.Mesh; guide: THREE.Mesh }
@@ -102,7 +114,14 @@ interface Anim {
   pivot: THREE.Object3D;
   qStart: THREE.Quaternion;
   axis: THREE.Vector3;
+  /** The turn the animation ends on, and the one it starts from (0 for a fold; where the pointer let go for a settle). */
   angle: number;
+  from: number;
+  /** A settle (a group let go of by the pointer: foldFeel.settleCurve, no pull-back) and the overshoot it is given, as a fraction of its way. */
+  settle: boolean;
+  over: number;
+  /** The camera's shake at the stop, radians (0: none). */
+  kick: number;
   t: number;
   dur: number;
   target: PuzzleState;
@@ -135,6 +154,13 @@ export class World {
   private glows: { mesh: THREE.Mesh; life: number; max: number }[] = [];
   private pulses: { mesh: THREE.Mesh; t: number }[] = [];
   private anim: Anim | null = null;
+  /** The group a pointer is turning, about which axis, and the pose it was in when it was taken hold of (see beginDrag). */
+  private drag: { group: Id; pivot: THREE.Object3D; base: THREE.Quaternion; axis: THREE.Vector3 } | null = null;
+  /** The hidden boxes of each moving group's modules: what a pointer takes hold of (the kit's pieces are merged meshes, far too many triangles to pick against). */
+  private readonly groupColliders = new Map<Id, THREE.Object3D[]>();
+  private readonly otherColliders = new Map<Id, THREE.Object3D[]>();
+  /** Fold Mode's handle (dragHandle.ts); hung on the root, not on a pivot, so the ghosts do not copy it. */
+  readonly handle: DragHandle;
   private readonly dust = new Dust();
   private readonly shake = new Shake();
   /** The marks of the sections' exits (none until the kit is in) and the section whose mark is lit. */
@@ -168,6 +194,16 @@ export class World {
   /** The sills at the ends of the towers' arms: shown where the arm meets a walkway, hidden while their group turns. */
   private sills: { group: Id | undefined; node: THREE.Object3D; out: THREE.Vector3 }[] = [];
   private readonly moduleById = new Map<Id, CompiledStage['modules'][number]>();
+  /** v0.5 greybox: the cyan cores of the tethers (lit while the tether is joined to another), the handles, and the three lines. */
+  private readonly tetherCores = new Map<Id, { material: THREE.MeshBasicMaterial; level: number }>();
+  private joined = new Set<Id>();
+  private readonly handles = new Map<Id, HandleParts>();
+  private targetedHandle: Id | null = null;
+  private hintedHandle: Id | null = null;
+  /** The thread the player sees from a landing cell (ring to ring), the one in the hand while swinging, and the line from a handle to its group. */
+  readonly previewThread: Thread;
+  readonly handThread: Thread;
+  private readonly handleLine: Thread;
   private readonly portal: THREE.ShaderMaterial;
   private readonly cs: CompiledStage;
   private readonly M: Materials;
@@ -176,6 +212,10 @@ export class World {
     this.cs = cs;
     this.M = M;
     this.portal = portalMaterial(M.accent);
+    this.handle = new DragHandle(M);
+    this.previewThread = new Thread(threadMaterial(M.accent, 1.5, 0.7));
+    this.handThread = new Thread(threadMaterial(M.accent, 3, 1), 0.035);
+    this.handleLine = new Thread(threadMaterial(M.accent, 1.3, 0.55), 0.02);
     this.state = cs.initialState();
     const cube = cs.modules.find((m) => m.type === 'cube3');
     const ctx = cube && cube.type === 'cube3' ? { cubeFaces: cube.params.faces as Record<CubeFace, DirName[]> } : {};
@@ -201,6 +241,9 @@ export class World {
       }
       v.root.rotation.y = ((m.yaw ?? 0) * Math.PI) / 2;
       this.colliders.push(...v.colliders);
+      const core = v.root.getObjectByName('tether-core') as THREE.Mesh | undefined;
+      if (core) this.tetherCores.set(m.id, { material: core.material as THREE.MeshBasicMaterial, level: TETHER_GLOW.alone });
+      if (m.group) this.groupColliders.set(m.group, [...(this.groupColliders.get(m.group) ?? []), ...v.colliders]);
       if (v.fallback) this.fallbacks.push(v.fallback);
       if (m.type === 'plate') {
         const holder = v.root.children[0];
@@ -220,7 +263,18 @@ export class World {
       });
       this.root.add(node);
     }
-    this.root.add(this.rails, this.overlay, this.dust.group);
+    for (const h of cs.stage.handles ?? []) {
+      const node = handleMesh(h, M);
+      const point = cs.handlePoint(h);
+      node.position.set(point[0], point[1], point[2]);
+      const pivot = cs.groups.get(h.controls)!.pivot;
+      this.handles.set(h.id, {
+        node, spin: node.getObjectByName('spin')!, glyph: (node.getObjectByName('handle-core') as THREE.Mesh).material as THREE.MeshBasicMaterial,
+        level: 0, pivot, point,
+      });
+      this.root.add(node);
+    }
+    this.root.add(this.rails, this.overlay, this.dust.group, this.handle.group, this.previewThread.mesh, this.handThread.mesh, this.handleLine.mesh);
     this.setState(this.state, false);
   }
 
@@ -233,6 +287,7 @@ export class World {
     this.state = s;
     for (const [id, p] of this.pivots) p.quaternion.copy(this.groupQuaternion(id, s));
     const wm = this.cs.walkMap(s);
+    this.joined = new Set(wm.links.flatMap((l) => [l.a, l.b]));
     this.buildRails(wm, new Set());
     for (const c of this.crowns) c.node.visible = true;
     this.showSills(wm);
@@ -246,33 +301,72 @@ export class World {
     return this.anim !== null;
   }
 
+  /** The group that is turning now (null when none is). */
+  get animGroup(): Id | null {
+    return this.anim?.group ?? null;
+  }
+
+  /** The node a group's modules hang on: it turns about the group's pivot, which is where it stands in the world. */
+  pivotOf(group: Id): THREE.Object3D {
+    return this.pivots.get(group)!;
+  }
+
+  /** Drop the turn that is under way at once, if there is one: the groups are back in the state the game has (a reset, a review shot). */
+  abortAction() {
+    if (!this.anim && !this.drag) return;
+    this.anim = null;
+    this.drag = null;
+    this.setState(this.state);
+  }
+
   /**
    * Animate an action from the current state; parapets and plates of the moving group retract meanwhile. The turn pulls
    * back a little, swings, overshoots a little and settles (foldFeel.foldCurve), the whole taking FOLD_TIME_GAIN of the plain
    * turn's time; at the stop the camera shakes and dust rises at the joints. `reduceMotion` turns that into one gentle ease.
    * `onStop` is called at the stop, `onDone` when the state changes (the turn is over), with what the fold joined.
+   * `from`: a pointer has been turning the group (beginDrag) and let go of it at this angle (radians about the action's
+   * axis): it goes on from there to the stop, with no pull-back (foldFeel.settleCurve), in the share of the time that is left.
+   * `live` (v0.5): the player goes on walking while it turns (a handle's step, a StepAction), and the parapets are laid on this
+   * map (movement.ts railsWhileMoving: every platform that stays, with walls on the edges toward the turning group); the plates
+   * stay where they are, and the threads of the group go dark.
    */
-  startAction(a: Action, durationScale: number, onDone: (result: FoldResult) => void, fx: { reduceMotion?: boolean; onStop?: () => void } = {}) {
+  startAction(
+    a: Action | StepAction, durationScale: number, onDone: (result: FoldResult) => void,
+    fx: { reduceMotion?: boolean; onStop?: () => void; from?: number; live?: WalkMap } = {},
+  ) {
     const target = this.cs.apply(this.state, a);
     const motion = this.cs.motionOf(this.state, a);
     const g = this.cs.groups.get(a.group)!;
     const pivot = this.pivots.get(a.group)!;
     const moving = new Set(this.cs.modules.filter((m) => m.group === a.group).map((m) => m.id));
-    this.buildRails(this.cs.walkMap(this.state), moving);
-    for (const c of this.crowns) if (c.group === a.group) c.node.visible = false;
-    for (const c of this.sills) if (c.group === a.group) c.node.visible = false;
-    for (const pl of this.plates.values()) pl.target = 0;
+    const held = fx.from !== undefined && this.drag?.group === a.group ? this.drag : null; // (what beginDrag has put away is already away)
+    if (!held) {
+      this.buildRails(fx.live ?? this.cs.walkMap(this.state), moving);
+      for (const c of this.crowns) if (c.group === a.group) c.node.visible = false;
+      for (const c of this.sills) if (c.group === a.group) c.node.visible = false;
+      if (!fx.live) for (const pl of this.plates.values()) pl.target = 0;
+    }
+    // a thread with an end on the turning group is gone until it has stopped: both of its rings go dark
+    this.joined = new Set(this.cs.walkMap(this.state).links.filter((l) => !moving.has(l.a) && !moving.has(l.b)).flatMap((l) => [l.a, l.b]));
+    this.drag = null;
     const reduce = !!fx.reduceMotion;
     const { feel, radius } = feelOf(this.cs, this.state, a);
     const plain = ((g.durationMs ?? 2000) / 1000) * durationScale * (Math.abs(motion.quarters) === 2 ? 1.35 : 1);
+    const angle = (motion.quarters * Math.PI) / 2;
+    const from = held ? fx.from! : 0;
+    const left = Math.abs(angle - from);
     this.anim = {
       group: a.group,
       pivot,
-      qStart: pivot.quaternion.clone(),
+      qStart: held ? held.base : pivot.quaternion.clone(),
       axis: AXIS[motion.axis],
-      angle: (motion.quarters * Math.PI) / 2,
+      angle,
+      from,
+      settle: !!held,
+      over: held ? Math.min(0.3, (feel.over * Math.abs(angle)) / Math.max(left, 1e-6)) : 0,
+      kick: reduce ? 0 : SHAKE_BASE * Math.min(1.4, Math.max(0.7, radius / SHAKE_REFERENCE_RADIUS)),
       t: 0,
-      dur: foldSeconds(plain, reduce),
+      dur: held ? settleSeconds(plain, left / Math.abs(angle), reduce) : foldSeconds(plain, reduce),
       target,
       onDone,
       feel,
@@ -284,6 +378,117 @@ export class World {
     };
   }
 
+  // ---- turning a group by hand (Fold Mode's drag; game.ts drives it from pointer events) ----
+
+  /**
+   * A pointer has taken hold of `group`: what its fold would put away goes away now (its parapets stay in the world's frame
+   * and would be left standing, its plates retract, the crowns and sills of the tower are hidden), as at the start of a fold.
+   * `setDragAngle` then turns it about `axis` through its pivot, from the pose it is in.
+   */
+  beginDrag(group: Id, axis: 'x' | 'y' | 'z') {
+    if (this.drag || this.anim) return;
+    const moving = new Set(this.cs.modules.filter((m) => m.group === group).map((m) => m.id));
+    this.buildRails(this.cs.walkMap(this.state), moving);
+    for (const c of this.crowns) if (c.group === group) c.node.visible = false;
+    for (const c of this.sills) if (c.group === group) c.node.visible = false;
+    for (const pl of this.plates.values()) pl.target = 0;
+    this.drag = { group, pivot: this.pivots.get(group)!, base: this.groupQuaternion(group, this.state), axis: AXIS[axis] };
+  }
+
+  get dragging(): boolean {
+    return this.drag !== null;
+  }
+
+  /** How far the group a pointer holds is turned now (radians about its axis, from the pose it was taken in): 0 when none is held. It follows the settle too. */
+  get dragTurn(): number {
+    const d = this.drag;
+    if (!d) return 0;
+    const rel = d.pivot.quaternion.clone().multiply(d.base.clone().invert());
+    return 2 * Math.atan2(d.axis.x * rel.x + d.axis.y * rel.y + d.axis.z * rel.z, rel.w);
+  }
+
+  /** Places on a group's hidden boxes, the biggest box first: its middle, then a third of the way to each of its ends (somewhere to take hold of the group: the e2e). */
+  groupSamplePoints(group: Id): THREE.Vector3[] {
+    const out: THREE.Vector3[] = [];
+    const size = new THREE.Vector3();
+    const boxes = (this.groupColliders.get(group) ?? []).map((c) => new THREE.Box3().setFromObject(c)).sort((a, b) => b.getSize(size).lengthSq() - a.getSize(size).lengthSq());
+    for (const b of boxes) {
+      const c = b.getCenter(new THREE.Vector3());
+      const half = b.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+      out.push(c);
+      for (const [x, y, z] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]]) out.push(c.clone().add(half.clone().multiply(new THREE.Vector3(x, y, z)).multiplyScalar(0.66)));
+    }
+    return out;
+  }
+
+  /** Turn the group a pointer holds to `angle` (radians about its axis, from the pose it was taken in). */
+  setDragAngle(angle: number) {
+    const d = this.drag;
+    if (!d || this.anim) return;
+    d.pivot.quaternion.copy(d.base).premultiply(new THREE.Quaternion().setFromAxisAngle(d.axis, angle));
+  }
+
+  /**
+   * Let go of the group at `from` without changing the puzzle: it settles back to the pose it was taken in (foldFeel.settleCurve,
+   * no overshoot), and the camera shakes a little as it arrives if `refused` (the stop it was heading for is blocked). `onDone`
+   * runs when it is home.
+   */
+  settleDrag(from: number, opts: { refused?: boolean; reduceMotion?: boolean; durationScale?: number }, onDone: () => void) {
+    const d = this.drag;
+    if (!d || this.anim) return;
+    const g = this.cs.groups.get(d.group)!;
+    const reduce = !!opts.reduceMotion;
+    const plain = ((g.durationMs ?? 2000) / 1000) * (opts.durationScale ?? 1);
+    this.anim = {
+      group: d.group,
+      pivot: d.pivot,
+      qStart: d.base,
+      axis: d.axis,
+      angle: 0,
+      from,
+      settle: true,
+      over: 0,
+      kick: opts.refused && !reduce ? SHAKE_BASE : 0,
+      t: 0,
+      dur: Math.min(settleSeconds(plain, Math.abs(from) / (Math.PI / 2), reduce), 0.6),
+      target: this.state,
+      onDone: () => {
+        this.drag = null;
+        onDone();
+      },
+      feel: { ant: 0, over: 0 },
+      reduce,
+      joints: { joined: 0, seams: [] },
+      radius: 0,
+      stopped: false,
+    };
+  }
+
+  /** Drop a drag at once (Fold Mode closed, the page lost focus, a review shot): the group is back in its pose and everything put away is back. */
+  endDrag() {
+    if (!this.drag) return;
+    this.anim = null;
+    this.drag = null;
+    this.setState(this.state);
+  }
+
+  /**
+   * Where a pointer ray first meets `group`'s own (hidden) boxes, unless another module's box is nearer: the point it takes hold of,
+   * or null. The camera's matrices and the world's must be up to date.
+   */
+  pickBody(ray: THREE.Ray, group: Id): THREE.Vector3 | null {
+    const mine = this.groupColliders.get(group);
+    if (!mine?.length) return null;
+    const caster = new THREE.Raycaster();
+    caster.ray.copy(ray);
+    const hit = caster.intersectObjects(mine, false)[0];
+    if (!hit) return null;
+    let rest = this.otherColliders.get(group);
+    if (!rest) this.otherColliders.set(group, (rest = this.colliders.filter((c) => !mine.includes(c))));
+    const others = caster.intersectObjects(rest, false)[0];
+    return others && others.distance < hit.distance - 0.05 ? null : hit.point;
+  }
+
   /** Progress of the running fold animation, 0..1 (1 when idle). */
   get animProgress() {
     return this.anim ? Math.min(1, this.anim.t / this.anim.dur) : 1;
@@ -293,7 +498,7 @@ export class World {
   private stop(a: Anim) {
     a.stopped = true;
     this.dust.puff(a.joints.seams, a.reduce);
-    if (!a.reduce) this.shake.kick(SHAKE_BASE * Math.min(1.4, Math.max(0.7, a.radius / SHAKE_REFERENCE_RADIUS)));
+    if (a.kick > 0) this.shake.kick(a.kick);
     a.onStop?.();
   }
 
@@ -316,7 +521,8 @@ export class World {
       const a = this.anim;
       a.t += dt;
       const k = Math.min(1, a.t / a.dur);
-      const q = new THREE.Quaternion().setFromAxisAngle(a.axis, a.angle * foldCurve(k, a.feel, a.reduce));
+      const way = a.settle ? settleCurve(k, a.over, a.reduce) : foldCurve(k, a.feel, a.reduce);
+      const q = new THREE.Quaternion().setFromAxisAngle(a.axis, a.from + (a.angle - a.from) * way);
       a.pivot.quaternion.copy(a.qStart).premultiply(q);
       if (!a.stopped && k >= (a.reduce ? 0.92 : STOP_AT)) this.stop(a);
       if (k >= 1) {
@@ -345,6 +551,18 @@ export class World {
       if (e.glass) e.glass.emissiveIntensity = EXIT_GLOW[0] + (EXIT_GLOW[1] - EXIT_GLOW[0]) * breath + EXIT_FLARE * e.flare;
       e.pad.color.copy(this.M.accent).multiplyScalar(EXIT_PAD[0] + (EXIT_PAD[1] - EXIT_PAD[0]) * breath + EXIT_PAD_FLARE * e.flare);
       if (e.section !== this.exitSection && e.flare <= 0) e.group.visible = false; // the mark of a section left behind goes out once its flare is over
+    }
+    const follow = 1 - Math.exp(-dt * GLOW_RATE);
+    for (const [id, c] of this.tetherCores) {
+      c.level += ((this.joined.has(id) ? TETHER_GLOW.joined : TETHER_GLOW.alone) - c.level) * follow;
+      c.material.color.copy(this.M.accent).multiplyScalar(c.level);
+    }
+    for (const [id, h] of this.handles) {
+      const want = id === this.targetedHandle ? 1 : id === this.hintedHandle ? 0.55 + (this.calm ? 0 : 0.45 * Math.sin(this.time * 6)) : 0;
+      h.level += (want - h.level) * follow;
+      h.glyph.color.copy(this.M.accent).multiplyScalar(HANDLE_GLOW.rest + (HANDLE_GLOW.target - HANDLE_GLOW.rest) * h.level);
+      h.node.scale.setScalar(1 + 0.16 * h.level);
+      if (!this.calm) h.spin.rotation.y += dt * HANDLE_SPIN * (1 + 1.5 * h.level);
     }
     if (this.gateDisc) this.gateDisc.scale.setScalar(1 + Math.sin(this.time * 1.7) * 0.03);
     this.portal.uniforms.uTime.value = this.time;
@@ -456,7 +674,7 @@ export class World {
 
   /** The gilt materials of the kit (none until it has loaded). */
   giltMaterials(): THREE.MeshStandardMaterial[] {
-    return this.kit?.giltMaterials() ?? [];
+    return [...(this.kit?.giltMaterials() ?? []), this.handle.gilt];
   }
 
   /**
@@ -650,6 +868,8 @@ export class World {
    */
   resetForShot(state: PuzzleState) {
     this.anim = null;
+    this.drag = null;
+    this.handle.show(false);
     this.endWarmUp();
     this.preview(null, [], []);
     this.dust.clear();
@@ -670,6 +890,57 @@ export class World {
 
   highlightConsole(id: Id | null) {
     this.highlighted = id;
+  }
+
+  /** The handle Q and E turn now (null: none): it lights up, and a thin line runs from it to the pivot of the group it turns. */
+  setHandleTarget(id: Id | null) {
+    if (id === this.targetedHandle) return;
+    this.targetedHandle = id;
+    const h = id ? this.handles.get(id) : null;
+    if (h) this.handleLine.place(h.point, h.pivot);
+    else this.handleLine.hide();
+  }
+
+  /** The handle Q and E turn now (null: none). */
+  get targetedHandleId(): Id | null {
+    return this.targetedHandle;
+  }
+
+  /** A hint points at this handle (it pulses, as a console does): null for none. */
+  highlightHandle(id: Id | null) {
+    this.hintedHandle = id;
+  }
+
+  /** A puff of dust where a swing has landed (nothing but a faint still puff with reduceMotion). */
+  landed(at: THREE.Vector3, reduce = false) {
+    this.dust.puff([{ x: at.x, y: at.y, z: at.z, side: 'N' }], reduce);
+  }
+
+  /** Shake the camera a little (the same shake as a fold's stop). */
+  nudge(amplitude: number) {
+    this.shake.kick(amplitude);
+  }
+
+  /**
+   * What stood in the way of a step that was refused: each blocker (a module, a console's stand, or `player` for the standing
+   * place and the body of the player at `player`) flashes red for about a second.
+   */
+  flashBlockers(blockedBy: readonly string[], player: THREE.Vector3 | null) {
+    const boxes = [...this.cs.worldBoxes(this.state), ...this.cs.anchorBoxes()];
+    const flash = (centre: THREE.Vector3, size: THREE.Vector3) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(size.x + 0.3, size.y + 0.3, size.z + 0.3), this.M.blockedFlash.clone());
+      m.position.copy(centre);
+      m.userData.ownMaterial = true;
+      this.overlay.add(m);
+      this.glows.push({ mesh: m, life: 0.9, max: 0.9 });
+    };
+    for (const b of boxes) {
+      if (!blockedBy.includes(b.module)) continue;
+      const size = new THREE.Vector3(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
+      if (size.y > 6) size.y = 6; // a tall column: its top only
+      flash(new THREE.Vector3((b.min[0] + b.max[0]) / 2, b.max[1] - size.y / 2, (b.min[2] + b.max[2]) / 2), size);
+    }
+    if (blockedBy.includes('player') && player) flash(player.clone().add(new THREE.Vector3(0, 0.9, 0)), new THREE.Vector3(0.8, 1.8, 0.8));
   }
 
   /** Faint guidance columns over the given consoles; level 0..1 comes from the `beacon` tunable. */

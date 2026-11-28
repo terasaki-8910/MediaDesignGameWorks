@@ -4,7 +4,7 @@
 // checks them against the stage.
 import type { CompiledStage, WalkMap } from '../core/compile.ts';
 import { DIRS, OPPOSITE, SIDES, cellFloor, type Side, type Vec3 } from '../core/math.ts';
-import type { Action, Id, PuzzleState } from '../core/types.ts';
+import type { Action, Id, PuzzleState, StepAction } from '../core/types.ts';
 
 /**
  * A fold takes this much longer than the turn alone did: the pull-back and the settle are added to the swing. (The brief:
@@ -40,6 +40,27 @@ export function foldCurve(k: number, feel: Feel, reduce = false): number {
   if (x < PULL_END) return 0 - feel.ant * Math.sin(((x / PULL_END) * Math.PI) / 2); // (0 - : not -0 at the start)
   if (x < STOP_AT) return -feel.ant + (1 + feel.over + feel.ant) * easeInOutCubic((x - PULL_END) / (STOP_AT - PULL_END));
   return 1 + feel.over * (0.5 + 0.5 * Math.cos(((x - STOP_AT) / (1 - STOP_AT)) * Math.PI));
+}
+
+/**
+ * How far a group has come, as a fraction of the way from where the pointer let go of it (0) to the stop it is snapping to (1),
+ * at `k` of the settle. It is already in motion, so there is no pull-back: it eases out to the stop's overshoot (`over`, a
+ * fraction of that way) at STOP_AT, the same instant as a fold's, and settles back onto 1 as a fold does. With `reduce` it is one
+ * ease-out with no overshoot. Starts at 0, ends exactly on 1, and has no speed at its peak or at its end.
+ */
+export function settleCurve(k: number, over: number, reduce = false): number {
+  const x = Math.min(1, Math.max(0, k));
+  if (reduce) return 1 - (1 - x) ** 3;
+  if (x < STOP_AT) return (1 + over) * (1 - (1 - x / STOP_AT) ** 3);
+  return 1 + over * (0.5 + 0.5 * Math.cos(((x - STOP_AT) / (1 - STOP_AT)) * Math.PI));
+}
+
+/**
+ * The seconds a settle takes: the turn's own time (`plain`, as `foldSeconds` takes it) for the share of the way still to go,
+ * never less than `floor` (a stop a hand's width away still has to be seen to arrive).
+ */
+export function settleSeconds(plain: number, share: number, reduce: boolean, floor = 0.32): number {
+  return Math.max(Math.min(plain, floor), foldSeconds(plain, reduce) * Math.min(1, Math.max(0, share)));
 }
 
 /** The seconds a fold takes, from the seconds the plain turn took (`reduce`: the gentle ease takes no longer than the turn). */
@@ -79,7 +100,7 @@ export function sweepRadius(boxes: readonly { min: Vec3; max: Vec3 }[], pivot: V
  * would pass through another module or a console's stand (the solver only checked the turn itself), and the numbers it
  * came from (the radius about the axis and the signed angle of the turn).
  */
-export function feelOf(cs: CompiledStage, state: PuzzleState, a: Action): { feel: Feel; radius: number; angle: number } {
+export function feelOf(cs: CompiledStage, state: PuzzleState, a: Action | StepAction): { feel: Feel; radius: number; angle: number } {
   const motion = cs.motionOf(state, a);
   const moving = new Set(cs.modules.filter((m) => m.group === a.group).map((m) => m.id));
   const radius = sweepRadius(cs.worldBoxes(state).filter((b) => moving.has(b.module)), motion.pivot, motion.axis);

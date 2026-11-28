@@ -14,7 +14,7 @@ const load = (): StageFile => JSON.parse(readFileSync('src/stages/area1.json', '
 test('area 1 validates and matches the design verification', () => {
   const r = validateStage(load());
   assert.deepEqual(r.issues.filter((i) => i.level === 'error'), []);
-  assert.equal(r.sections.s1_first_fold.optimal, 1);
+  assert.equal(r.sections.s1_first_fold.optimal, 2);
   assert.equal(r.sections.s2_path_cube.optimal, 2);
   assert.equal(r.sections.s3_fold_gate.optimal, 3);
   for (const m of Object.values(r.sections)) assert.equal(m.deadEnds, 0);
@@ -35,16 +35,19 @@ test('rolling the cube once opens the west-north corner', () => {
   assert.equal(cs.walkMap(s1).tiles.get(cellKey([1, 3, 0]))?.plate, true);
 });
 
-test('walk paths follow open edges and appear once the bridge is folded', () => {
+test('walk paths follow open edges and appear once both bridges are folded', () => {
   const cs = new CompiledStage(load());
   const s0 = cs.initialState();
   const start = cellKey([-10, 3, 0]);
   const exit = cellKey([-2, 3, 0]);
-  const toConsole = walkPath(cs.walkMap(s0), start, [cellKey([-6, 3, 0])])!;
-  assert.deepEqual(toConsole, ['-9,3,0', '-8,3,0', '-7,3,0', '-6,3,0']);
-  assert.equal(walkPath(cs.walkMap(s0), start, [exit]), null, 'the broken bridge cuts the way');
+  // the way to the far bridge's console goes round by the north road, not along the line of the broken bridges
+  const toConsole = walkPath(cs.walkMap(s0), start, [cellKey([-4, 3, -2])])!;
+  assert.deepEqual(toConsole, ['-10,3,-1', '-10,3,-2', '-10,3,-3', '-9,3,-3', '-8,3,-3', '-7,3,-3', '-6,3,-3', '-5,3,-3', '-4,3,-3', '-4,3,-2']);
+  assert.equal(walkPath(cs.walkMap(s0), start, [exit]), null, 'the broken bridges cut the way');
   assert.deepEqual(walkPath(cs.walkMap(s0), start, [start]), []);
-  const s1 = cs.apply(s0, solveSection(cs, 's1_first_fold').plan[0]);
+  const plan = solveSection(cs, 's1_first_fold').plan;
+  assert.equal(walkPath(cs.walkMap(cs.apply(s0, plan[0])), start, [exit]), null, 'one fold of the two is not enough');
+  const s1 = plan.reduce((s, a) => cs.apply(s, a), s0);
   const path = walkPath(cs.walkMap(s1), start, [exit])!;
   assert.equal(path.at(-1), exit);
   const wm = cs.walkMap(s1);

@@ -11,9 +11,9 @@
   },
   "sections": {
     "s1_first_fold": {
-      "firstHintSec": 20,
-      "secondHintSec": 45,
-      "beacon": 0.7
+      "firstHintSec": 40,
+      "secondHintSec": 100,
+      "beacon": 0
     },
     "s2_path_cube": {
       "firstHintSec": 40,

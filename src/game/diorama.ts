@@ -81,6 +81,11 @@ export function sectionModules(cs: CompiledStage, sec: PuzzleSection): Set<strin
       out.add(tile.module);
       if (stop.has(key) && key !== start) continue;
       for (const side of SIDES) if (tile.open[side]) queue.push(cellKey(step(tile.cell, side)));
+      // (v0.5) a thread is a way too: what lies across it belongs to the puzzle
+      for (const l of wm.links) {
+        if (l.from === key) queue.push(l.to);
+        else if (l.to === key) queue.push(l.from);
+      }
     }
   }
   return out;
@@ -102,7 +107,7 @@ export function sectionPoints(cs: CompiledStage, sec: PuzzleSection): THREE.Vect
   const stage = cs.stage;
   const modules = sectionModules(cs, sec);
   const startCell = stage.checkpoints.find((c) => c.id === sec.start)!.at;
-  const cells = [startCell, ...sec.consoles.map((id) => cs.consoles.get(id)!.at), ...sec.exit];
+  const cells = [startCell, ...sec.consoles.map((id) => cs.consoles.get(id)!.at), ...(sec.handles ?? []).map((id) => cs.handles.get(id)!.at), ...sec.exit];
   const floorY = Math.min(...cells.map((c) => cellFloor(c)[1]));
   const lo = floorY - DIORAMA.below;
   const pts: THREE.Vector3[] = [];

@@ -3,9 +3,9 @@
 // from the kit (kit.ts, kitLayout.ts, setPieces.ts). `fallback` builds the old plain meshes instead; it is called only
 // when the kit could not be loaded, so the game can still be played.
 import * as THREE from 'three';
-import { CUBE_FACE_NORMAL, SLAB } from '../core/kit.ts';
-import { DIRS, type DirName } from '../core/math.ts';
-import type { CubeFace, Interactable, ModuleInstance } from '../core/types.ts';
+import { CUBE_FACE_NORMAL, SLAB, TETHER_HEIGHT, tetherRing } from '../core/kit.ts';
+import { DIRS, type DirName, type Side } from '../core/math.ts';
+import type { CubeFace, Handle, Interactable, ModuleInstance } from '../core/types.ts';
 import type { Materials } from './materials.ts';
 import { cubeFaceTextures, muralTexture } from './textures.ts';
 
@@ -187,7 +187,67 @@ export function buildModuleMesh(m: ModuleInstance, M: Materials, ctx: BuildConte
       }
       return { root, colliders: [], fallback };
     }
+    case 'tether':
+      root.add(tetherRingMesh(m.params.facing, M)); // v0.5, greybox: a ring on a post (the art pass makes the real thing)
+      return { root, colliders: [] };
   }
+}
+
+/** Radius of a tether's ring and of its tube, and of the post it hangs on (metres). Greybox numbers. */
+const TETHER = { ring: 0.42, tube: 0.05, core: 0.1, post: 0.045 };
+
+/**
+ * A tether, in the module's own frame (it turns with its group): a gilt ring at the middle of its cell's `facing` edge, 1.6 m
+ * over the floor, its face turned towards the cell it looks at, a cyan core in the middle of it (the core is the part that
+ * lights up when the ring is joined to another: it is named for the world to find), and a slim gilt post under it to the floor.
+ * Greybox: a placeholder for the art pass after the owner's playtest.
+ */
+export function tetherRingMesh(facing: Side, M: Materials): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'tether-ring';
+  const at = tetherRing(facing);
+  const d = DIRS[facing];
+  const ring = mesh(new THREE.TorusGeometry(TETHER.ring, TETHER.tube, 8, 28), M.brass, true, false);
+  ring.position.set(at[0], at[1], at[2]);
+  ring.rotation.y = Math.atan2(d[0], d[2]); // the torus faces +Z: turn it to face the way the thread goes
+  const core = mesh(new THREE.SphereGeometry(TETHER.core, 12, 8), M.glow.clone(), false, false);
+  core.name = 'tether-core';
+  core.position.set(at[0], at[1], at[2]);
+  const post = mesh(new THREE.CylinderGeometry(TETHER.post, TETHER.post, TETHER_HEIGHT - TETHER.ring, 6), M.brass, true, false);
+  post.position.set(at[0], (TETHER_HEIGHT - TETHER.ring) / 2, at[2]);
+  g.add(ring, core, post);
+  return g;
+}
+
+/** Radius of a handle's ring (metres). Greybox. */
+const HANDLE_RING = 0.5;
+
+/**
+ * A handle, in the world's frame (it does not move with the group it turns): a floating gilt ring standing on edge, with a cyan
+ * turn glyph (two arrows chasing round) in it, both turning slowly about the vertical (the group named `spin`), and a cyan core
+ * (`handle-core`) that stays put. Greybox: a placeholder for the art pass.
+ */
+export function handleMesh(h: Handle, M: Materials): THREE.Group {
+  const g = new THREE.Group();
+  g.name = `handle:${h.id}`;
+  const spin = new THREE.Group();
+  spin.name = 'spin';
+  spin.add(mesh(new THREE.TorusGeometry(HANDLE_RING, 0.055, 8, 32), M.brass, true, false));
+  const glyph = M.glow.clone(); // (each handle lights on its own: whether it is the one Q and E turn)
+  glyph.name = 'handle-glyph';
+  for (const turn of [0, Math.PI]) {
+    const arc = mesh(new THREE.TorusGeometry(HANDLE_RING * 0.62, 0.028, 6, 14, Math.PI * 0.7), glyph, false, false);
+    arc.rotation.z = turn;
+    const tip = mesh(new THREE.ConeGeometry(0.075, 0.18, 6), glyph, false, false);
+    const a = turn + Math.PI * 0.7;
+    tip.position.set(Math.cos(a) * HANDLE_RING * 0.62, Math.sin(a) * HANDLE_RING * 0.62, 0);
+    tip.rotation.z = a; // (the cone points up its own +Y: the tangent at angle a is a + 90 degrees)
+    spin.add(arc, tip);
+  }
+  const core = mesh(new THREE.SphereGeometry(0.09, 10, 8), glyph, false, false);
+  core.name = 'handle-core';
+  g.add(spin, core);
+  return g;
 }
 
 /** An open cylinder whose vertex colours run from full at the foot to nothing at the top: a column of light with no cap. */
