@@ -1,14 +1,18 @@
 // Adaptive resolution: decides when the render scale goes down or up from frame intervals.
 // Pure (no three.js, no DOM) so it can be unit tested; Engine applies the scale it decides.
 
-/** The lowest scale a lowering may reach. */
+/** The lowest scale a lowering may reach (the quality 'low' goes further down: LOW_SCALE_FLOOR). */
 export const SCALE_FLOOR = 0.55;
+/** The lowest scale on the quality 'low', for machines whose pixels are what they cannot afford. */
+export const LOW_SCALE_FLOOR = 0.5;
 
 export interface AdaptiveScaleOptions {
   /** The scale to start at. */
   initial: number;
   /** The highest scale a raise may reach. */
   max: number;
+  /** The lowest scale a lowering may reach (SCALE_FLOOR when left out). */
+  floor?: number;
 }
 
 const WINDOW_MS = 2000; // a decision is made on every window of this much frame time
@@ -31,7 +35,8 @@ const round2 = (v: number) => Math.round(v * 100) / 100;
 
 export class AdaptiveScale {
   private current: number;
-  private readonly max: number;
+  private max: number;
+  private floor: number;
   private frames: number[] = [];
   private frameMs = 0;
   private lows: number[] = [];
@@ -45,8 +50,22 @@ export class AdaptiveScale {
   private beforeRaise = 0;
 
   constructor(opts: AdaptiveScaleOptions) {
-    this.current = opts.initial;
+    this.floor = opts.floor ?? SCALE_FLOOR;
+    this.current = Math.max(this.floor, opts.initial);
     this.max = opts.max;
+  }
+
+  /**
+   * The quality went down while the game runs: the scale comes down to `initial` if it is above it, may not rise above `max`
+   * or fall below `floor` from now on, and a raise that was on trial is forgotten. Returns true when the scale changed.
+   */
+  setLimits(limits: AdaptiveScaleOptions): boolean {
+    this.floor = limits.floor ?? SCALE_FLOOR;
+    this.max = limits.max;
+    this.onTrial = false;
+    this.calmMs = 0;
+    this.calmNeededMs = CALM_MS;
+    return this.change(Math.min(this.max, Math.max(this.floor, Math.min(this.current, limits.initial))));
   }
 
   get scale() {
@@ -103,7 +122,7 @@ export class AdaptiveScale {
     }
     if (dropped > LOWER_DROPS) {
       this.calmMs = 0;
-      return this.change(Math.max(SCALE_FLOOR, round2(this.current - LOWER_STEP)));
+      return this.change(Math.max(this.floor, round2(this.current - LOWER_STEP)));
     }
     if (dropped > CALM_DROPS) {
       this.calmMs = 0;

@@ -9,13 +9,15 @@ import { parseFreeze } from './foldcity/progression.ts';
 import type { KeepOut } from './foldcity/morphplan.ts';
 import { STRUCTURES, type StructureName } from './foldcity/sheet.ts';
 import { VARIANTS as FOLD_VARIANTS } from './foldcity/variants.ts';
+import type { CityDetail } from './foldcity/detail.ts';
 import { LOOK, createSun, hazeFloor, installHaze, loadSky } from './look.ts';
+import type { Quality } from './quality.ts';
 
 /**
  * Lights, haze and the haze floor now; the HDRI sky arrives later through the returned promise (the scene shows the
  * haze colour until then). The numbers are in look.ts.
  */
-export function setupEnvironment(scene: THREE.Scene, renderer: THREE.WebGLRenderer, quality: 'low' | 'medium' | 'high') {
+export function setupEnvironment(scene: THREE.Scene, renderer: THREE.WebGLRenderer, quality: Quality) {
   installHaze();
   scene.background = LOOK.hazeColor.clone();
   scene.fog = new THREE.FogExp2(LOOK.hazeColor, LOOK.hazeDistance);
@@ -41,6 +43,8 @@ export interface BackgroundOptions {
   tune?: string | null;
   /** `?bldg=old`: for comparison, the buildings as they were before the textured ones (city.glb: plain colours and the painted atlas). */
   buildings?: string | null;
+  /** How much of the city is drawn (foldcity/detail.ts): the quality 'low' draws less. */
+  detail?: CityDetail;
 }
 
 /**
@@ -58,5 +62,5 @@ export function createBackground(theme: VisualTheme, opts: BackgroundOptions = {
   const freeze = loop ? null : parseFreeze(opts.morph ?? null);
   if (opts.morph && !freeze && !loop) console.warn(`cannot read ?morph=${opts.morph} (for example s1-s2:0.5: neighbouring sections, a fraction from 0 to 1)`);
   const pin = variant && (STRUCTURES as readonly string[]).includes(variant) ? (variant as StructureName) : undefined;
-  return new MorphCity(theme, { keepOut: opts.keepOut, pin, freeze, loop, debug: opts.debug === 'facing' ? 1 : opts.debug === 'range' ? 2 : opts.debug === 'dist' ? 3 : opts.debug === 'unit0' ? 4 : opts.debug === 'unit1' ? 5 : opts.debug === 'unit2' ? 6 : 0, noTrees: opts.debug === 'notrees', farWindows: opts.farWindows, oldBuildings: opts.buildings === 'old', tune: parseTune(opts.tune ?? null) });
+  return new MorphCity(theme, { keepOut: opts.keepOut, pin, freeze, loop, debug: opts.debug === 'facing' ? 1 : opts.debug === 'range' ? 2 : opts.debug === 'dist' ? 3 : opts.debug === 'unit0' ? 4 : opts.debug === 'unit1' ? 5 : opts.debug === 'unit2' ? 6 : 0, noTrees: opts.debug === 'notrees', farWindows: opts.farWindows, oldBuildings: opts.buildings === 'old', detail: opts.detail, tune: parseTune(opts.tune ?? null) });
 }

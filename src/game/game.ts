@@ -17,9 +17,11 @@ import { Engine } from './engine.ts';
 import { Hud, type Settings } from './hud.ts';
 import { Input } from './input.ts';
 import { Kit } from './kit.ts';
-import { giltTakesSky } from './look.ts';
+import { giltTakesSky, type Sun } from './look.ts';
 import { createMaterials } from './materials.ts';
 import { Player, cloakAvatar, type Avatar } from './player.ts';
+import { FrameProbe, PLANS, isQualitySetting, stepDownFor, type Quality } from './quality.ts';
+import { Stepper } from './stepper.ts';
 import { Telemetry, clientInfo, defaultConsent } from './telemetry.ts';
 import { loadVrmAvatar } from './vrmAvatar.ts';
 import { loadWandererAvatar, type WandererAvatar } from './wandererAvatar.ts';
@@ -61,6 +63,8 @@ interface SectionRun {
 }
 
 const SETTINGS_KEY = 'fold-city:settings';
+/** 2: the quality in the stored settings is the player's choice (earlier versions saved the default along with every other setting). */
+const SETTINGS_VERSION = 2;
 const UP = new THREE.Vector3(0, 1, 0);
 
 export class Game {
@@ -82,6 +86,16 @@ export class Game {
   ready = false;
   state: PuzzleState;
   settings: Settings;
+  /**
+   * The tier auto has chosen for this machine (the GPU's name first, then the frames the title measured). It is what the
+   * settings show as 自動（低）, and the tier in use when the setting is auto.
+   */
+  autoChoice: Quality;
+  /** What auto knew and did: the GPU string, the tier it guessed, the median frame interval the title measured (0 until it has), the tier it stepped to. */
+  readonly autoInfo = { gpu: '', guess: 'medium' as Quality, p50: 0, typical: 0, measured: false, chosen: 'medium' as Quality };
+  private readonly sun: Sun;
+  /** The title's measuring of real frame intervals, while it runs (quality.ts). */
+  private probe: FrameProbe | null = null;
   private data: GameData;
   private sectionIndex = 0;
   private run: SectionRun;
@@ -89,6 +103,7 @@ export class Game {
   private fold: FoldSession | null = null;
   private time = 0;
   private last = performance.now();
+  private readonly stepper = new Stepper();
   private gameStart = 0;
   private perfClock = 0;
   private finaleClock = 0;
@@ -108,15 +123,22 @@ export class Game {
     const stage = resolveSlots(data.stage);
     this.cs = new CompiledStage(stage);
     this.state = this.cs.initialState();
-    this.engine = new Engine(canvas, this.settings.quality, opts.capture);
+    // (the frame-by-frame capture must not look different from one machine to the next: auto is the middle tier there)
+    this.engine = new Engine(
+      canvas, opts.capture && this.settings.quality === 'auto' ? 'medium' : this.settings.quality, opts.capture, new URLSearchParams(location.search).get('gpu'),
+    );
     this.engine.adaptive = !this.shots;
+    const quality = this.engine.quality;
+    this.autoChoice = this.settings.quality === 'auto' ? quality : this.engine.guess;
+    Object.assign(this.autoInfo, { gpu: this.engine.gpu, guess: this.engine.guess, chosen: this.autoChoice });
     const M = createMaterials(stage.visualTheme.accent);
-    const env = setupEnvironment(this.engine.scene, this.engine.renderer, this.settings.quality);
+    const env = setupEnvironment(this.engine.scene, this.engine.renderer, quality);
+    this.sun = env.sun;
     this.engine.beforeRender = () => env.sun.follow(this.engine.camera, this.player.pos.y);
     this.world = new World(this.cs, M);
     this.engine.scene.add(this.world.root);
     const query = new URLSearchParams(location.search);
-    this.city = createBackground(stage.visualTheme, { variant: query.get('city'), morph: query.get('morph'), debug: query.get('bgdebug'), farWindows: query.get('farwin') === '1', tune: query.get('bgtune'), buildings: query.get('bldg'), keepOut: pierKeepOut(pierFeet(planSlabs(this.cs))) });
+    this.city = createBackground(stage.visualTheme, { variant: query.get('city'), morph: query.get('morph'), debug: query.get('bgdebug'), farWindows: query.get('farwin') === '1', tune: query.get('bgtune'), buildings: query.get('bldg'), detail: PLANS[quality].city, keepOut: pierKeepOut(pierFeet(planSlabs(this.cs))) });
     this.engine.scene.add(this.city.group);
     this.player = new Player({ object: new THREE.Group(), animate: () => {} }); // nothing until the character has loaded
     this.engine.scene.add(this.player.root);
@@ -209,7 +231,11 @@ export class Game {
         this.ready = true;
         performance.mark('fold:ready');
         this.hud.setStartReady();
+        // auto measures what this machine really does for about two seconds from here, on the title (see measureQuality)
+        if (this.settings.quality === 'auto' && this.engine.adaptive && !opts.demo && !opts.capture) this.probe = new FrameProbe();
       });
+    // frames drawn while the page was hidden say nothing about the machine
+    document.addEventListener('visibilitychange', () => this.probe?.reset());
     if (opts.demo) this.director = new DemoDirector(this, opts.demo);
     if (!opts.capture) requestAnimationFrame((t) => this.frame(t));
   }
@@ -248,7 +274,7 @@ export class Game {
       onConsent: (v) => this.applySettings({ ...this.settings, telemetry: v }),
       onStart: () => this.mode === 'title' && this.ready && this.begin(),
       onSettings: () =>
-        this.hud.pause(true, this.settings, (s) => this.applySettings(s), () => this.hud.pause(false), 'settings'),
+        this.hud.pause(true, this.settings, (s) => this.applySettings(s), () => this.hud.pause(false), 'settings', this.autoChoice),
     });
     // a slow establishing orbit behind the title
     this.rig.setCinematic(new THREE.Vector3(-58, 34, 46), new THREE.Vector3(2, 8, -4));
@@ -356,7 +382,7 @@ export class Game {
     this.gameStart = this.time;
     this.telemetry.log({
       type: 'session_start', build: this.data.build, revision: this.data.revision.revision, stage: `${this.cs.stage.stageId}@${this.cs.stage.version}`,
-      quality: this.settings.quality, client: clientInfo(this.engine.renderer),
+      quality: this.engine.quality, client: clientInfo(this.engine.renderer),
     });
     this.enterSection(0, true);
     this.mode = 'play';
@@ -395,13 +421,43 @@ export class Game {
     this.hud.status(`${this.cs.stage.title.ja} ・ ${sec.name.ja}`);
   }
 
+  /**
+   * One displayed frame. Game time follows the clock: the simulation runs as many steps of at most 1/60 s as the real time
+   * since the last frame needs (stepper.ts), up to a quarter of a second of it, so a slow machine sees the game at its real
+   * speed and only a slideshow (under 4 fps) slows it. One render per frame, however many steps ran.
+   */
   private frame(now: number) {
-    const dt = Math.min(0.05, (now - this.last) / 1000);
+    const real = Math.max(0, (now - this.last) / 1000);
     this.last = now;
-    this.step(dt);
-    this.engine.render(dt);
-    this.engine.sample(dt * 1000);
+    this.stepper.run(real, (dt) => this.step(dt));
+    this.engine.render(Math.min(real, 0.05));
+    // (the adaptive resolution is told how slow the frame really was, not how much of it the simulation took)
+    this.engine.sample(Math.min(real, 1) * 1000);
+    if (this.probe && (this.mode === 'title' || this.mode === 'play') && this.probe.add(Math.min(real, 1) * 1000)) this.measureQuality();
     requestAnimationFrame((t) => this.frame(t));
+  }
+
+  /**
+   * Auto's second look (quality.ts): the median of the real frame intervals since `ready`, on the title (or in the first
+   * seconds of play, for a player who pressed Start at once). A machine slower than its GPU's name said steps down, live.
+   */
+  private measureQuality() {
+    const { p50, typical } = this.probe!;
+    this.probe = null;
+    if (this.settings.quality !== 'auto') return; // (the player chose a tier while it was measuring: theirs stands)
+    Object.assign(this.autoInfo, { p50, typical, measured: true });
+    // (the median of the time, not of the frames: the same for steady frames, and it also sees short and long frames by turns)
+    this.applyQuality(stepDownFor(this.engine.quality, typical));
+  }
+
+  /** Lower the quality while the game runs: the renderer, the sun's shadow map, and how much of the city is drawn. Never raises. */
+  private applyQuality(next: Quality) {
+    if (next === this.engine.quality) return;
+    this.engine.setQuality(next);
+    this.sun.setQuality(next);
+    this.city.setDetail?.(PLANS[next].city);
+    this.autoChoice = this.autoInfo.chosen = next;
+    performance.mark(`fold:quality-${next}`);
   }
 
   /** Capture mode: one simulation step and (unless a test skips it) one rendered frame, at the caller's time step. */
@@ -452,7 +508,7 @@ export class Game {
         this.perfClock = 0;
         this.telemetry.log({
           type: 'perf', p50: round1(this.engine.percentile(50)), p95: round1(this.engine.percentile(95)),
-          scale: round1(this.engine.renderScale), quality: this.settings.quality,
+          scale: round1(this.engine.renderScale), quality: this.engine.quality,
         });
       }
       this.telemetry.tick();
@@ -791,7 +847,7 @@ export class Game {
       // Escape is not a user gesture, so the browser may refuse the lock: take it on the next click instead
       if (!this.automated)
         window.addEventListener('pointerdown', () => (this.mode === 'play' || this.mode === 'fold') && this.input.requestLock(), { once: true });
-    });
+    }, 'pause', this.autoChoice);
   }
 
   private applySettings(s: Settings) {
@@ -799,7 +855,7 @@ export class Game {
     this.telemetry.enabled = s.telemetry && this.telemetryAllowed;
     this.sound.setMuted(s.muted);
     try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...s, v: SETTINGS_VERSION }));
     } catch {
       /* private mode */
     }
@@ -861,6 +917,8 @@ export class Game {
       game: this,
       cell: () => this.player.cell,
       mode: () => this.mode,
+      /** The tier in use, the setting, and what auto knew and did (the GPU string, its guess, the measured median, the tier it chose). */
+      quality: () => ({ quality: this.engine.quality, setting: this.settings.quality, scale: this.engine.renderScale, ...this.autoInfo }),
       section: () => this.section.id,
       start: () => this.begin(),
       teleport: (c: [number, number, number]) => this.player.place(c, 'E', this.cs.walkMap(this.state)),
@@ -892,16 +950,22 @@ function round1(x: number) {
 
 /** `shots` (review mode) renders at quality high unless the URL says `q=`. */
 function loadSettings(shots = false): Settings {
-  const d: Settings = { sensitivity: 1, invertY: false, reduceMotion: false, quality: 'medium', telemetry: defaultConsent(), muted: false };
+  const d: Settings = { sensitivity: 1, invertY: false, reduceMotion: false, quality: 'auto', telemetry: defaultConsent(), muted: false };
   let s = d;
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (raw) s = { ...d, ...JSON.parse(raw) };
+    if (raw) {
+      const { v, ...stored } = JSON.parse(raw) as Partial<Settings> & { v?: number };
+      // (before version 2 the quality was stored with every other setting whether or not the player had chosen it: it is auto's to pick)
+      if (v !== SETTINGS_VERSION) delete stored.quality;
+      s = { ...d, ...stored };
+    }
   } catch {
     /* ignore */
   }
+  if (!isQualitySetting(s.quality)) s = { ...s, quality: 'auto' };
   const q = new URLSearchParams(location.search).get('q');
-  if (q === 'low' || q === 'medium' || q === 'high') s = { ...s, quality: q };
+  if (isQualitySetting(q)) s = { ...s, quality: q };
   else if (shots) s = { ...s, quality: 'high' };
   return s;
 }

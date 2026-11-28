@@ -7,8 +7,9 @@ import {
 import { AdaptiveScale } from './adaptiveScale.ts';
 import { breathe } from './frames.ts';
 import { LOOK } from './look.ts';
+import { PLANS, gpuName, gpuTier, guessQuality, resolveQuality, type GpuTier, type Quality, type QualitySetting } from './quality.ts';
 
-export type Quality = 'low' | 'medium' | 'high';
+export type { Quality } from './quality.ts';
 
 export class Engine {
   readonly renderer: THREE.WebGLRenderer;
@@ -16,23 +17,40 @@ export class Engine {
   readonly camera = new THREE.PerspectiveCamera(62, 1, 0.1, 2000);
   readonly composer: EffectComposer;
   readonly bloom: BloomEffect;
+  /** The tier in use now (never 'auto': that is resolved here, and Engine.setQuality lowers it). */
   quality: Quality;
+  /** The renderer string of the GPU (empty when the browser hides it), its class, and the tier auto starts at for it. */
+  readonly gpu: string;
+  readonly tier: GpuTier;
+  readonly guess: Quality;
   /** Off in review shots: the render scale stays where the quality setting put it. */
   adaptive = true;
   /** Runs right before each frame is drawn (the sun's shadow map follows the camera). */
   beforeRender: (() => void) | null = null;
   private readonly adaptiveScale: AdaptiveScale;
   private readonly exactPixelRatio: boolean;
+  private effectPass: EffectPass;
+  private smaa: SMAAEffect | null;
+  private readonly tone: ToneMappingEffect;
+  private readonly vignette: VignetteEffect;
   private frameTimes: number[] = [];
 
-  /** `exactPixelRatio` renders at the full device pixel ratio (the capture asks for exact output sizes). */
-  constructor(canvas: HTMLCanvasElement, quality: Quality, exactPixelRatio = false) {
-    this.quality = quality;
+  /**
+   * `setting` is the tier, or 'auto': the one the GPU's renderer string suggests (quality.ts). `exactPixelRatio` renders at the
+   * full device pixel ratio (the capture asks for exact output sizes). `gpuOverride` stands in for the renderer string (`?gpu=`:
+   * to try what auto does on another machine).
+   */
+  constructor(canvas: HTMLCanvasElement, setting: QualitySetting, exactPixelRatio = false, gpuOverride?: string | null) {
     this.exactPixelRatio = exactPixelRatio;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, stencil: false, powerPreference: 'high-performance' });
+    this.gpu = gpuOverride || gpuName(this.renderer.getContext());
+    this.tier = gpuTier(this.gpu);
+    this.guess = guessQuality(this.tier);
+    this.quality = resolveQuality(setting, this.tier);
+    const plan = PLANS[this.quality];
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.NoToneMapping; // done in post
-    this.renderer.shadowMap.enabled = quality !== 'low';
+    this.renderer.shadowMap.enabled = plan.shadows;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.info.autoReset = false; // counted per frame over all passes: see render()
     this.composer = new EffectComposer(this.renderer, { frameBufferType: THREE.HalfFloatType });
@@ -40,12 +58,37 @@ export class Engine {
     this.bloom = new BloomEffect({
       intensity: LOOK.bloom.intensity, luminanceThreshold: LOOK.bloom.threshold, luminanceSmoothing: LOOK.bloom.smoothing, mipmapBlur: true, radius: 0.72,
     });
-    const tone = new ToneMappingEffect({ mode: LOOK.toneMapping });
-    const vignette = new VignetteEffect({ darkness: 0.2, offset: 0.4 }) // light: the walkway in the lower corners must stay the brightest area;
-    const effects = quality === 'low' ? [this.bloom, tone, vignette] : [this.bloom, tone, vignette, new SMAAEffect()];
-    this.composer.addPass(new EffectPass(this.camera, ...effects));
-    this.adaptiveScale = new AdaptiveScale({ initial: quality === 'high' ? 1 : quality === 'medium' ? 0.9 : 0.7, max: quality === 'high' ? 1 : 0.9 });
+    this.tone = new ToneMappingEffect({ mode: LOOK.toneMapping });
+    this.vignette = new VignetteEffect({ darkness: 0.2, offset: 0.4 }); // light: the walkway in the lower corners must stay the brightest area
+    this.smaa = plan.smaa ? new SMAAEffect() : null;
+    this.effectPass = new EffectPass(this.camera, ...[this.bloom, this.tone, this.vignette, this.smaa].filter((e) => e !== null));
+    this.composer.addPass(this.effectPass);
+    this.adaptiveScale = new AdaptiveScale(plan.scale);
     window.addEventListener('resize', () => this.resize());
+    this.resize();
+  }
+
+  /**
+   * Lower the quality while the game runs (auto's step down on the title; it never raises). What is live: the render scale
+   * limits, the shadow pass (the shaders keep their shadow code and Sun.setQuality sends every surface out of the shadow
+   * frustum, so nothing is recompiled), and the SMAA pass (the one merged post pass is rebuilt without it: one small program
+   * is compiled). The caller lowers the sun's map and the city's detail with it (Game.applyQuality).
+   */
+  setQuality(next: Quality) {
+    if (next === this.quality) return;
+    const plan = PLANS[next];
+    this.quality = next;
+    this.renderer.shadowMap.enabled = plan.shadows;
+    if (this.smaa && !plan.smaa) {
+      const old = this.effectPass;
+      this.composer.removePass(old);
+      old.fullscreenMaterial.dispose(); // (not old.dispose(): that would dispose the effects the new pass shares)
+      this.effectPass = new EffectPass(this.camera, this.bloom, this.tone, this.vignette);
+      this.composer.addPass(this.effectPass);
+      this.smaa.dispose();
+      this.smaa = null;
+    }
+    this.adaptiveScale.setLimits(plan.scale);
     this.resize();
   }
 

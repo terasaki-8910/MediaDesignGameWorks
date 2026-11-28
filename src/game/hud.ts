@@ -1,6 +1,10 @@
 // DOM overlay: title screen, prompts, Fold Mode panel, hints, pause menu and the clear screen.
 // Structure and behaviour only: every colour, size and space comes from the tokens in styles.css.
-export interface Settings { sensitivity: number; invertY: boolean; reduceMotion: boolean; quality: 'low' | 'medium' | 'high'; telemetry: boolean; muted: boolean }
+import type { Quality, QualitySetting } from './quality.ts';
+
+export interface Settings { sensitivity: number; invertY: boolean; reduceMotion: boolean; quality: QualitySetting; telemetry: boolean; muted: boolean }
+
+const TIER_JA: Record<Quality, string> = { low: '低', medium: '中', high: '高' };
 
 export interface FoldPanel {
   title: string;
@@ -346,7 +350,7 @@ export class Hud {
    * The pause menu (in game) or the settings dialog (from the title): Escape and a click on the backdrop call
    * `onClose` like the button does. `open = false` closes it.
    */
-  pause(open: boolean, s?: Settings, onChange?: (s: Settings) => void, onClose?: () => void, kind: 'pause' | 'settings' = 'pause') {
+  pause(open: boolean, s?: Settings, onChange?: (s: Settings) => void, onClose?: () => void, kind: 'pause' | 'settings' = 'pause', auto?: Quality) {
     if (!open) return this.closeDialog(this.pauseEl);
     if (!s || !onChange || !onClose) return;
     const el = this.pauseEl;
@@ -376,7 +380,8 @@ export class Hud {
     check('プレイデータを送信する', 'telemetry');
     check('ミュート', 'muted');
     const q = document.createElement('select');
-    for (const [v, l] of [['low', '低'], ['medium', '中'], ['high', '高']]) {
+    // (自動 says which tier it has chosen for this machine: the GPU's name first, then the frames the title measured)
+    for (const [v, l] of [['auto', auto ? `自動（${TIER_JA[auto]}）` : '自動'], ['low', '低'], ['medium', '中'], ['high', '高']]) {
       const o = Object.assign(document.createElement('option'), { value: v, textContent: l, selected: s.quality === v });
       q.append(o);
     }

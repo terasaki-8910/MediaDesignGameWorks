@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { ToneMappingMode } from 'postprocessing';
 import { breathe } from './frames.ts';
+import { PLANS, type Quality } from './quality.ts';
 
 const sunAzimuth = (120 * Math.PI) / 180; // atan2(z, x) of the direction towards the sun: from the south-west
 const sunElevation = (12 * Math.PI) / 180;
@@ -267,13 +268,22 @@ export interface Sun {
   light: THREE.DirectionalLight;
   /** Centre the shadow map on what the camera looks at, in whole texels so the shadow edges do not swim. */
   follow(camera: THREE.Camera, floorY: number): void;
+  /**
+   * The quality went down while the game runs (the renderer's shadow flag goes off with it: Engine.setQuality). A smaller
+   * shadow map is made at the next frame; with no shadows every surface is put outside the shadow frustum, which the
+   * shaders (compiled with the shadow code) read as lit. (The map stays: those shaders still have a sampler to fill, and
+   * binding anything but a depth texture to it is an error that skips the draw.)
+   */
+  setQuality(quality: Quality): void;
 }
 
-export function createSun(scene: THREE.Scene, quality: 'low' | 'medium' | 'high'): Sun {
+export function createSun(scene: THREE.Scene, quality: Quality): Sun {
   const light = new THREE.DirectionalLight(LOOK.sunColor, LOOK.sunIntensity);
-  const size = quality === 'high' ? 4096 : 2048;
-  const half = quality === 'high' ? LOOK.shadowHalf : LOOK.shadowHalf * 0.7;
-  light.castShadow = true;
+  // (a tier without shadows still gets the medium numbers: they are never used, and the light has no shadow so no shader holds the code for one)
+  const plan = PLANS[quality].shadows ? PLANS[quality] : PLANS.medium;
+  let size = plan.shadowMap;
+  let half = LOOK.shadowHalf * plan.shadowReach;
+  light.castShadow = PLANS[quality].shadows;
   light.shadow.mapSize.set(size, size);
   const sc = light.shadow.camera;
   sc.left = sc.bottom = -half;
@@ -286,7 +296,7 @@ export function createSun(scene: THREE.Scene, quality: 'low' | 'medium' | 'high'
   const dir = LOOK.sunDir.clone().normalize();
   const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
   const up = new THREE.Vector3().crossVectors(dir, right).normalize();
-  const texel = (half * 2) / size;
+  let texel = (half * 2) / size;
   const fwd = new THREE.Vector3();
   const focus = new THREE.Vector3();
   const follow = (camera: THREE.Camera, floorY: number) => {
@@ -302,7 +312,31 @@ export function createSun(scene: THREE.Scene, quality: 'low' | 'medium' | 'high'
     light.target.updateMatrixWorld();
     light.updateMatrixWorld();
   };
-  return { light, follow };
+  const setQuality = (next: Quality) => {
+    const to = PLANS[next];
+    if (!to.shadows) {
+      // (nothing to do for a light that never cast: no shader has the code. For one that did, send every receiver outside the frustum.)
+      if (!light.castShadow || light.shadow.matrix.elements[12] === 5) return;
+      light.shadow.matrix.set(0, 0, 0, 5, 0, 0, 0, 5, 0, 0, 0, 5, 0, 0, 0, 1);
+      return;
+    }
+    if (!light.castShadow || (to.shadowMap === size && to.shadowReach * LOOK.shadowHalf === half)) return;
+    size = to.shadowMap;
+    half = LOOK.shadowHalf * to.shadowReach;
+    light.shadow.mapSize.set(size, size);
+    sc.left = sc.bottom = -half;
+    sc.right = sc.top = half;
+    sc.updateProjectionMatrix();
+    texel = (half * 2) / size;
+    // (three makes a map of the new size at the next frame, before anything is drawn, when there is none)
+    const map = light.shadow.map;
+    if (map) {
+      map.depthTexture?.dispose();
+      map.dispose();
+      light.shadow.map = null;
+    }
+  };
+  return { light, follow, setQuality };
 }
 
 /** A floor far below everything: it takes the haze colour completely, so no view looks through to the sky's underside. */

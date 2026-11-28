@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import type { VisualTheme } from '../../core/types.ts';
 import { atmosphereUniforms, bindSky, FAR_WINDOWS, KEY_ELEVATION, patchShader, rowTone, TEX_LAYERS, TEX_NAMES, type AtmosphereParams, type AtmosphereUniforms } from './atmosphere.ts';
 import { breathe } from '../frames.ts';
+import { keepBuilding, keepMass, lodShown, type CityDetail } from './detail.ts';
 import { gltfLoader } from '../gltf.ts';
 import { LOOK } from '../look.ts';
 import { ATMOSPHERE, type Background, type Prepare } from './foldcity.ts';
@@ -13,7 +14,7 @@ import { footprint } from './layout.ts';
 import { meshName, MODELS, pickUnit, unitFamily, type UnitInfo } from './models.ts';
 import { chooseUnits, type UnitChoice } from './unitpick.ts';
 import { heightAt, planSteps, type KeepOut, type MorphBuilding, type MorphPlan } from './morphplan.ts';
-import { PLAY_CENTER } from './plan.ts';
+import { PLAY, PLAY_CENTER } from './plan.ts';
 import { SECTION_STRUCTURE, type Freeze } from './progression.ts';
 import { rng } from './rng.ts';
 import { bakeHeights, castShadows, MAP_HEIGHT, MAP_WIDTH, modelHeights, shadowTexture, type ModelHeights, type ShadowFit } from './shadow.ts';
@@ -73,6 +74,8 @@ interface Item {
   turn: boolean;
   /** Its footprint along a and b. */
   foot: [number, number];
+  /** How far it stands from the play volume in each structure at rest (metres): what the low detail decides by. */
+  reach: number[];
   /** The frame it stands in now, its height factor (0 = not shown) and how far its base is sunk. */
   p: THREE.Vector3;
   x: THREE.Vector3;
@@ -106,6 +109,8 @@ export interface MorphCityOptions {
   tune?: Partial<AtmosphereParams>;
   /** `?bldg=old`: the buildings of city.glb as they were before the textured units (for comparison). */
   oldBuildings?: boolean;
+  /** How much of the city is drawn (detail.ts); the quality 'low' draws less. It can be lowered while the game runs (setDetail). */
+  detail?: CityDetail;
 }
 
 /**
@@ -243,6 +248,9 @@ export class MorphCity implements Background {
   private readonly slotOn = { value: new THREE.Vector2(1, 0) };
   private waves: Wave[] = [];
   private skyShown = true;
+  /** The detail changed: the skyline's masses are put again at the next pose. */
+  private skyStale = false;
+  private detail: CityDetail;
   private time = 0;
   /** What is shown: structure `from` at rest, or a fraction `f` of the way to `to`. */
   private from = 0;
@@ -264,6 +272,7 @@ export class MorphCity implements Background {
   constructor(theme: VisualTheme, opts: MorphCityOptions = {}) {
     this.theme = theme;
     this.opts = opts;
+    this.detail = opts.detail ?? 'full';
     if (opts.freeze) ({ from: this.from, to: this.to, f: this.f } = opts.freeze);
     else this.from = this.to = this.structureOf(0);
   }
@@ -394,7 +403,8 @@ export class MorphCity implements Background {
       else for (const lod of [0, 1] as const) source(meshName(m, lod), m.props ? props : gltf!, m.props ? 'cityprops.glb' : 'city.glb');
     }
     // the far skyline is made of far models, some of which may stand nowhere in the city itself
-    const masses = skyline(this.theme.city.seed);
+    const farOnly = this.detail === 'low'; // (the near models are never shown: they are not put on the GPU either)
+    const masses = skyline(this.theme.city.seed).filter((m) => keepMass(this.detail, m));
     const massUnit = new Map<SkyMass, UnitInfo>();
     {
       const pick = rng(this.theme.city.seed * 19 + 7);
@@ -459,13 +469,24 @@ export class MorphCity implements Background {
     material.onBeforeCompile = (shader) => patchShader(shader, atm, { tex: !!units });
     material.customProgramCacheKey = () => (units ? 'foldcity-buildings-tex' : 'foldcity-buildings');
 
+    // (the low detail never shows a near model: it is not put on the GPU either, and its far model stands in for it)
+    const isNear = (key: string) => farOnly && key.endsWith('_lod0') && sources.has(key.replace(/_lod0$/, '_lod1'));
+    if (farOnly) {
+      vertices = indices = 0;
+      for (const [key, src] of sources)
+        if (!isNear(key)) {
+          vertices += src.geometry.getAttribute('position').count;
+          indices += src.geometry.index!.count;
+        }
+    }
     const mesh = new THREE.BatchedMesh(list.length + masses.length, vertices, indices, material);
     mesh.sortObjects = false;
     mesh.frustumCulled = false; // its instances move with the sheet; each is still culled on its own
     mesh.name = 'foldcity-buildings';
     mesh.renderOrder = 1; // after the play area, before the ground
     const ids = new Map<string, number>();
-    for (const [key, src] of sources) ids.set(key, mesh.addGeometry(src.geometry));
+    for (const [key, src] of sources) if (!isNear(key)) ids.set(key, mesh.addGeometry(src.geometry));
+    for (const key of sources.keys()) if (isNear(key)) ids.set(key, ids.get(key.replace(/_lod0$/, '_lod1'))!);
     const rTint = rng(this.theme.city.seed * 13 + 5);
     const tint = new THREE.Vector4();
     // `?bgdebug=unit0..2`: three bits of (the unit's number, its half turn) as the instance's colour; 0 = not a building
@@ -475,6 +496,8 @@ export class MorphCity implements Background {
     };
     const unitCode = (u: UnitInfo | null | undefined, turn: boolean) => (u && u.family !== 'prop' ? (UNITS.indexOf(u) + 1) * 2 + (turn ? 1 : 0) : 0);
     this.unitCode = (this.opts.debug ?? 0) >= 4 ? (it) => codeBits(unitCode(it.unit, it.turn)) : null;
+    const rests = STRUCTURES.map((name) => restState(name));
+    const reachAt = new THREE.Vector3();
     for (const b of list) {
       const own = unitsOf.get(b);
       const m = MODELS[b.model];
@@ -495,7 +518,8 @@ export class MorphCity implements Background {
       // the alpha carries the number of the building's block: with it the building goes into the far haze when its block does (atmosphere.ts, bgFar)
       mesh.setColorAt(id, tint.set(v * (1 + warm), v, v * (1 - warm), b.lot.cell >= 0 ? Math.round(cell * 255) / 255 : 0.5));
       const item: Item = {
-        b, id, geometry, shown: geometry[0][1], units: own?.units, unit: own?.units[0], turn: own?.turn ?? false, foot: footprint(MODELS[b.model], b.lot.scale, b.lot.swap, b.lot.stretch), p: new THREE.Vector3(), x: new THREE.Vector3(1, 0, 0), n: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1),
+        b, id, geometry, shown: geometry[0][1], units: own?.units, unit: own?.units[0], turn: own?.turn ?? false, foot: footprint(MODELS[b.model], b.lot.scale, b.lot.swap, b.lot.stretch),
+        reach: rests.map((st) => PLAY.distanceToPoint(sheetAt(st, b.lot.u, b.lot.v, reachAt))), p: new THREE.Vector3(), x: new THREE.Vector3(1, 0, 0), n: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1),
         h: 0, sink: 0.5, angle: 0, axis: new THREE.Vector3(1, 0, 0),
       };
       this.items.push(item);
@@ -593,6 +617,17 @@ export class MorphCity implements Background {
     }
   }
 
+  /**
+   * Draw less of the city (detail.ts), now: the buildings show their far models, those out of reach and the far trees are
+   * not drawn, the skyline thins. Only lowers (what a detail leaves out of the batch at load cannot come back).
+   */
+  setDetail(detail: CityDetail) {
+    if (detail === this.detail) return;
+    this.detail = detail;
+    this.skyStale = true;
+    this.pose();
+  }
+
   private rest(structure: number) {
     this.morph = null;
     if (this.from === structure && this.to === structure && this.f === 0) return;
@@ -634,12 +669,13 @@ export class MorphCity implements Background {
     const show = Math.min(1, Math.max(0, Math.max(open, ring)));
     if (this.atm) this.atm.uBgSkyShow.value = show;
     const inRing = ring > 0 ? 1 : 0;
-    if (show > 0 !== this.skyShown || inRing !== this.skyRing || (inRing && !still)) {
+    if (this.skyStale || show > 0 !== this.skyShown || inRing !== this.skyRing || (inRing && !still)) {
+      this.skyStale = false;
       this.skyShown = show > 0;
       this.skyRing = inRing;
       for (const s of this.sky) {
         // (round the tube only the masses whose place lies on it, clear of its seam; none taller than four fifths of its radius)
-        const on = this.skyShown && (!inRing || Math.abs(s.mass.b) < RING_HALF - 40);
+        const on = this.skyShown && keepMass(this.detail, s.mass) && (!inRing || Math.abs(s.mass.b) < RING_HALF - 40);
         this.mesh.setVisibleAt(s.id, on);
         if (!on) continue;
         if (!inRing) {
@@ -665,14 +701,14 @@ export class MorphCity implements Background {
     for (const it of this.items) {
       const { b } = it;
       const h = still ? (b.alive[at] ? b.sy[at] : 0) : heightAt(b, ti, fwd);
-      if (h <= 0 || (this.opts.noTrees && MODELS[b.model].name.startsWith('tree_'))) {
+      // (its level of detail and its unit are those of the structure it is nearer to: they change half-way through a fold)
+      const si = still ? at : fwd < 0.5 ? ti : ti + 1;
+      if (h <= 0 || (this.opts.noTrees && MODELS[b.model].name.startsWith('tree_')) || !keepBuilding(this.detail, MODELS[b.model], it.reach[si])) {
         if (it.h > 0) this.mesh.setVisibleAt(it.id, false);
         it.h = 0;
         continue;
       }
-      // (its level of detail and its unit are those of the structure it is nearer to: they change half-way through a fold)
-      const si = still ? at : fwd < 0.5 ? ti : ti + 1;
-      const shown = it.geometry[si][b.lod[si]];
+      const shown = it.geometry[si][lodShown(this.detail, b.lod[si])];
       if (shown !== it.shown) {
         this.mesh.setGeometryIdAt(it.id, shown);
         it.shown = shown;
