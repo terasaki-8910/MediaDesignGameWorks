@@ -54,7 +54,7 @@ interface TelemetryBatch { v: 1; session: string; seq: number; playtest: boolean
 
 const TYPES = new Set([
   'session_start', 'section_enter', 'action', 'preview', 'reset', 'hint', 'pos', 'section_clear', 'game_clear', 'feedback',
-  'perf', 'session_end',
+  'perf', 'session_end', 'swing', 'handle_step', 'ride',
 ]);
 const SHORT = /^[\w.,:\- ]{0,64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -92,6 +92,10 @@ export function validateBatch(input: unknown): { batch?: TelemetryBatch; errors:
     if (e.type === 'pos' && !(Array.isArray(e.samples) && e.samples.length <= 600 && e.samples.every(isSample))) continue;
     if ('cell' in e && !(typeof e.cell === 'string' && CELL.test(e.cell))) continue;
     if (e.type === 'action' && !(typeof e.action === 'string' && ACTION.test(e.action))) continue;
+    if ((e.type === 'swing' || e.type === 'ride') && !['from', 'to'].every((k) => typeof e[k] === 'string' && CELL.test(e[k] as string))) continue;
+    if (e.type === 'swing' && !(Number.isInteger(e.chain) && (e.chain as number) >= 0 && (e.chain as number) <= 32)) continue;
+    if ((e.type === 'handle_step' || e.type === 'ride') && !(typeof e.handle === 'string' && ID.test(e.handle))) continue;
+    if (e.type === 'handle_step' && !(e.dir === 1 || e.dir === -1)) continue;
     if ('blockedBy' in e && !(Array.isArray(e.blockedBy) && e.blockedBy.length <= 8 && e.blockedBy.every((x) => typeof x === 'string' && ID.test(x))))
       continue;
     for (const k of ['fun', 'difficulty', 'clarity'])

@@ -77,9 +77,9 @@ export function sectionStartStates(cs: CompiledStage): PuzzleState[] {
   for (const sec of cs.stage.sections) {
     starts.push(state);
     const cp = cs.stage.checkpoints.find((c) => c.id === sec.start)!;
-    const { optimal, plan } = solveSection(cs, sec.id, { state, cell: cellKey(cp.at) });
+    const { optimal, moves } = solveSection(cs, sec.id, { state, cell: cellKey(cp.at) });
     if (optimal === null) throw new Error(`section ${sec.id} cannot be solved from its start state`);
-    for (const action of plan) state = cs.apply(state, action);
+    for (const move of moves) state = cs.apply(state, move.action); // (console actions, handle steps and waits, as the section is solved)
   }
   return starts;
 }
@@ -118,7 +118,7 @@ export function createShots(game: Game, advance: (dt: number, render: boolean) =
 
   const place = (def: ShotDef) => {
     starts ??= sectionStartStates(game.cs);
-    let { section } = def;
+    let section = Math.min(def.section, starts.length - 1); // (a stage with fewer than three sections shows its last one for the later shots)
     let state = starts[section];
     let consoleId: string | undefined;
     if (def.ui === 'fold-blocked') ({ section, state, console: consoleId } = findBlockedFold(game.cs, starts));
@@ -128,7 +128,7 @@ export function createShots(game: Game, advance: (dt: number, render: boolean) =
     if (def.view === 'fold') {
       rig.cut(); // Fold Mode framed the camera itself
     } else if (def.view === 'overview') {
-      const sec = game.cs.stage.sections[def.section];
+      const sec = game.cs.stage.sections[section];
       const e = establishing(game.cs, sec, game.player.pos); // the player stands at the section's start checkpoint
       const pose = establishingPose(e, 0);
       rig.setCinematic(pose.pos, pose.look);

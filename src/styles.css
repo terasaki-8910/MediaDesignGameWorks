@@ -112,6 +112,14 @@ kbd { font: inherit; font-weight: 600; color: var(--accent); border: 1px solid v
   padding: var(--s-2) var(--s-4); text-align: center; font-size: var(--fs-3); letter-spacing: .06em; color: var(--text-1);
   background: var(--panel); border: 1px solid var(--hairline); opacity: 0; transition: opacity .15s; }
 .prompt.show { opacity: 1; }
+.prompt .blocked { color: var(--status-blocked); }
+.prompt .state { color: var(--text-2); font-size: var(--fs-2); }
+.prompt .line + .line { margin-top: var(--s-1); }
+.chain { position: absolute; left: 50%; bottom: calc(14% + 64px); transform: translateX(-50%); padding: var(--s-1) var(--s-4);
+  font-size: var(--fs-3); letter-spacing: .12em; color: var(--text-1); background: var(--panel); border: 1px solid var(--accent);
+  opacity: 0; transition: opacity .15s; pointer-events: none; }
+.chain b { color: var(--accent); font-weight: 700; }
+.chain.show { opacity: 1; }
 
 /* Fold Mode panel: label, option name, status, help */
 .panel { position: absolute; left: 50%; bottom: var(--s-6); transform: translateX(-50%); width: min(560px, calc(100vw - 2 * var(--s-4)));

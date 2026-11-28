@@ -2,9 +2,9 @@
 // for screen recording and for the frame-by-frame capture in tools/video. It never sends telemetry.
 import * as THREE from 'three';
 import { actionKey, walkPath, type CompiledStage } from '../core/compile.ts';
-import { cellFloor, cellKey } from '../core/math.ts';
-import { solveSection } from '../core/solver.ts';
-import type { Action, PuzzleSection } from '../core/types.ts';
+import { cellFloor, cellKey, parseCell } from '../core/math.ts';
+import { solveSection, type PlanMove } from '../core/solver.ts';
+import type { Action, PuzzleSection, StepAction } from '../core/types.ts';
 import type { Game } from './game.ts';
 
 export interface DemoOptions {
@@ -88,9 +88,15 @@ export class DemoDirector {
       const sec = g.section;
       this.cue('section', { id: sec.id, label: sec.name.ja });
       yield* this.establish(sec);
-      for (const a of solveSection(g.cs, sec.id, { state: g.state, cell: g.player.cell }).plan) {
-        yield* this.walkTo([cellKey(g.cs.consoles.get(a.console)!.at)]);
-        yield* this.fold(a);
+      for (const m of solveSection(g.cs, sec.id, { state: g.state, cell: g.player.cell }).moves) {
+        const a = m.action;
+        if ('console' in a) {
+          yield* this.walkTo([cellKey(g.cs.consoles.get(a.console)!.at)]);
+          yield* this.fold(a);
+        } else if (a.kind === 'step') {
+          yield* this.walkTo([m.at]); // (anywhere in the handle's reach; the plan names one)
+          yield* this.turn(a, m);
+        } else yield* this.wait(0.5); // a wait for the clockwork: its runtime is the next task's
       }
       yield* this.walkTo(sec.exit.map((c) => cellKey(c))); // stepping on the exit clears the puzzle
       yield* this.until(() => g.section.id !== sec.id || g.mode === 'finale' || g.mode === 'clear');
@@ -139,6 +145,13 @@ export class DemoDirector {
       }
       const tile = g.cs.walkMap(g.state).tiles.get(path![0] ?? from);
       if (!tile) break;
+      // a thread: the next cell of the route is not next to this one, so the way there is a swing (Space, facing it)
+      if (path!.length && !adjacent(from, path![0])) {
+        g.steer = null;
+        yield* this.swingTo(path![0]);
+        from = '';
+        continue;
+      }
       const [x, , z] = cellFloor(tile.cell);
       const dx = x - g.player.pos.x;
       const dz = z - g.player.pos.z;
@@ -149,6 +162,29 @@ export class DemoDirector {
     }
     g.steer = null;
     yield* this.wait(0.25);
+  }
+
+  /** Swing along the thread to `to`: turn the camera that way (it chooses between threads), press Space, wait for the landing. */
+  private *swingTo(to: string, maxSec = 6): Script {
+    const g = this.game;
+    const [fx, , fz] = parseCell(g.player.cell);
+    const [tx, , tz] = parseCell(to);
+    g.rig.yaw = Math.atan2(-(tx - fx), -(tz - fz)); // the way the camera looks is the way Space prefers
+    yield* this.wait(0.35);
+    g.input.press('Space');
+    for (let t = 0; t < maxSec && (g.player.cell !== to || g.inMotion); ) t += yield;
+    yield* this.wait(0.2);
+  }
+
+  /** Turn a handle's group one step with Q or E, and wait until it has stopped (a rider is carried meanwhile). */
+  private *turn(a: StepAction, m: PlanMove): Script {
+    const g = this.game;
+    yield* this.wait(0.3);
+    this.cue('fold', { id: m.key, label: `${g.cs.groups.get(a.group)?.label?.ja ?? a.group}を${a.dir > 0 ? '進める' : '戻す'}`, sec: ((g.cs.groups.get(a.group)?.durationMs ?? 2000) / 1000) * g.foldScale });
+    g.input.press(a.dir > 0 ? 'KeyE' : 'KeyQ');
+    yield;
+    yield* this.until(() => !g.inMotion, 20);
+    yield* this.wait(0.4);
   }
 
   private followCamera(dt: number) {
@@ -191,4 +227,11 @@ export class DemoDirector {
       g.rig.setCinematic(pose.pos, pose.look);
     }
   }
+}
+
+/** True when `b` is the cell next to `a` on the same level (a step of the walk, not a thread's swing). */
+function adjacent(a: string, b: string): boolean {
+  const p = parseCell(a);
+  const q = parseCell(b);
+  return p[1] === q[1] && Math.abs(p[0] - q[0]) + Math.abs(p[2] - q[2]) === 1;
 }

@@ -4,7 +4,7 @@
 // checks them against the stage.
 import type { CompiledStage, WalkMap } from '../core/compile.ts';
 import { DIRS, OPPOSITE, SIDES, cellFloor, type Side, type Vec3 } from '../core/math.ts';
-import type { Action, Id, PuzzleState } from '../core/types.ts';
+import type { Action, Id, PuzzleState, StepAction } from '../core/types.ts';
 
 /**
  * A fold takes this much longer than the turn alone did: the pull-back and the settle are added to the swing. (The brief:
@@ -100,7 +100,7 @@ export function sweepRadius(boxes: readonly { min: Vec3; max: Vec3 }[], pivot: V
  * would pass through another module or a console's stand (the solver only checked the turn itself), and the numbers it
  * came from (the radius about the axis and the signed angle of the turn).
  */
-export function feelOf(cs: CompiledStage, state: PuzzleState, a: Action): { feel: Feel; radius: number; angle: number } {
+export function feelOf(cs: CompiledStage, state: PuzzleState, a: Action | StepAction): { feel: Feel; radius: number; angle: number } {
   const motion = cs.motionOf(state, a);
   const moving = new Set(cs.modules.filter((m) => m.group === a.group).map((m) => m.id));
   const radius = sweepRadius(cs.worldBoxes(state).filter((b) => moving.has(b.module)), motion.pivot, motion.axis);
