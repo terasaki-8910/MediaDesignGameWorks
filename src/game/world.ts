@@ -2,16 +2,19 @@
 // from the walk map, gap plates, consoles, fold animations and Fold Mode previews.
 import * as THREE from 'three';
 import type { CompiledStage, WalkMap } from '../core/compile.ts';
-import { CELL, DIRS, SIDES, cellFloor, type Mat3, type Side } from '../core/math.ts';
+import { CELL, DIRS, SIDES, cellFloor, cellKey, type Mat3, type Side } from '../core/math.ts';
 import type { Action, CubeFace, Id, PuzzleState } from '../core/types.ts';
 import type { DirName } from '../core/math.ts';
+import { Dust } from './dust.ts';
+import { exitMarks, exitPad, exitPlacements } from './exitMarker.ts';
+import { Shake, feelOf, foldCurve, foldSeconds, jointsOf, STOP_AT, type Feel, type Joints } from './foldFeel.ts';
 import type { Kit } from './kit.ts';
 import { RAIL_LINE, edgeKey, isStreet, planSlabs, sideMatrix } from './kitLayout.ts';
 import { buildModuleMesh, consoleMesh, faceArmsUV } from './kitMeshes.ts';
 import { LOOK } from './look.ts';
 import type { Materials } from './materials.ts';
 import { portalMaterial, prepareDisc } from './portal.ts';
-import { MURAL_FACES, TOWER_PUT_AWAY, cubePlacements, muralPlacements, toneByFacing, towerPlacements } from './setPieces.ts';
+import { MURAL_FACES, TOWER_PUT_AWAY, cubeFaceRoles, cubePlacements, faceInlays, muralPlacements, toneByFacing, towerPlacements } from './setPieces.ts';
 import { muralLetters } from './textures.ts';
 
 export interface EdgeMarker { pos: THREE.Vector3; side: Side; kind: 'open' | 'close' }
@@ -30,6 +33,27 @@ const GLASS_ACTIVE = 3.2;
  */
 const PATH_GLOW = 0.5;
 /**
+ * The exit mark's glass breathes between these (it is the way on, a cue that can be used, so brighter than the path lines;
+ * well under the bloom threshold). `EXIT_FLARE` is added at the moment the exit is crossed and dies away in `EXIT_FLARE_SECONDS`.
+ */
+const EXIT_GLOW = [0.75, 1.25] as const;
+/** The pad of light under the mark (an additive wash of the accent), between these, and its share of the flare. */
+const EXIT_PAD = [0.1, 0.24] as const;
+const EXIT_PAD_FLARE = 0.5;
+const EXIT_FLARE = 1.6;
+const EXIT_FLARE_SECONDS = 0.6;
+/** The lines the preview of a roll lays over the cube: the faces that will look up (the ones a path would be walked on) and the sides. */
+const PREVIEW_GLOW = { up: 1.5, side: 0.9 } as const;
+/** How far the preview's lines stand off the faces they lie on (the cube's own inlays are 2 cm proud), and how much wider the up face's are. */
+const PREVIEW_LIFT = 0.05;
+/** The lines of the face that will look up are this much wider than the cube's own (arms across, the hub all round). */
+const PREVIEW_UP_WIDEN = 1.8;
+/** While the preview shows the turned cube's lines, the cube's own are this much of their usual light. */
+const CUBE_LINES_DIMMED = 0.3;
+/** The camera's shake at a stop, in radians, for a group the size of the path cube; a bigger group shakes more, a smaller one less. */
+const SHAKE_BASE = 0.0075;
+const SHAKE_REFERENCE_RADIUS = 8.5;
+/**
  * The path cube's stone and paving are the kit's ashlar and paving as on every slab; only their tone by facing is the
  * cube's own (setPieces.ts toneByFacing; the cube can lie on any face, so nothing of this is baked). Faces that do not
  * look up: the kit's 0.6 where they face the sun, the stone as it is where they face away.
@@ -43,6 +67,25 @@ const CUBE_TONE = { lit: 0.6, shade: 1 };
  */
 const RING_SKY = 1.6;
 
+/**
+ * The glass of the path lines gets its light shaped by its vertex colours (a lit core along the middle of a line: the kit's
+ * scripts, fc_kit.py glow_gradient); without them a line is one flat value from edge to edge. Every copy of the kit's glass
+ * needs it again (a cloned material does not keep the hook), and shares the one shader.
+ */
+function shapeGlassLight(glass: THREE.MeshStandardMaterial) {
+  glass.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      `#include <emissivemap_fragment>
+	#if defined( USE_COLOR ) || defined( USE_COLOR_ALPHA )
+		totalEmissiveRadiance *= vColor.rgb;
+	#endif`,
+    );
+  };
+  glass.customProgramCacheKey = () => 'path-glass-gradient';
+  glass.needsUpdate = true;
+}
+
 const AXIS: Record<'x' | 'y' | 'z', THREE.Vector3> = {
   x: new THREE.Vector3(1, 0, 0),
   y: new THREE.Vector3(0, 1, 0),
@@ -54,8 +97,6 @@ export function matToQuat(m: Mat3): THREE.Quaternion {
   return new THREE.Quaternion().setFromRotationMatrix(m4);
 }
 
-const easeInOut = (k: number) => (k < 0.5 ? 4 * k * k * k : 1 - (-2 * k + 2) ** 3 / 2);
-
 interface Anim {
   group: Id;
   pivot: THREE.Object3D;
@@ -65,8 +106,21 @@ interface Anim {
   t: number;
   dur: number;
   target: PuzzleState;
-  onDone: () => void;
+  onDone: (result: FoldResult) => void;
+  /** The pull-back and the overshoot of the turn, `reduce` (no pull-back, no overshoot, no shake), the joints met and the group's size for the shake. */
+  feel: Feel;
+  reduce: boolean;
+  joints: Joints;
+  radius: number;
+  stopped: boolean;
+  onStop?: () => void;
 }
+
+/** What a finished fold tells the game: how many paths it joined (foldFeel.jointsOf). */
+export interface FoldResult { joined: number }
+
+/** The mark of one section's exit: its kit meshes (own glass, so it can breathe), and its light state. */
+interface ExitMarker { section: Id; cell: string; at: THREE.Vector3; group: THREE.Group; glass: THREE.MeshStandardMaterial | null; pad: THREE.MeshBasicMaterial; flare: number }
 
 export class World {
   readonly root = new THREE.Group();
@@ -81,6 +135,17 @@ export class World {
   private glows: { mesh: THREE.Mesh; life: number; max: number }[] = [];
   private pulses: { mesh: THREE.Mesh; t: number }[] = [];
   private anim: Anim | null = null;
+  private readonly dust = new Dust();
+  private readonly shake = new Shake();
+  /** The marks of the sections' exits (none until the kit is in) and the section whose mark is lit. */
+  private exits: ExitMarker[] = [];
+  private exitSection: Id | null = null;
+  /** reduceMotion, as last told by `applyShake`. */
+  private calm = false;
+  /** The path lines laid on the ghost of the cube while its Fold Mode option shows (hung in the ghost's cube node). */
+  private previewInlay: THREE.Group | null = null;
+  /** The path cube's own copy of the path glass (so its lines can be dimmed while the preview lays the lines of the turned cube over them). */
+  private cubeGlass: THREE.MeshStandardMaterial | null = null;
   private gateDisc: THREE.Object3D | null = null;
   private gateOpening = false;
   private highlighted: Id | null = null;
@@ -155,7 +220,7 @@ export class World {
       });
       this.root.add(node);
     }
-    this.root.add(this.rails, this.overlay);
+    this.root.add(this.rails, this.overlay, this.dust.group);
     this.setState(this.state, false);
   }
 
@@ -181,8 +246,13 @@ export class World {
     return this.anim !== null;
   }
 
-  /** Animate an action from the current state; parapets and plates of the moving group retract meanwhile. */
-  startAction(a: Action, durationScale: number, onDone: () => void) {
+  /**
+   * Animate an action from the current state; parapets and plates of the moving group retract meanwhile. The turn pulls
+   * back a little, swings, overshoots a little and settles (foldFeel.foldCurve), the whole taking FOLD_TIME_GAIN of the plain
+   * turn's time; at the stop the camera shakes and dust rises at the joints. `reduceMotion` turns that into one gentle ease.
+   * `onStop` is called at the stop, `onDone` when the state changes (the turn is over), with what the fold joined.
+   */
+  startAction(a: Action, durationScale: number, onDone: (result: FoldResult) => void, fx: { reduceMotion?: boolean; onStop?: () => void } = {}) {
     const target = this.cs.apply(this.state, a);
     const motion = this.cs.motionOf(this.state, a);
     const g = this.cs.groups.get(a.group)!;
@@ -192,6 +262,9 @@ export class World {
     for (const c of this.crowns) if (c.group === a.group) c.node.visible = false;
     for (const c of this.sills) if (c.group === a.group) c.node.visible = false;
     for (const pl of this.plates.values()) pl.target = 0;
+    const reduce = !!fx.reduceMotion;
+    const { feel, radius } = feelOf(this.cs, this.state, a);
+    const plain = ((g.durationMs ?? 2000) / 1000) * durationScale * (Math.abs(motion.quarters) === 2 ? 1.35 : 1);
     this.anim = {
       group: a.group,
       pivot,
@@ -199,9 +272,15 @@ export class World {
       axis: AXIS[motion.axis],
       angle: (motion.quarters * Math.PI) / 2,
       t: 0,
-      dur: ((g.durationMs ?? 2000) / 1000) * durationScale * (Math.abs(motion.quarters) === 2 ? 1.35 : 1),
+      dur: foldSeconds(plain, reduce),
       target,
       onDone,
+      feel,
+      reduce,
+      joints: jointsOf(this.cs.walkMap(this.state), this.cs.walkMap(target), moving),
+      radius,
+      stopped: false,
+      onStop: fx.onStop,
     };
   }
 
@@ -210,20 +289,42 @@ export class World {
     return this.anim ? Math.min(1, this.anim.t / this.anim.dur) : 1;
   }
 
+  /** The turn has reached its end (the overshoot's peak): the camera shakes, dust rises at the joints, the game plays the stop. */
+  private stop(a: Anim) {
+    a.stopped = true;
+    this.dust.puff(a.joints.seams, a.reduce);
+    if (!a.reduce) this.shake.kick(SHAKE_BASE * Math.min(1.4, Math.max(0.7, a.radius / SHAKE_REFERENCE_RADIUS)));
+    a.onStop?.();
+  }
+
+  /**
+   * Shake the camera as the last stop does (call after the camera has been put where it looks; it is undone with the next
+   * placing). `reduceMotion` (the setting, passed every frame) also keeps the exit marks from breathing.
+   */
+  applyShake(camera: THREE.Camera, reduceMotion = false) {
+    this.calm = reduceMotion;
+    if (!this.shake.active) return;
+    camera.rotateY(this.shake.yaw);
+    camera.rotateX(this.shake.pitch);
+  }
+
   update(dt: number) {
     this.time += dt;
+    this.shake.update(dt);
+    this.dust.update(dt);
     if (this.anim) {
       const a = this.anim;
       a.t += dt;
       const k = Math.min(1, a.t / a.dur);
-      const q = new THREE.Quaternion().setFromAxisAngle(a.axis, a.angle * easeInOut(k));
+      const q = new THREE.Quaternion().setFromAxisAngle(a.axis, a.angle * foldCurve(k, a.feel, a.reduce));
       a.pivot.quaternion.copy(a.qStart).premultiply(q);
+      if (!a.stopped && k >= (a.reduce ? 0.92 : STOP_AT)) this.stop(a);
       if (k >= 1) {
         this.anim = null;
         const before = this.cs.walkMap(this.state);
         this.setState(a.target);
         this.flashNewEdges(before, this.cs.walkMap(a.target));
-        a.onDone();
+        a.onDone({ joined: a.joints.joined });
       }
     }
     for (const pl of this.plates.values()) {
@@ -236,6 +337,14 @@ export class World {
       if (p.glass) p.glass.emissiveIntensity = id === this.highlighted ? GLASS_ACTIVE + Math.sin(this.time * 6) * 0.8 : GLASS_REST;
       p.beacon.visible = id === this.highlighted;
       if (p.beacon.visible) p.beacon.scale.x = p.beacon.scale.z = 1 + Math.sin(this.time * 6) * 0.35;
+    }
+    for (const e of this.exits) {
+      if (!e.group.visible) continue;
+      e.flare = Math.max(0, e.flare - dt / EXIT_FLARE_SECONDS);
+      const breath = this.calm ? 0.5 : 0.5 + 0.5 * Math.sin(this.time * 2.4); // (steady with reduceMotion)
+      if (e.glass) e.glass.emissiveIntensity = EXIT_GLOW[0] + (EXIT_GLOW[1] - EXIT_GLOW[0]) * breath + EXIT_FLARE * e.flare;
+      e.pad.color.copy(this.M.accent).multiplyScalar(EXIT_PAD[0] + (EXIT_PAD[1] - EXIT_PAD[0]) * breath + EXIT_PAD_FLARE * e.flare);
+      if (e.section !== this.exitSection && e.flare <= 0) e.group.visible = false; // the mark of a section left behind goes out once its flare is over
     }
     if (this.gateDisc) this.gateDisc.scale.setScalar(1 + Math.sin(this.time * 1.7) * 0.03);
     this.portal.uniforms.uTime.value = this.time;
@@ -274,6 +383,7 @@ export class World {
     }
     this.addStreetRails(kit);
     this.addSetPieces(kit);
+    this.addExitMarkers(kit);
     // the bronze and gilt of all consoles are two meshes; each console keeps its own glass, lit by itself
     this.root.updateMatrixWorld(true);
     const stands: { piece: string; matrix: THREE.Matrix4 }[] = [];
@@ -368,7 +478,8 @@ export class World {
       const node = this.root.getObjectByName(m.id)!;
       if (m.type === 'cube3') {
         // its stone and paving are its own: toned by which way each face looks, whichever face is up
-        const cube = kit.build(cubePlacements(m), { own: ['M_stone', 'M_paving'] });
+        const cube = kit.build(cubePlacements(m), { own: ['M_stone', 'M_paving', 'M_path_glass'] });
+        this.cubeGlass = this.lightGlass(cube, PATH_GLOW);
         for (const name of ['M_stone', 'M_paving']) {
           const mesh = cube.getObjectByName(`kit:${name}`) as THREE.Mesh | undefined;
           if (!mesh) continue;
@@ -422,20 +533,59 @@ export class World {
     for (const glass of kit.materialsNamed('M_path_glass')) {
       glass.emissive.copy(this.M.accent);
       glass.emissiveIntensity = PATH_GLOW;
-      // the glass's vertex colours shape its light (a lit core along the middle of a line: the kit's scripts,
-      // fc_kit.py glow_gradient); without them a line is one flat value from edge to edge
-      glass.onBeforeCompile = (shader) => {
-        shader.fragmentShader = shader.fragmentShader.replace(
-          '#include <emissivemap_fragment>',
-          `#include <emissivemap_fragment>
-	#if defined( USE_COLOR ) || defined( USE_COLOR_ALPHA )
-		totalEmissiveRadiance *= vColor.rgb;
-	#endif`,
-        );
-      };
-      glass.customProgramCacheKey = () => 'path-glass-gradient';
-      glass.needsUpdate = true;
+      shapeGlassLight(glass);
     }
+  }
+
+  /**
+   * The mark of each section's exit (exitMarker.ts), built once from the kit's path-line pieces with a glass of its own so it
+   * can breathe on its own; only the current section's is shown (`setExitSection`).
+   */
+  private addExitMarkers(kit: Kit) {
+    for (const m of exitMarks(this.cs.stage)) {
+      const group = kit.build(exitPlacements(m.cell, m.side), { own: ['M_path_glass', 'M_bronze_trim'] });
+      group.name = `exit:${m.section}`;
+      group.visible = false;
+      const glass = this.lightGlass(group, EXIT_GLOW[0]);
+      const pad = new THREE.MeshBasicMaterial({
+        color: this.M.accent.clone().multiplyScalar(EXIT_PAD[0]), vertexColors: true, transparent: true, blending: THREE.AdditiveBlending,
+        depthWrite: false, fog: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -10,
+      });
+      group.add(new THREE.Mesh(exitPad(m.cell, m.side), pad));
+      this.root.add(group);
+      this.exits.push({ section: m.section, cell: cellKey(m.cell), at: new THREE.Vector3(...cellFloor(m.cell)), group, glass, pad, flare: 0 });
+    }
+    this.showExits();
+  }
+
+  /** The cyan light of the path glass in a built group (a private copy of the kit's material): its colour, its strength, the shaping of its edges. */
+  private lightGlass(group: THREE.Group, intensity: number): THREE.MeshStandardMaterial | null {
+    const mesh = group.getObjectByName('kit:M_path_glass') as THREE.Mesh | undefined;
+    if (!mesh) return null;
+    const glass = mesh.material as THREE.MeshStandardMaterial;
+    glass.emissive.copy(this.M.accent);
+    glass.emissiveIntensity = intensity;
+    shapeGlassLight(glass);
+    return glass;
+  }
+
+  /** The section whose exit is marked: only its mark is lit (a mark that has just been crossed finishes its flare first). */
+  setExitSection(section: Id) {
+    this.exitSection = section;
+    this.showExits();
+  }
+
+  private showExits() {
+    for (const e of this.exits) e.group.visible = e.section === this.exitSection || e.flare > 0;
+  }
+
+  /** The exit at `cell` has been crossed: its mark flares and a ring of light runs out from it. */
+  crossExit(cell: string) {
+    for (const e of this.exits)
+      if (e.cell === cell && e.group.visible) {
+        e.flare = 1;
+        this.pulse(e.at);
+      }
   }
 
   /** The kit could not be loaded: show the plain collider slabs and the plain stand-ins so the game can still be played. */
@@ -475,6 +625,7 @@ export class World {
       ghost.traverse((o) => {
         if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).material = this.M.ghost;
       });
+      if (!this.previewInlay) this.layPreviewInlay(ghost, g.id, this.cs.groupMatrix(g, g.initial)); // (the path cube's lines: their shader too)
     }
     const probe = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), this.M.blockedFlash);
     probe.visible = false;
@@ -487,6 +638,7 @@ export class World {
 
   /** Hide the warm-up ghosts and drop the probe; safe to call again (compileAsync settles on its own schedule). */
   private endWarmUp() {
+    this.clearPreviewInlay();
     for (const g of this.ghosts.values()) g.visible = false;
     if (this.warmProbe) this.dropOverlay(this.warmProbe);
     this.warmProbe = null;
@@ -500,6 +652,10 @@ export class World {
     this.anim = null;
     this.endWarmUp();
     this.preview(null, [], []);
+    this.dust.clear();
+    this.shake.clear();
+    for (const e of this.exits) e.flare = 0;
+    this.showExits();
     for (const g of this.glows) this.dropOverlay(g.mesh);
     for (const p of this.pulses) this.dropOverlay(p.mesh);
     this.glows = [];
@@ -555,14 +711,17 @@ export class World {
   preview(a: Action | null, blockedBy: string[], markers: EdgeMarker[]) {
     for (const g of this.ghosts.values()) g.visible = false;
     this.clearOverlayKind('preview');
+    this.clearPreviewInlay(); // (before the ghost's materials are set: its lines keep their own)
     if (!a) return;
     const ghost = this.ghostFor(a.group);
     ghost.visible = true;
-    ghost.quaternion.copy(this.groupQuaternion(a.group, this.cs.apply(this.state, a)));
+    const target = this.cs.apply(this.state, a);
+    ghost.quaternion.copy(this.groupQuaternion(a.group, target));
     const blocked = blockedBy.length > 0;
     ghost.traverse((o) => {
       if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).material = blocked ? this.M.ghostBlocked : this.M.ghost;
     });
+    if (!blocked) this.layPreviewInlay(ghost, a.group, this.cs.groupMatrix(this.cs.groups.get(a.group)!, target[a.group]));
     for (const b of this.cs.worldBoxes(this.state)) {
       if (!blockedBy.includes(b.module)) continue;
       const size = new THREE.Vector3(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
@@ -582,6 +741,55 @@ export class World {
       (plane.material as THREE.Material).side = THREE.DoubleSide;
       this.overlay.add(plane);
     }
+  }
+
+  /**
+   * The path lines of the cube, on its ghost: the cube turns about its own middle, so its ghost lies exactly on the cube and
+   * shows nothing the cube does not. What the player cannot see is which paths will look up, and which sideways, once it has
+   * turned by `R`: the lines of those faces are laid on the ghost (not the face that will look down), in the cyan of the cube's
+   * own inlays and brighter on the face that will look up, standing a few centimetres off the cube's. Not when the option is
+   * blocked. They hang in the ghost's cube node, so they turn with it.
+   */
+  private layPreviewInlay(ghost: THREE.Object3D, group: Id, R: Mat3) {
+    const kit = this.kit;
+    const cube = this.cs.modules.find((m) => m.type === 'cube3' && m.group === group);
+    const node = cube && ghost.getObjectByName(cube.id);
+    if (!kit || !cube || cube.type !== 'cube3' || !node) return;
+    const roles = cubeFaceRoles(R);
+    const holder = new THREE.Group();
+    holder.name = 'preview-inlay';
+    for (const role of ['up', 'side'] as const) {
+      const faces = (Object.keys(roles) as CubeFace[]).filter((f) => roles[f] === role);
+      if (!faces.length) continue;
+      const widen = role === 'up' ? PREVIEW_UP_WIDEN : 1; // (the face that will be walked on: bolder lines)
+      const placed = faces.flatMap((f) => faceInlays(cube, f, PREVIEW_LIFT)).map((p) => ({
+        ...p, matrix: p.matrix.clone().multiply(new THREE.Matrix4().makeScale(widen, 1, p.piece === 'cube_inlay_hub' ? widen : 1)),
+      }));
+      const lines = kit.build(placed, { own: ['M_path_glass', 'M_bronze_trim'] });
+      this.lightGlass(lines, PREVIEW_GLOW[role]);
+      lines.traverse((o) => {
+        o.castShadow = false;
+        o.receiveShadow = false;
+      });
+      holder.add(lines);
+    }
+    node.add(holder);
+    this.previewInlay = holder;
+    if (this.cubeGlass) this.cubeGlass.emissiveIntensity = PATH_GLOW * CUBE_LINES_DIMMED;
+  }
+
+  private clearPreviewInlay() {
+    const holder = this.previewInlay;
+    if (!holder) return;
+    holder.parent?.remove(holder);
+    holder.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.geometry.dispose(); // (the kit's geometry was merged into a new one; the materials are copies)
+      (mesh.material as THREE.Material).dispose();
+    });
+    this.previewInlay = null;
+    if (this.cubeGlass) this.cubeGlass.emissiveIntensity = PATH_GLOW;
   }
 
   private clearOverlayKind(kind: string) {

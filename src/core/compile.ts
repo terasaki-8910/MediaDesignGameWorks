@@ -213,9 +213,13 @@ export class CompiledStage {
     return { axis: g.axis, quarters: dq === 3 ? -1 : dq, pivot: g.pivot };
   }
 
-  /** Module ids (and anchor:<console>) that the action's motion would pass through. */
-  sweepBlockers(s: PuzzleState, a: Action): string[] {
-    const key = `${this.stateKey(s)}#${actionKey(a)}`;
+  /**
+   * Module ids (and anchor:<console>) that the action's motion would pass through. `margin` (radians) sweeps that much
+   * further before the start and past the end, for a turn that pulls back before it starts and overshoots a little at its
+   * end (visual only).
+   */
+  sweepBlockers(s: PuzzleState, a: Action, margin: readonly [before: number, after: number] = [0, 0]): string[] {
+    const key = `${this.stateKey(s)}#${actionKey(a)}${margin[0] || margin[1] ? `+${margin[0].toFixed(4)}+${margin[1].toFixed(4)}` : ''}`;
     const hit = this.sweepCache.get(key);
     if (hit) return hit;
     const g = this.groups.get(a.group)!;
@@ -228,8 +232,12 @@ export class CompiledStage {
     const total = (quarters * Math.PI) / 2;
     const steps = Math.max(1, Math.ceil(Math.abs(total) / SWEEP_STEP));
     const blockers = new Set<string>();
-    for (let i = 1; i <= steps; i++) {
-      const R = rotAngle(axis, (total * i) / steps);
+    // the angles swept: each step along the turn, and the two ends of the margin (before the start, past the end)
+    const angles = Array.from({ length: steps }, (_, i) => (total * (i + 1)) / steps);
+    if (margin[0] > 0) angles.push(-margin[0] * Math.sign(total));
+    if (margin[1] > 0) angles.push(total + margin[1] * Math.sign(total));
+    for (const angle of angles) {
+      const R = rotAngle(axis, angle);
       for (const p of points) {
         const q = apply(R, sub(p, pivot));
         const w: Vec3 = [q[0] + pivot[0], q[1] + pivot[1], q[2] + pivot[2]];

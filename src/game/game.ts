@@ -373,6 +373,7 @@ export class Game {
     if (i === 0 || !announce) this.player.place(cp.at, cp.facing, this.cs.walkMap(this.state));
     this.world.highlightConsole(null);
     this.world.setGuidance(sec.consoles, this.data.tunables.sections[sec.id]?.beacon ?? 0);
+    this.world.setExitSection(sec.id); // (its exit is marked on the floor)
     // the city shows this section's structure; walking on from the section before, it folds there
     const fold = announce && i > 0;
     this.city.setSection?.(i, fold, this.settings.reduceMotion);
@@ -445,6 +446,7 @@ export class Game {
     this.world.update(dt);
     this.city.update(dt);
     this.rig.update(dt, this.input, this.player.pos, { ...this.settings, distance: tun.camera.distance }, this.mode === 'play');
+    this.world.applyShake(this.engine.camera, this.settings.reduceMotion); // (the stop of a fold shakes it a little; none with reduceMotion)
     if (this.mode === 'play' || this.mode === 'fold' || this.mode === 'anim') {
       this.telemetry.samplePosition(this.player.cell);
       this.perfClock += dt;
@@ -661,12 +663,13 @@ export class Game {
     this.world.highlightConsole(null);
     this.hud.hint(null);
     this.frameFold(a);
-    this.world.startAction(a, scale, () => {
+    const reduceMotion = this.settings.reduceMotion;
+    this.world.startAction(a, scale, ({ joined }) => {
       this.state = this.world.state;
       this.mode = 'play';
       this.rig.setFrame(null);
       this.world.setGuidanceHidden(false);
-      this.sound.open();
+      this.sound.joined(joined); // one note, a step higher each, for every path the fold joined
       const left = remainingActions(this.cs, sec.id, this.state, this.player.cell);
       if (left !== null && left < this.run.remaining) {
         // the goal came closer: the hint clock starts over
@@ -675,7 +678,7 @@ export class Game {
       } else this.run.hintStale = true;
       if (left !== null) this.run.remaining = left;
       else this.hud.hint('ここからは先に進めないようです。<kbd>R</kbd> でこのパズルをやり直せます。');
-    });
+    }, { reduceMotion, onStop: () => this.sound.thud(reduceMotion) });
   }
 
   /**
@@ -745,7 +748,8 @@ export class Game {
     this.telemetry.flush();
     this.hud.prompt(null);
     if (this.sectionIndex + 1 < this.cs.stage.sections.length) {
-      this.sound.open();
+      this.sound.passage();
+      this.world.crossExit(this.player.cell); // the exit's mark flares as it is crossed
       this.enterSection(this.sectionIndex + 1, true);
     } else this.startFinale();
   }
