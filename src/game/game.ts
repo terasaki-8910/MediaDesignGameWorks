@@ -13,6 +13,7 @@ import { pierFeet, planSlabs } from './kitLayout.ts';
 import type { Background } from './foldcity/foldcity.ts';
 import { CameraRig } from './camera.ts';
 import { DemoDirector, type DemoOptions } from './demo.ts';
+import { sectionDiorama, type DioramaView } from './diorama.ts';
 import { Engine } from './engine.ts';
 import { Hud, type Settings } from './hud.ts';
 import { Input } from './input.ts';
@@ -67,6 +68,25 @@ const SETTINGS_KEY = 'fold-city:settings';
 const SETTINGS_VERSION = 2;
 const UP = new THREE.Vector3(0, 1, 0);
 
+/**
+ * The establishing view at the start of a section: the camera goes up into the diorama (camera.ts: DIORAMA_MOVE.in), holds,
+ * and comes back behind the player (DIORAMA_MOVE.out), about 3.2 s in all. `hold` counts from the start, so it includes the
+ * move in. With reduceMotion the camera cuts there and back, and the hold is what is left.
+ */
+const ESTABLISH = { hold: 2.2, holdStill: 2.0 };
+/** The keys that walk and jump: a new press of one of them (or a click) ends the establishing view. */
+const SKIP_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'];
+
+/**
+ * What the camera shows while a fold turns, by the group that moves: the whole puzzle (the diorama, as in Fold Mode: the
+ * default), or the purpose-made view of the moving part (`frameFold`). Chosen by looking at each fold under both cameras:
+ * the first section's bridge and the cube (about 200 px across in the diorama) read best in the diorama, with what they join
+ * up in the same picture, and so do the tower's turns (arms about 55 px long there, but the fold lasts 1.6 s, and a camera
+ * that dives in takes 0.7 s of it: the picture would move as well as the arm). The street, hinged at one end, swings
+ * edge-on to the diorama, and its 3.2 s leaves room for the dive, so it keeps its view.
+ */
+const FOLD_CAMERA: Record<string, 'diorama' | 'view'> = { g_street: 'view' };
+
 export class Game {
   readonly engine: Engine;
   readonly cs: CompiledStage;
@@ -112,6 +132,12 @@ export class Game {
   private automated = false;
   private telemetryAllowed = true;
   private introTimer = 0;
+  /** The establishing view at the start of a section, while it runs: seconds so far, and the walking keys that were already down. */
+  private establish: { t: number; down: Set<string> } | null = null;
+  /** The section's intro text, waiting for the establishing view to end. */
+  private showIntro: (() => void) | null = null;
+  private readonly dioramas = new Map<string, DioramaView>();
+  private readonly foldCameras: Record<string, 'diorama' | 'view'> = { ...FOLD_CAMERA };
   private readonly shots: boolean;
   /** The character model, when it is the avatar in use (the review shots put it back into its rest pose). */
   private wanderer: WandererAvatar | null = null;
@@ -134,7 +160,7 @@ export class Game {
     const M = createMaterials(stage.visualTheme.accent);
     const env = setupEnvironment(this.engine.scene, this.engine.renderer, quality);
     this.sun = env.sun;
-    this.engine.beforeRender = () => env.sun.follow(this.engine.camera, this.player.pos.y);
+    this.engine.beforeRender = () => env.sun.follow(this.engine.camera, this.player.pos.y, this.rig.shadowView());
     this.world = new World(this.cs, M);
     this.engine.scene.add(this.world.root);
     const query = new URLSearchParams(location.search);
@@ -300,8 +326,11 @@ export class Game {
     this.city.reset();
     this.hud.resetForShot();
     this.hud.setVisible(title);
+    this.establish = null;
+    this.hud.holdHint(false); // (a shot of Fold Mode left it held)
     this.rig.setFrame(null);
     this.rig.setCinematic(null);
+    this.rig.setDiorama(null);
     this.enterSection(index, false);
     this.wanderer?.reset();
     this.engine.scene.updateMatrixWorld(true); // the camera's collision rays must see this pose, not the last frame's
@@ -377,7 +406,7 @@ export class Game {
     this.hud.hideTitle();
     if (!keepCamera) {
       this.rig.setCinematic(null);
-      this.rig.snapBehind(-Math.PI / 2);
+      this.rig.snapBehind(-Math.PI / 2, !this.director); // (the establishing view glides on from the title's orbit)
     }
     this.gameStart = this.time;
     this.telemetry.log({
@@ -407,19 +436,58 @@ export class Game {
     this.hud.hint(null);
     // a previous section's intro timer must not hide this section's text
     clearTimeout(this.introTimer);
+    this.showIntro = null;
     if (announce) {
       this.hud.toast(sec.name.ja, sec.name.en.toUpperCase());
       this.telemetry.log({ type: 'section_enter', section: sec.id });
       if (sec.intro) {
         const intro = sec.intro.ja;
-        this.hud.hint(intro);
-        this.introTimer = window.setTimeout(() => this.run.hintTier === 0 && this.hud.hint(null), 9000);
+        this.showIntro = () => {
+          this.showIntro = null;
+          this.hud.hint(intro);
+          this.introTimer = window.setTimeout(() => this.run.hintTier === 0 && this.hud.hint(null), 9000);
+        };
+        if (this.director) this.showIntro(); // (the demo has no establishing view of its own to wait for)
       }
     }
+    if (announce && !this.director) this.beginEstablish(); // (it shows the section's intro text when it ends: the text's box would stand over the view)
     // precompute sweep checks so opening Fold Mode does not hitch
     const warm = () => sec.consoles.forEach((c) => this.cs.consoleActions(c, this.state));
     (window.requestIdleCallback ?? ((f: () => void) => setTimeout(f, 50)))(warm);
     this.hud.status(`${this.cs.stage.title.ja} ・ ${sec.name.ja}`);
+  }
+
+  /** The diorama of the current section for a use (`intro`: the establishing view; `fold`: Fold Mode, with room for its panel). */
+  private dioramaOf(use: 'intro' | 'fold'): DioramaView {
+    const key = `${this.sectionIndex}:${use}`;
+    let view = this.dioramas.get(key);
+    if (!view) this.dioramas.set(key, (view = sectionDiorama(this.cs, this.section, use)));
+    return view;
+  }
+
+  /** The camera goes up to look over the whole puzzle before the player sets out; any step, jump or click ends it early. */
+  private beginEstablish() {
+    this.establish = { t: 0, down: new Set(SKIP_KEYS.filter((k) => this.input.down(k))) };
+    this.rig.setDiorama(this.dioramaOf('intro'));
+  }
+
+  /** Runs inside `step`. Time stands still while the game is paused or Fold Mode is open. */
+  private updateEstablish(dt: number) {
+    const e = this.establish;
+    if (!e || this.mode !== 'play') return;
+    e.t += dt;
+    // a key that is held on entering the section (the player ran through the exit) does not skip it; a new one does
+    const pressed = SKIP_KEYS.some((k) => this.input.hit(k) || (this.input.down(k) && !e.down.has(k)));
+    for (const k of [...e.down]) if (!this.input.down(k)) e.down.delete(k);
+    if (pressed || this.input.clicked || e.t >= (this.settings.reduceMotion ? ESTABLISH.holdStill : ESTABLISH.hold)) this.endEstablish(true);
+  }
+
+  /** `back`: the camera returns to the follow camera (not when Fold Mode takes the diorama over). */
+  private endEstablish(back: boolean) {
+    if (!this.establish) return;
+    this.establish = null;
+    if (back) this.rig.setDiorama(null);
+    this.showIntro?.();
   }
 
   /**
@@ -499,9 +567,11 @@ export class Game {
       default:
         break;
     }
+    this.updateEstablish(dt);
     this.world.update(dt);
     this.city.update(dt);
-    this.rig.update(dt, this.input, this.player.pos, { ...this.settings, distance: tun.camera.distance }, this.mode === 'play');
+    // (the mouse looks round the follow camera in play, and round the diorama in Fold Mode; neither while the establishing view runs)
+    this.rig.update(dt, this.input, this.player.pos, { ...this.settings, distance: tun.camera.distance }, this.mode === 'play' && !this.establish, this.mode === 'fold');
     this.world.applyShake(this.engine.camera, this.settings.reduceMotion); // (the stop of a fold shakes it a little; none with reduceMotion)
     if (this.mode === 'play' || this.mode === 'fold' || this.mode === 'anim') {
       this.telemetry.samplePosition(this.player.cell);
@@ -579,6 +649,10 @@ export class Game {
     if (!options.length) return;
     this.fold = { console: consoleId, options, index, browsed: new Set([index]) };
     this.mode = 'fold';
+    this.endEstablish(false); // Fold Mode takes the diorama over, with the room its panel needs
+    this.rig.setDiorama(this.dioramaOf('fold'));
+    // the section's intro text would stand over the preview; a hint that helps with the choice (the player is stuck) stays
+    this.hud.holdHint(this.hud.hintIs(this.section.intro?.ja));
     this.hud.prompt(null);
     this.world.setGuidanceHidden(true); // the guidance columns would stand in front of the preview
     this.sound.select();
@@ -593,8 +667,6 @@ export class Game {
     this.world.preview(opt.action, opt.blockedBy, markers);
     const c = this.cs.consoles.get(f.console)!;
     const g = this.cs.groups.get(c.controls)!;
-    const fr = this.world.framing(c.controls, [this.state, target], this.player.pos);
-    this.rig.setFrame(fr.center, fr.radius, this.player.pos);
     const reach = this.reachChange(target, cellKey(c.at));
     const blocked = opt.blockedBy.length > 0;
     this.hud.fold({
@@ -695,8 +767,10 @@ export class Game {
     this.fold = null;
     this.world.preview(null, [], []);
     this.hud.fold(null);
+    this.hud.holdHint(false);
     if (!committed) {
       this.rig.setFrame(null);
+      this.rig.setDiorama(null);
       this.world.setGuidanceHidden(false);
       this.mode = 'play';
     }
@@ -704,6 +778,7 @@ export class Game {
 
   private commit(a: Action) {
     const sec = this.section;
+    this.endEstablish(false); // (a fold made without Fold Mode, from the debug hooks)
     this.closeFold(true);
     this.hud.prompt(null);
     this.mode = 'anim';
@@ -724,6 +799,7 @@ export class Game {
       this.state = this.world.state;
       this.mode = 'play';
       this.rig.setFrame(null);
+      this.rig.setDiorama(null);
       this.world.setGuidanceHidden(false);
       this.sound.joined(joined); // one note, a step higher each, for every path the fold joined
       const left = remainingActions(this.cs, sec.id, this.state, this.player.cell);
@@ -738,12 +814,14 @@ export class Game {
   }
 
   /**
-   * Camera for the fold itself. Turns about the vertical stay framed from above, as in Fold Mode. A tipping motion is
-   * watched so the swing happens in the picture instead of towards the lens: something hinged at one end (the street)
-   * from behind its hinge, looking the way it will lie, like a drawbridge seen from its gate; something turning about
-   * its middle (the cube) along its axis, from whichever side has the clearer view.
+   * Camera for the fold itself: the diorama of Fold Mode stays (FOLD_CAMERA), or else a view of the moving part. Turns about
+   * the vertical stay framed from above. A tipping motion is watched so the swing happens in the picture instead of towards
+   * the lens: something hinged at one end (the street) from behind its hinge, looking the way it will lie, like a drawbridge
+   * seen from its gate; something turning about its middle (the cube) along its axis, from whichever side has the clearer view.
    */
   private frameFold(a: Action) {
+    if ((this.foldCameras[a.group] ?? 'diorama') === 'diorama') return this.rig.setDiorama(this.dioramaOf('fold')); // Fold Mode's view stays
+    this.rig.setDiorama(null);
     const target = this.cs.apply(this.state, a);
     const fr = this.world.framing(a.group, [this.state, target], this.player.pos);
     const motion = this.cs.motionOf(this.state, a);
@@ -782,6 +860,7 @@ export class Game {
     this.world.setState(next, false);
     const cp = this.cs.stage.checkpoints.find((c) => c.id === sec.start)!;
     this.player.place(cp.at, cp.facing, this.cs.walkMap(this.state));
+    this.endEstablish(true);
     this.rig.snapBehind(this.player.root.rotation.y);
     this.hud.flash();
     this.run.resets++;
@@ -813,6 +892,8 @@ export class Game {
   private startFinale() {
     this.mode = 'finale';
     this.finaleClock = 0;
+    this.showIntro = null;
+    this.endEstablish(true);
     const gate = new THREE.Vector3(...cellFloor(this.cs.stage.goal.at));
     this.rig.setCinematic(gate.clone().add(new THREE.Vector3(26, 22, 30)), gate.clone().add(new THREE.Vector3(0, 6, 0)));
     this.world.setGuidanceHidden(true);
@@ -934,6 +1015,11 @@ export class Game {
         return true;
       },
       openFold: (id: string) => this.openFold(id),
+      /** Which camera a group's fold gets: the 'diorama' (default) or the purpose-made 'view'. */
+      foldCamera: (group: string, kind: 'diorama' | 'view') => (this.foldCameras[group] = kind),
+      /** The establishing view is running. */
+      establishing: () => !!this.establish,
+      diorama: (use: 'intro' | 'fold') => this.dioramaOf(use),
       press: (code: string) => this.input.press(code),
       hold: (code: string, on: boolean) => this.input.hold(code, on),
       setYaw: (y: number) => (this.rig.yaw = y),

@@ -4,7 +4,7 @@
 
 ## 遊び方
 
-キーボードとマウスで遊びます。WASD で移動（Shift でダッシュ、Space でジャンプ）、マウスで視点、操作盤の上で E を押すと Fold Mode に入り、A / D で変形先を選んで E で実行します。R でそのパズルをやり直し、Esc でポーズです。第一区画は「最初の折り目」「パスキューブ」「フォールド・ゲート」の3つのパズルで、最短手数はそれぞれ1手・2手・3手です。URL に `?demo=1` を付けると、ゲームが自分で最後まで遊ぶデモ再生になります（動画の素材づくりは [video/README.md](video/README.md)）。
+キーボードとマウスで遊びます。WASD で移動（Shift でダッシュ、Space でジャンプ）、マウスで視点、操作盤の上で E を押すと Fold Mode に入り、A / D で変形先を選んで E で実行します。R でそのパズルをやり直し、Esc でポーズです。各パズルの始まりと Fold Mode の間は、カメラがパズル全体を長いレンズで遠くから見下ろす「ジオラマ視点」になります（始まりは約3秒で、移動キー・Space・クリックで飛ばせます。Fold Mode ではマウスで少し見回せます。「演出の動きを減らす」では切り替えが一瞬です）。第一区画は「最初の折り目」「パスキューブ」「フォールド・ゲート」の3つのパズルで、最短手数はそれぞれ1手・2手・3手です。URL に `?demo=1` を付けると、ゲームが自分で最後まで遊ぶデモ再生になります（動画の素材づくりは [video/README.md](video/README.md)）。
 
 ## 開発
 
@@ -17,7 +17,7 @@ npm test           # ソルバー・検証器・改善ループの単体テス�
 npm run validate   # ステージの検証（解けるか、詰みがないか、設計意図を満たすか）
 npm run build      # 型チェックと本番ビルド
 npm run preview    # ビルドの確認（http://localhost:4173）
-npm run e2e        # ブラウザで歩くテスト、デモ再生のテスト、ヒントと干渉の表示のテスト、レビュー用ショットのテスト（preview 起動中に実行。npx playwright install chromium が必要。画面が真っ白・真っ黒・単色だと失敗する。GitHub Actions の `e2e` ジョブも、Ubuntu 上でビルドを `vite preview` で配り、Chromium のソフトウェア描画（SwiftShader）で同じ検査を行う）
+npm run e2e        # ブラウザで歩くテスト、デモ再生のテスト、ヒントと干渉の表示のテスト、レビュー用ショットのテスト、ジオラマ視点のテスト（preview 起動中に実行。npx playwright install chromium が必要。画面が真っ白・真っ黒・単色だと失敗する。GitHub Actions の `e2e` ジョブも、Ubuntu 上でビルドを `vite preview` で配り、Chromium のソフトウェア描画（SwiftShader）で同じ検査を行う）
 npm run e2e:headed # レビュー用ショットを、ウィンドウを開いた Chrome の標準の描画設定で、画質（low・medium・high）と表示倍率（1・1.25・1.5）の9通りに描いて確かめる（preview 起動中に実行。ウィンドウが開くので npm run e2e には含まれない）
 npm run video:capture -- video/demo.yaml   # デモを1コマずつ書き出して MP4 にする（ffmpeg が必要）
 ```
@@ -48,7 +48,7 @@ URL に `?shots=1` を付けると、美術レビュー用に8つの固定カメ
 | 場所 | 内容 |
 |---|---|
 | `src/core/` | 描画に依存しないパズルの中核。ステージのコンパイル、接続の導出、干渉判定、ソルバー、検証器。ゲームと Node のツールで共有する |
-| `src/game/` | three.js のゲーム本体。部材キットから組む建築（床板は `kitLayout.ts`、パスキューブ・壁画・塔は `setPieces.ts`。道筋はステージのデータから並べる）、背景都市、移動、カメラ、Fold Mode、音、テレメトリ |
+| `src/game/` | three.js のゲーム本体。部材キットから組む建築（床板は `kitLayout.ts`、パスキューブ・壁画・塔は `setPieces.ts`。道筋はステージのデータから並べる）、背景都市、移動、カメラ（追従カメラと、パズル全体を見下ろすジオラマ視点：`camera.ts`・`diorama.ts`）、Fold Mode、音、テレメトリ |
 | `src/stages/` | ステージデータ（`area1.json`）と調整用の数値（`tunables.json`）。改善ループが変更するのはここだけ |
 | `api/` | Vercel Function。`telemetry.ts` はプレイログを受け取って Vercel Blob に保存し、`telemetry-export.ts` は改善ループにログを渡す（GitHub Actions の OIDC トークンで認証し、前日までのログを日ごとにまとめる） |
 | `tools/ai/` | 改善ループの集計・判定・提案の検証・適用 |

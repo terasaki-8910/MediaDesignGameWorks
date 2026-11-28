@@ -264,10 +264,16 @@ export function giltTakesSky(scene: THREE.Scene, gilt: THREE.MeshStandardMateria
   }
 }
 
+/** Where the diorama view wants the shadow map (camera.ts): its centre and half side, and how far the camera is into the view (0 to 1). */
+export interface SunView { centre: THREE.Vector3; half: number; weight: number }
+
 export interface Sun {
   light: THREE.DirectionalLight;
-  /** Centre the shadow map on what the camera looks at, in whole texels so the shadow edges do not swim. */
-  follow(camera: THREE.Camera, floorY: number): void;
+  /**
+   * Centre the shadow map on what the camera looks at, in whole texels so the shadow edges do not swim. In the diorama view
+   * (`view`) the camera is far from what it shows, so the map is centred on the puzzle and widened to cover it.
+   */
+  follow(camera: THREE.Camera, floorY: number, view?: SunView | null): void;
   /**
    * The quality went down while the game runs (the renderer's shadow flag goes off with it: Engine.setQuality). A smaller
    * shadow map is made at the next frame; with no shadows every surface is put outside the shadow frustum, which the
@@ -296,13 +302,22 @@ export function createSun(scene: THREE.Scene, quality: Quality): Sun {
   const dir = LOOK.sunDir.clone().normalize();
   const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
   const up = new THREE.Vector3().crossVectors(dir, right).normalize();
-  let texel = (half * 2) / size;
   const fwd = new THREE.Vector3();
   const focus = new THREE.Vector3();
-  const follow = (camera: THREE.Camera, floorY: number) => {
+  let reach = half; // the half side the shadow camera has now
+  const follow = (camera: THREE.Camera, floorY: number, view?: SunView | null) => {
     camera.getWorldDirection(fwd);
     const t = fwd.y < -0.05 ? THREE.MathUtils.clamp((floorY - camera.position.y) / fwd.y, 6, 60) : 22;
     focus.copy(camera.position).addScaledVector(fwd, t);
+    const want = view && view.weight > 0 ? THREE.MathUtils.lerp(half, view.half, view.weight) : half;
+    if (want !== reach) {
+      reach = want;
+      sc.left = sc.bottom = -reach;
+      sc.right = sc.top = reach;
+      sc.updateProjectionMatrix();
+    }
+    if (view && view.weight > 0) focus.lerp(view.centre, view.weight);
+    const texel = (reach * 2) / size;
     const a = Math.round(focus.dot(right) / texel) * texel;
     const b = Math.round(focus.dot(up) / texel) * texel;
     const c = Math.round(focus.dot(dir) / 4) * 4;
@@ -327,7 +342,7 @@ export function createSun(scene: THREE.Scene, quality: Quality): Sun {
     sc.left = sc.bottom = -half;
     sc.right = sc.top = half;
     sc.updateProjectionMatrix();
-    texel = (half * 2) / size;
+    reach = half;
     // (three makes a map of the new size at the next frame, before anything is drawn, when there is none)
     const map = light.shadow.map;
     if (map) {

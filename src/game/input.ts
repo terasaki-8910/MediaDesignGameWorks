@@ -7,6 +7,8 @@ export class Input {
   mouseDY = 0;
   wheel = 0;
   rightClick = false;
+  /** A left click on the canvas this frame (it skips the establishing view). */
+  clicked = false;
   locked = false;
   private dragging = false;
   private readonly el: HTMLElement;
@@ -31,6 +33,7 @@ export class Input {
     });
     el.addEventListener('mousedown', (e) => {
       if (e.button === 2) this.rightClick = true;
+      if (e.button === 0) this.clicked = true;
       if (!this.locked) this.dragging = true;
     });
     window.addEventListener('mouseup', () => (this.dragging = false));
@@ -63,5 +66,6 @@ export class Input {
     this.keys.endFrame();
     this.mouseDX = this.mouseDY = this.wheel = 0;
     this.rightClick = false;
+    this.clicked = false;
   }
 }
