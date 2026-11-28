@@ -1,7 +1,8 @@
 // Keyboard and mouse state with edge-triggered presses and pointer lock.
+import { KeyState } from './keys.ts';
+
 export class Input {
-  private keys = new Set<string>();
-  private hits = new Set<string>();
+  private readonly keys = new KeyState();
   mouseDX = 0;
   mouseDY = 0;
   wheel = 0;
@@ -12,14 +13,13 @@ export class Input {
 
   constructor(el: HTMLElement) {
     this.el = el;
+    // (keys.ts: `e.code` names the key; when it is empty or 'Unidentified' the character stands in, and a keydown an IME took is still read)
     window.addEventListener('keydown', (e) => {
-      if (e.repeat) return;
-      this.keys.add(e.code);
-      this.hits.add(e.code);
-      if (['Space', 'Tab', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
+      const id = this.keys.down(e);
+      if (id && ['Space', 'Tab', 'ArrowUp', 'ArrowDown'].includes(id)) e.preventDefault();
     });
-    window.addEventListener('keyup', (e) => this.keys.delete(e.code));
-    window.addEventListener('blur', () => this.keys.clear());
+    window.addEventListener('keyup', (e) => this.keys.up(e));
+    window.addEventListener('blur', () => this.keys.releaseAll());
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.el;
     });
@@ -39,21 +39,20 @@ export class Input {
   }
 
   down(code: string) {
-    return this.keys.has(code);
+    return this.keys.isDown(code);
   }
 
   hit(...codes: string[]) {
-    return codes.some((c) => this.hits.has(c));
+    return this.keys.hit(...codes);
   }
 
   /** Simulate a key press (debug / automated playtests). */
   press(code: string) {
-    this.hits.add(code);
+    this.keys.press(code);
   }
 
   hold(code: string, on: boolean) {
-    if (on) this.keys.add(code);
-    else this.keys.delete(code);
+    this.keys.hold(code, on);
   }
 
   requestLock() {
@@ -61,7 +60,7 @@ export class Input {
   }
 
   endFrame() {
-    this.hits.clear();
+    this.keys.endFrame();
     this.mouseDX = this.mouseDY = this.wheel = 0;
     this.rightClick = false;
   }

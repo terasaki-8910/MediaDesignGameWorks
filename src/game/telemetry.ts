@@ -1,5 +1,6 @@
 // Client side of the play log: queue events, batch them, and send with sendBeacon when leaving.
 import type { ClientInfo, TelemetryBatch, TelemetryEvent } from '../core/telemetry.ts';
+import { gpuName, gpuTier } from './quality.ts';
 
 type Payload = TelemetryEvent extends infer E ? (E extends unknown ? Omit<E, 't'> : never) : never;
 
@@ -78,18 +79,15 @@ export function clientInfo(renderer: { getContext(): WebGLRenderingContext | Web
   const ua = navigator.userAgent;
   const browser = /Edg\//.test(ua) ? 'edge' : /Chrome\//.test(ua) ? 'chrome' : /Firefox\//.test(ua) ? 'firefox' : /Safari\//.test(ua) ? 'safari' : 'other';
   const os = /Mac OS X/.test(ua) ? 'mac' : /Windows/.test(ua) ? 'windows' : /Linux/.test(ua) ? 'linux' : 'other';
-  let gpuTier = 'unknown';
+  let tier = 'unknown';
   try {
-    const gl = renderer.getContext();
-    const ext = gl.getExtension('WEBGL_debug_renderer_info');
-    const name = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : '';
-    gpuTier = /Apple M\d|RTX|Radeon RX|Arc A/.test(name) ? 'high' : /Intel|Iris|UHD|SwiftShader|llvmpipe/.test(name) ? 'low' : name ? 'mid' : 'unknown';
+    tier = gpuTier(gpuName(renderer.getContext())); // (the same classes auto picks its quality by: quality.ts)
   } catch {
     /* ignore */
   }
   const w = window.screen.width;
   const screen = w >= 2500 ? 'xl' : w >= 1800 ? 'l' : w >= 1300 ? 'm' : 's';
-  return { browser, os, lang: (navigator.language || 'ja').slice(0, 5).replace(/[^\w-]/g, ''), screen, gpuTier };
+  return { browser, os, lang: (navigator.language || 'ja').slice(0, 5).replace(/[^\w-]/g, ''), screen, gpuTier: tier };
 }
 
 function fallbackUuid() {

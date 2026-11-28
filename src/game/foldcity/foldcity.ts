@@ -10,6 +10,7 @@ import { buildGround } from './ground.ts';
 import { meshName, MODELS } from './models.ts';
 import { planCity, type Building, type CityPlan } from './plan.ts';
 import { rng } from './rng.ts';
+import type { CityDetail } from './detail.ts';
 import type { VariantDef } from './variants.ts';
 
 /** Gets an object that is about to enter the scene ready to be drawn (the game compiles its shaders without holding a frame). */
@@ -26,6 +27,8 @@ export interface Background {
   reset(): void;
   /** The game entered section `index`; `fold` asks for the fold from the section before (a short fade with `reduceMotion`). */
   setSection?(index: number, fold?: boolean, reduceMotion?: boolean): void;
+  /** Draw less of the city, now (detail.ts); the studies of variants.ts have one detail only. */
+  setDetail?(detail: CityDetail): void;
   update(dt: number): void;
 }
 
