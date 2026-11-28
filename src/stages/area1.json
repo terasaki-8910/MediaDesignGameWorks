@@ -1,7 +1,7 @@
 {
   "schema": "fold-city/stage@1",
   "stageId": "area1",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "title": {
     "ja": "第一区画 折り目",
     "en": "Area 1: The Fold"
@@ -24,12 +24,76 @@
       }
     },
     {
-      "id": "m_road1",
-      "type": "tile",
+      "id": "m_bridge0",
+      "type": "bridge",
       "at": [
         -8,
         3,
         0
+      ],
+      "group": "g_b0",
+      "params": {
+        "length": 3,
+        "inset": 0.4,
+        "lamps": true
+      },
+      "label": {
+        "ja": "手前の橋",
+        "en": "Near bridge"
+      }
+    },
+    {
+      "id": "m_link",
+      "type": "tile",
+      "at": [
+        -10,
+        3,
+        -3
+      ],
+      "params": {
+        "size": [
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "id": "m_north",
+      "type": "tile",
+      "at": [
+        -9,
+        3,
+        -3
+      ],
+      "params": {
+        "size": [
+          6,
+          1
+        ]
+      }
+    },
+    {
+      "id": "m_deck",
+      "type": "tile",
+      "at": [
+        -4,
+        3,
+        -2
+      ],
+      "params": {
+        "size": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": "m_balcony",
+      "type": "tile",
+      "at": [
+        -5,
+        3,
+        2
       ],
       "params": {
         "size": [
@@ -51,6 +115,10 @@
         "length": 3,
         "inset": 0.4,
         "lamps": true
+      },
+      "label": {
+        "ja": "奥の橋",
+        "en": "Far bridge"
       }
     },
     {
@@ -323,6 +391,36 @@
   ],
   "groups": [
     {
+      "id": "g_b0",
+      "kind": "states",
+      "pivot": [
+        -26,
+        12,
+        2
+      ],
+      "axis": "y",
+      "states": [
+        1,
+        0
+      ],
+      "initial": 0,
+      "durationMs": 1800,
+      "label": {
+        "ja": "手前の橋",
+        "en": "Near bridge"
+      },
+      "stateLabels": [
+        {
+          "ja": "南北に向ける",
+          "en": "Point north-south"
+        },
+        {
+          "ja": "東西に向ける",
+          "en": "Point east-west"
+        }
+      ]
+    },
+    {
       "id": "g_b1",
       "kind": "states",
       "pivot": [
@@ -338,8 +436,8 @@
       "initial": 0,
       "durationMs": 1800,
       "label": {
-        "ja": "回転橋",
-        "en": "Turning bridge"
+        "ja": "奥の橋",
+        "en": "Far bridge"
       },
       "stateLabels": [
         {
@@ -443,15 +541,30 @@
       "id": "c1",
       "kind": "console",
       "at": [
-        -6,
+        -4,
         3,
-        0
+        -2
       ],
-      "facing": "N",
+      "facing": "E",
       "controls": "g_b1",
       "label": {
-        "ja": "回転橋の操作盤",
-        "en": "Bridge console"
+        "ja": "奥の橋の操作盤",
+        "en": "Far bridge console"
+      }
+    },
+    {
+      "id": "c0",
+      "kind": "console",
+      "at": [
+        -4,
+        3,
+        2
+      ],
+      "facing": "S",
+      "controls": "g_b0",
+      "label": {
+        "ja": "手前の橋の操作盤",
+        "en": "Near bridge console"
       }
     },
     {
@@ -540,9 +653,11 @@
         "en": "The First Fold"
       },
       "groups": [
+        "g_b0",
         "g_b1"
       ],
       "consoles": [
+        "c0",
         "c1"
       ],
       "start": "cp_1",
@@ -556,20 +671,22 @@
       "intent": {
         "teaches": [
           "fold.basic",
-          "preview"
+          "preview",
+          "order-matters"
         ],
         "optimalActions": {
-          "min": 1,
-          "max": 1
+          "min": 2,
+          "max": 2
         },
         "mustUse": [
+          "c0",
           "c1"
         ],
         "maxDeadEndStates": 0
       },
       "intro": {
-        "ja": "道が途切れている。手前の操作盤に立って <kbd>E</kbd>。建築の向きを変えて、道をつなごう。",
-        "en": "The road is broken. Stand at the console and press E to turn the bridge."
+        "ja": "道が途切れている。",
+        "en": "The road is broken."
       }
     },
     {

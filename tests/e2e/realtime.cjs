@@ -78,7 +78,7 @@ console.log('realtime: auto picks low / medium / high by the GPU name, and a cho
   // the distance 3 s of W covers at 60 steps a second (the debug hook runs the game without drawing)
   const ref = await page.evaluate((yaw) => {
     const f = window.__fold;
-    f.teleport([-10, 3, 0]);
+    f.teleport([-9, 3, -3]); // (the west end of the north road: a straight of six cells, 24 m, east)
     f.setYaw(yaw);
     const x0 = f.game.player.pos.x;
     f.simulate(3, ['KeyW']);
@@ -89,7 +89,7 @@ console.log('realtime: auto picks low / medium / high by the GPU name, and a cho
       new Promise((resolve) => {
         const f = window.__fold;
         const g = f.game;
-        f.teleport([-10, 3, 0]);
+        f.teleport([-9, 3, -3]); // (the west end of the north road: a straight of six cells, 24 m, east)
         f.setYaw(yaw);
         f.simulate(0.5); // (stand still: no speed carried over)
         // hold the page to ms per frame: a frame callback does not start before ms after the one before it

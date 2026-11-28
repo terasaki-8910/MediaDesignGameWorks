@@ -9,10 +9,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { describeBackend, launch } = require('./browser.cjs');
 const { blankReason, decodePng, diffFraction, frameStats } = require('./png.cjs');
+const { loadStage } = require('./stage.cjs');
 
 (async () => {
 const BASE = process.env.BASE_URL ?? 'http://localhost:4173/';
 const OUT = process.env.FEEL_OUT;
+// the first puzzle solved: the groups it moves, as a player has them when the later puzzles begin (from the solver)
+const S1 = (await loadStage()).solvedGroups(0);
 const browser = await launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 page.setDefaultTimeout(180000);
@@ -78,6 +81,8 @@ await F(() => {
   };
 });
 
+await F((p) => { window.__feel.s1 = p; }, S1);
+
 let shotNo = 0;
 const take = async (name) => {
   const buf = await page.screenshot();
@@ -108,8 +113,8 @@ const markDiff = async (name) => {
 assert.deepEqual(await F(() => window.__feel.w.exits.map((e) => [e.section, e.cell])), [['s1_first_fold', '-2,3,0'], ['s2_path_cube', '7,3,0']], 'the first fold and the path cube have an exit mark; the gate is its own');
 const seen = [];
 for (const [index, patch, cells, label] of [
-  [0, { g_b1: 1 }, [[-8, 3, 0], [-5, 3, 0], [-3, 3, 0]], 'first-fold'],
-  [1, { g_b1: 1 }, [[3, 3, 0], [5, 3, 0], [6, 3, 0]], 'path-cube'],
+  [0, S1, [[-8, 3, 0], [-5, 3, 0], [-3, 3, 0]], 'first-fold'],
+  [1, S1, [[3, 3, 0], [5, 3, 0], [6, 3, 0]], 'path-cube'],
 ]) {
   for (const cell of cells) {
     await F(([i, p, c]) => window.__feel.scene(i, p, c), [index, patch, cell]);
@@ -121,13 +126,13 @@ for (const [index, patch, cells, label] of [
 }
 console.log(`  exit marks, the share of the frame they change: ${seen.join('; ')}`);
 // the third section's exit is the gate: nothing is lit there
-await F(() => window.__feel.scene(2, { g_b1: 1 }, [8, 3, 0]));
+await F(() => window.__feel.scene(2, window.__feel.s1, [8, 3, 0]));
 assert.deepEqual(await marks(), [], 'the gate is its own mark');
 
 // ---- the fold: pull-back, overshoot, settle; shake and dust at the stop; the time it takes ----
 const roll = async (reduce) => {
   await F((r) => {
-    window.__feel.scene(1, { g_b1: 1 }, [0, 3, 0]);
+    window.__feel.scene(1, window.__feel.s1, [0, 3, 0]);
     window.__feel.g.settings = { ...window.__feel.g.settings, reduceMotion: r };
     window.__fold.act('c_roll', 'c_roll:x90');
   }, reduce);
@@ -150,6 +155,32 @@ assert.ok(calm.min > -1e-6 && calm.max < 90 + 1e-6, 'reduceMotion: no pull-back,
 assert.ok(!calm.shake, 'reduceMotion: no shake');
 assert.ok(Math.abs(calm.end - 90) < 1e-6);
 assert.ok(calm.frames / 60 <= plain * 0.7 * 1.02, 'and no longer than before');
+
+// the fold of the first puzzle has the same feel: the near bridge pulls back, overshoots its quarter turn about the vertical, and stops with a shake and dust
+const bridge = await F(() => {
+  const { g, w } = window.__feel;
+  window.__feel.scene(0, {}, [-4, 3, 2]);
+  window.__fold.act('c0', 'c0:set1');
+  const yaw = () => (2 * Math.atan2(w.pivots.get('g_b0').quaternion.y, w.pivots.get('g_b0').quaternion.w) * 180) / Math.PI;
+  const from = yaw();
+  const seen = { frames: 0, min: 0, max: 0, shake: false, dust: false };
+  while (g.mode === 'anim' && seen.frames < 600) {
+    g.advance(1 / 60, false);
+    seen.frames++;
+    const d = yaw() - from;
+    seen.min = Math.min(seen.min, d);
+    seen.max = Math.max(seen.max, d);
+    if (w.shake.active) seen.shake = true;
+    if (w.dust.active) seen.dust = true;
+  }
+  seen.end = yaw() - from;
+  return seen;
+});
+console.log(`  near bridge: ${(bridge.frames / 60).toFixed(2)} s, pull-back ${bridge.max.toFixed(2)} deg, overshoot ${(-90 - bridge.min).toFixed(2)} deg, ends at ${bridge.end.toFixed(3)}`);
+assert.ok(bridge.max > 0.5, 'it pulls back before it turns');
+assert.ok(bridge.min < -90.5 && bridge.min > -94, `it overshoots a little (${bridge.min})`);
+assert.ok(Math.abs(bridge.end + 90) < 1e-6, 'and ends exactly on the quarter turn');
+assert.ok(bridge.shake && bridge.dust, 'the stop shakes the camera and raises dust');
 
 // frames at 0, 25, 50, 75 and 100 % of a fold, and at the stop (the cube, and the street)
 const frames = async (label, index, patch, cell, group, consoleId, key) => {
@@ -175,12 +206,12 @@ const frames = async (label, index, patch, cell, group, consoleId, key) => {
   }
   console.log(`  ${label}, turn about x of the pivot: ${pose.join(', ')} (deg)`);
 };
-await frames('cube', 1, { g_b1: 1 }, [0, 3, 0], 'g_cube', 'c_roll', 'c_roll:x90');
+await frames('cube', 1, S1, [0, 3, 0], 'g_cube', 'c_roll', 'c_roll:x90');
 await F(() => window.__feel.until(1));
 
 // ---- the preview of the path cube: its lines are laid over the ghost, up face and sides, not the face that looks down ----
 await F(() => {
-  window.__feel.scene(1, { g_b1: 1 }, [0, 3, 0]);
+  window.__feel.scene(1, window.__feel.s1, [0, 3, 0]);
   window.__feel.g.uiShot('fold');
   window.__feel.draw(90);
 });
@@ -227,12 +258,12 @@ await F(() => { window.__fold.press('Escape'); window.__feel.draw(3); });
 assert.equal(await F(() => window.__feel.w.previewInlay), null, 'no lines once Fold Mode is closed');
 
 // ---- the street (the biggest fold) ----
-await frames('street', 2, { g_b1: 1, g_tower: 1 }, [10, 3, -2], 'g_street', 'c_h', 'c_h:set1');
+await frames('street', 2, { ...S1, g_tower: 1 }, [10, 3, -2], 'g_street', 'c_h', 'c_h:set1');
 
 // ---- the notes: one for each path a fold joins, each a step higher ----
 const played = await F(() => {
   const g = window.__feel.g;
-  window.__feel.scene(2, { g_b1: 1, g_tower: 1 }, [10, 3, -2]);
+  window.__feel.scene(2, { ...window.__feel.s1, g_tower: 1 }, [10, 3, -2]);
   const log = { joined: [], notes: [], stops: 0 };
   const joined = g.sound.joined.bind(g.sound);
   const thud = g.sound.thud.bind(g.sound);

@@ -165,14 +165,18 @@ test('a joined path is a new open seam between two modules; a plate between two 
   assert.equal(jointsOf(walkMap([[0, 'a', []], [1, 'a', []]]), inside, new Set(['a'])).joined, 0);
 });
 
-test('turning the first bridge joins both its ends; the dust seams are where the group meets its neighbours', () => {
-  const [first] = plans();
-  assert.equal(actionKey(first.action), 'c1:set1');
+test('turning the near bridge joins the plaza, then the far bridge joins both its ends; the dust seams are where the group meets its neighbours', () => {
+  const [first, second] = plans();
+  assert.equal(actionKey(first.action), 'c0:set1');
+  assert.equal(actionKey(second.action), 'c1:set1');
   const next = cs.apply(first.state, first.action);
-  const j = jointsOf(cs.walkMap(first.state), cs.walkMap(next), moving('g_b1'));
-  assert.equal(j.joined, 2, 'the bridge meets the road on each side');
-  assert.equal(j.seams.length, 2);
-  for (const s of j.seams) assert.ok(s.side === 'E' || s.side === 'W');
+  const j = jointsOf(cs.walkMap(first.state), cs.walkMap(next), moving('g_b0'));
+  assert.equal(j.joined, 1, 'the near bridge meets the plaza; its other end waits for the far bridge');
+  assert.deepEqual(j.seams.map((s) => s.side), ['W']);
+  const k = jointsOf(cs.walkMap(second.state), cs.walkMap(cs.apply(second.state, second.action)), moving('g_b1'));
+  assert.equal(k.joined, 2, 'the far bridge meets the near one and the road on the other side');
+  assert.equal(k.seams.length, 2);
+  for (const s of k.seams) assert.ok(s.side === 'E' || s.side === 'W');
 });
 
 test('the fold that closes a section joins at least one path, and every fold reports a plausible number', () => {
