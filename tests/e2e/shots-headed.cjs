@@ -1,5 +1,5 @@
 // E2E check of the review shots in a real, visible Chrome window with the browser's default graphics backend (no
-// --use-angle flag). A render scale other than 1 (quality low is 0.7, medium 0.9) turned frames white in headless Chrome
+// --use-angle flag). A render scale other than 1 (quality low is 0.6, medium 0.9) turned frames white in headless Chrome
 // on Windows with its default backend; here every quality is drawn at three device pixel ratios and looked at.
 // `npm run e2e:headed` opens windows, so it is not part of `npm run e2e`.
 // Needs a running build: `npm run build && npm run preview` (or set BASE_URL to a deployment).
@@ -10,7 +10,7 @@ const { blankReason, decodePng, frameStats } = require('./png.cjs');
 
 const VIEWPORT = { width: 1280, height: 720 };
 const RATIOS = [1, 1.25, 1.5];
-const QUALITIES = { low: 0.7, medium: 0.9, high: 1 }; // the render scale each quality starts with
+const QUALITIES = { low: 0.6, medium: 0.9, high: 1 }; // the render scale each quality starts with
 const SHOTS = ['s1-play', 's2-overview'];
 // Window creation sometimes fails on this machine ("Error creating WebGL context", or the game's context is lost). A run
 // is started again only when the game itself never got a live WebGL context, and every retry is printed and counted.

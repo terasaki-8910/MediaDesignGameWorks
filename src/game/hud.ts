@@ -1,6 +1,10 @@
 // DOM overlay: title screen, prompts, Fold Mode panel, hints, pause menu and the clear screen.
 // Structure and behaviour only: every colour, size and space comes from the tokens in styles.css.
-export interface Settings { sensitivity: number; invertY: boolean; reduceMotion: boolean; quality: 'low' | 'medium' | 'high'; telemetry: boolean; muted: boolean }
+import type { Quality, QualitySetting } from './quality.ts';
+
+export interface Settings { sensitivity: number; invertY: boolean; reduceMotion: boolean; quality: QualitySetting; telemetry: boolean; muted: boolean }
+
+const TIER_JA: Record<Quality, string> = { low: '低', medium: '中', high: '高' };
 
 export interface FoldPanel {
   title: string;
@@ -59,7 +63,7 @@ const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([di
 /** The key list of the "操作方法" panel: key caps (or a plain label for the mouse) and what they do. */
 const KEYS: { caps?: string[]; label?: string; text: string }[] = [
   { caps: ['WASD'], text: '移動（Shiftでダッシュ、Spaceでジャンプ）' },
-  { label: 'マウス', text: '視点（クリックで固定）' },
+  { label: 'マウス', text: '視点（クリックで固定）。Fold Mode では全体を見回す' },
   { caps: ['E'], text: 'コンソールを起動・決定' },
   { caps: ['A', 'D'], text: '変形先を選ぶ（Fold Mode）' },
   { caps: ['R'], text: 'パズルをやり直す' },
@@ -329,12 +333,22 @@ export class Hud {
       `<div class="opt"><span class="arrow" aria-hidden="true">◀</span><span class="name">${escapeHtml(p.label)}</span><span class="arrow" aria-hidden="true">▶</span>` +
       `<span class="count">${p.index + 1} / ${p.count}</span></div>` +
       status +
-      `<div class="help"><kbd>A</kbd><kbd>D</kbd> 選択　<kbd>E</kbd> 実行　<kbd>Esc</kbd> 戻る</div>`;
+      `<div class="help"><kbd>A</kbd><kbd>D</kbd> 選択　<kbd>E</kbd> 実行　<kbd>Esc</kbd> 戻る　マウス 見回す</div>`;
   }
 
   hint(text: string | null) {
     if (text) this.hintEl.innerHTML = text;
     this.hintEl.classList.toggle('show', !!text);
+  }
+
+  /** Keep the hint out of sight (without dropping it) while Fold Mode shows the whole puzzle: its box would stand over the preview. */
+  holdHint(on: boolean) {
+    this.hintEl.classList.toggle('hold', on);
+  }
+
+  /** True while the hint on screen is this text. */
+  hintIs(text: string | undefined): boolean {
+    return !!text && this.hintEl.classList.contains('show') && this.hintEl.innerHTML === text;
   }
 
   flash() {
@@ -346,7 +360,7 @@ export class Hud {
    * The pause menu (in game) or the settings dialog (from the title): Escape and a click on the backdrop call
    * `onClose` like the button does. `open = false` closes it.
    */
-  pause(open: boolean, s?: Settings, onChange?: (s: Settings) => void, onClose?: () => void, kind: 'pause' | 'settings' = 'pause') {
+  pause(open: boolean, s?: Settings, onChange?: (s: Settings) => void, onClose?: () => void, kind: 'pause' | 'settings' = 'pause', auto?: Quality) {
     if (!open) return this.closeDialog(this.pauseEl);
     if (!s || !onChange || !onClose) return;
     const el = this.pauseEl;
@@ -376,7 +390,8 @@ export class Hud {
     check('プレイデータを送信する', 'telemetry');
     check('ミュート', 'muted');
     const q = document.createElement('select');
-    for (const [v, l] of [['low', '低'], ['medium', '中'], ['high', '高']]) {
+    // (自動 says which tier it has chosen for this machine: the GPU's name first, then the frames the title measured)
+    for (const [v, l] of [['auto', auto ? `自動（${TIER_JA[auto]}）` : '自動'], ['low', '低'], ['medium', '中'], ['high', '高']]) {
       const o = Object.assign(document.createElement('option'), { value: v, textContent: l, selected: s.quality === v });
       q.append(o);
     }

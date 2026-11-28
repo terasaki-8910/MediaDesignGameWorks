@@ -3,7 +3,7 @@
 // cannot drift apart), and what carries and crowns the arm tower. Visual only, like kitLayout.ts.
 import * as THREE from 'three';
 import { CUBE_FACE_NORMAL } from '../core/kit.ts';
-import { CELL, DIRS, SIDES, type DirName } from '../core/math.ts';
+import { CELL, DIRS, SIDES, apply, type DirName, type Mat3 } from '../core/math.ts';
 import type { CubeFace, ModuleInstance } from '../core/types.ts';
 import { place, type Placement } from './kit.ts';
 
@@ -48,10 +48,35 @@ export function cubePlacements(m: Cube): Placement[] {
         const north = vec(DIRS[dirs[(f * 3 + (i + 1) * 5 + (j + 1) * 7) % 4]]);
         out.push({ piece: path ? 'cube_cell_path' : 'cube_cell_blank', matrix: onFace(middle.clone().addScaledVector(offset, CELL), n, north) });
       }
-    out.push({ piece: 'cube_inlay_hub', matrix: onFace(middle, n, u) });
-    for (const a of arms) out.push({ piece: 'cube_inlay_arm', matrix: onFace(middle, n, vec(DIRS[a])) });
+    out.push(...faceInlays(m, face));
   });
   out.push({ piece: 'cube_frame', matrix: new THREE.Matrix4().makeTranslation(centre.x, centre.y, centre.z) });
+  return out;
+}
+
+/**
+ * The path line of one face of the cube, as the cube's faces carry it: the hub in the middle of the face and one arm
+ * towards each of its arms. `lift` metres off the face (the preview lays its lines over the cube's own).
+ */
+export function faceInlays(m: Cube, face: CubeFace, lift = 0): Placement[] {
+  const centre = new THREE.Vector3(CELL, CELL * 1.5, CELL);
+  const n = vec(DIRS[CUBE_FACE_NORMAL[face]]);
+  const u = vec(DIRS[inPlane(DIRS[CUBE_FACE_NORMAL[face]])[0]]);
+  const middle = centre.clone().addScaledVector(n, CELL * 1.5 + lift);
+  return [
+    { piece: 'cube_inlay_hub', matrix: onFace(middle, n, u) },
+    ...(m.params.faces[face] ?? []).map((a) => ({ piece: 'cube_inlay_arm', matrix: onFace(middle, n, vec(DIRS[a])) })),
+  ];
+}
+
+/** Which way a face of the cube looks once the cube has been turned by `R`: up, down, or one of the four sides. */
+export type FaceRole = 'up' | 'down' | 'side';
+export function cubeFaceRoles(R: Mat3): Record<CubeFace, FaceRole> {
+  const out = {} as Record<CubeFace, FaceRole>;
+  for (const face of FACES) {
+    const y = apply(R, DIRS[CUBE_FACE_NORMAL[face]])[1];
+    out[face] = y > 0.5 ? 'up' : y < -0.5 ? 'down' : 'side';
+  }
   return out;
 }
 

@@ -1,8 +1,22 @@
-// Third-person orbit camera with collision, plus a framing mode used by Fold Mode and cinematics.
+// Third-person orbit camera with collision, plus a framing mode used by Fold Mode and cinematics, and the diorama view:
+// a long lens high above a puzzle (diorama.ts computes where), which the camera moves into and out of on a timed ease.
 import * as THREE from 'three';
+import { DIORAMA, type DioramaView } from './diorama.ts';
 import type { Input } from './input.ts';
+import type { SunView } from './look.ts';
 
 export interface CameraSettings { sensitivity: number; invertY: boolean; reduceMotion: boolean; distance: number }
+
+/** The lens of the follow camera: what Engine.resize sets (62 degrees; 72 in a tall frame). The diorama's narrow lens eases to and from this. */
+const FOLLOW_FOV = { wide: 62, tall: 72 };
+/** How long the camera takes into the diorama and back out of it, in seconds (a cut under reduceMotion). */
+export const DIORAMA_MOVE = { in: 1.2, out: 1.0 };
+/** The nearest thing drawn in the diorama: everything is 60 m away or more, and a far near plane keeps the depth buffer fine. */
+const DIORAMA_NEAR = 4;
+
+const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2); // in and out, cubic
+
+type Mode = 'follow' | 'frame' | 'cinematic' | 'diorama';
 
 export class CameraRig {
   /** The pitch the follow camera starts with. */
@@ -11,11 +25,20 @@ export class CameraRig {
   pitch = CameraRig.DEFAULT_PITCH;
   private pos = new THREE.Vector3();
   private look = new THREE.Vector3();
+  private fov: number;
   private frame: { center: THREE.Vector3; radius: number; from: THREE.Vector3; shot: THREE.Vector3 | null } | null = null;
   private cinematic: { pos: THREE.Vector3; look: THREE.Vector3 } | null = null;
+  private diorama: DioramaView | null = null;
+  /** The view the camera is in or leaving: its shadow map is still wanted while the camera is on its way out. */
+  private lastView: DioramaView | null = null;
+  /** How far the player has turned the view round the diorama (radians): what the mouse asks for, and what the camera is at. */
+  private orbit = { yaw: 0, pitch: 0, toYaw: 0, toPitch: 0 };
+  /** A timed move between two poses: where it began, how far it has run, and whether it runs into the diorama. */
+  private move: { t: number; dur: number; pos: THREE.Vector3; look: THREE.Vector3; fov: number; into: boolean } | null = null;
+  private mode: Mode = 'follow';
+  private weight = 0; // 0 on the follow camera, 1 in the diorama, between during a move
   private ray = new THREE.Raycaster();
   private initialised = false;
-  private following = true;
   private blend = 0; // 1 right after leaving a framing or cinematic shot, easing back to 0
   private readonly camera: THREE.PerspectiveCamera;
   private readonly colliders: () => THREE.Object3D[];
@@ -23,6 +46,7 @@ export class CameraRig {
   constructor(camera: THREE.PerspectiveCamera, colliders: () => THREE.Object3D[]) {
     this.camera = camera;
     this.colliders = colliders;
+    this.fov = camera.fov;
   }
 
   /** Frame a sphere, by default from above the side `from` is on; `shot` puts the camera at a chosen place instead. */
@@ -48,10 +72,29 @@ export class CameraRig {
     this.cinematic = pos ? { pos: pos.clone(), look: (look ?? new THREE.Vector3()).clone() } : null;
   }
 
+  /**
+   * Hold the camera in the diorama of a puzzle (diorama.ts), moving there on a timed ease from wherever it is; `null` lets it
+   * go back to the follow camera the same way. A framing or a cinematic shot set meanwhile takes over from it.
+   */
+  setDiorama(view: DioramaView | null) {
+    this.diorama = view;
+    if (view) this.lastView = view;
+  }
+
+  /** True while the camera is held in the diorama (or on its way there). */
+  get inDiorama() {
+    return this.diorama !== null;
+  }
+
+  /** The diorama's wish for the sun's shadow map: its centre and size, and how far the camera is in (null on the follow camera). */
+  shadowView(): SunView | null {
+    return this.lastView && this.weight > 0.001 ? { centre: this.lastView.centre, half: this.lastView.shadowHalf, weight: this.weight } : null;
+  }
+
   /** Put the follow camera behind the player; `smooth` glides there instead of cutting. */
   snapBehind(facingYaw: number, smooth = false) {
     this.yaw = facingYaw;
-    if (!smooth) this.initialised = false;
+    if (!smooth) this.cut();
   }
 
   /** Jump to wherever the camera is heading on the next update, without easing (review shots). */
@@ -59,7 +102,11 @@ export class CameraRig {
     this.initialised = false;
   }
 
-  update(dt: number, input: Input, player: THREE.Vector3, s: CameraSettings, allowLook: boolean) {
+  /**
+   * `allowLook` turns the follow camera with the mouse; `allowOrbit` turns the diorama a little round its puzzle
+   * (mouse only: the keys are Fold Mode's).
+   */
+  update(dt: number, input: Input, player: THREE.Vector3, s: CameraSettings, allowLook: boolean, allowOrbit = false) {
     if (allowLook) {
       this.yaw -= input.mouseDX * 0.0024 * s.sensitivity;
       this.pitch += input.mouseDY * 0.0024 * s.sensitivity * (s.invertY ? -1 : 1);
@@ -68,19 +115,29 @@ export class CameraRig {
     const target = player.clone().add(new THREE.Vector3(0, 1.6, 0));
     // a tall (phone-shaped) frame shows less to the sides, so stand further back
     const portrait = this.camera.aspect < 1;
+    const mode: Mode = this.cinematic ? 'cinematic' : this.frame ? 'frame' : this.diorama ? 'diorama' : 'follow';
+    const was = this.mode;
+    this.mode = mode;
+    if (mode !== was) {
+      this.move = null; // whatever move was running ends here: the new one (if any) starts from where the camera is now
+      if (mode === 'diorama') {
+        this.orbit.yaw = this.orbit.pitch = this.orbit.toYaw = this.orbit.toPitch = 0;
+        if (this.initialised) this.startMove(true, s.reduceMotion);
+      } else if (was === 'diorama' && mode === 'follow') {
+        if (this.initialised) this.startMove(false, s.reduceMotion);
+      } else if (mode === 'follow') this.blend = 1;
+    }
+    this.blend = Math.max(0, this.blend - dt / 0.9);
     let desiredPos: THREE.Vector3;
     let desiredLook: THREE.Vector3;
+    let desiredFov = portrait ? FOLLOW_FOV.tall : FOLLOW_FOV.wide;
     let sharpness = 14;
-    const following = !this.cinematic && !this.frame;
-    if (following && !this.following) this.blend = 1;
-    this.following = following;
-    this.blend = Math.max(0, this.blend - dt / 0.9);
-    if (this.cinematic) {
-      desiredPos = this.cinematic.pos;
-      desiredLook = this.cinematic.look;
+    if (mode === 'cinematic') {
+      desiredPos = this.cinematic!.pos;
+      desiredLook = this.cinematic!.look;
       sharpness = s.reduceMotion ? 50 : 1.6;
-    } else if (this.frame) {
-      const { center, radius, from, shot } = this.frame;
+    } else if (mode === 'frame') {
+      const { center, radius, from, shot } = this.frame!;
       if (shot) desiredPos = shot;
       else {
         const dir = new THREE.Vector3(from.x - center.x, 0, from.z - center.z);
@@ -92,6 +149,20 @@ export class CameraRig {
       }
       desiredLook = center.clone();
       sharpness = s.reduceMotion ? 50 : 3.2;
+    } else if (mode === 'diorama') {
+      if (allowOrbit) {
+        const k = 0.0024 * s.sensitivity;
+        this.orbit.toYaw = THREE.MathUtils.clamp(this.orbit.toYaw - input.mouseDX * k, -DIORAMA.orbit.yaw, DIORAMA.orbit.yaw);
+        this.orbit.toPitch = THREE.MathUtils.clamp(this.orbit.toPitch + input.mouseDY * k * (s.invertY ? -1 : 1), -DIORAMA.orbit.pitch, DIORAMA.orbit.pitch);
+      }
+      const to = 1 - Math.exp(-dt * 8);
+      this.orbit.yaw += (this.orbit.toYaw - this.orbit.yaw) * to;
+      this.orbit.pitch += (this.orbit.toPitch - this.orbit.pitch) * to;
+      const pose = this.diorama!.pose(this.camera.aspect, this.orbit.yaw, this.orbit.pitch);
+      desiredPos = pose.pos;
+      desiredLook = pose.look;
+      desiredFov = pose.fov;
+      sharpness = s.reduceMotion ? 50 : 6;
     } else {
       const off = new THREE.Vector3(
         Math.sin(this.yaw) * Math.cos(this.pitch),
@@ -107,16 +178,45 @@ export class CameraRig {
       desiredLook = target;
       sharpness = s.reduceMotion ? 14 : 14 - 11 * this.blend;
     }
+    const weightWanted = mode === 'diorama' ? 1 : 0;
     if (!this.initialised) {
       this.pos.copy(desiredPos);
       this.look.copy(desiredLook);
+      this.fov = desiredFov;
+      this.weight = weightWanted;
+      this.move = null;
       this.initialised = true;
     }
-    const k = 1 - Math.exp(-dt * sharpness);
-    this.pos.lerp(desiredPos, k);
-    this.look.lerp(desiredLook, Math.min(1, k * 1.3));
+    const m = this.move;
+    if (m) {
+      m.t += dt;
+      const e = m.dur > 0 ? ease(Math.min(1, m.t / m.dur)) : 1;
+      this.pos.copy(m.pos).lerp(desiredPos, e);
+      this.look.copy(m.look).lerp(desiredLook, e);
+      this.fov = THREE.MathUtils.lerp(m.fov, desiredFov, e);
+      this.weight = m.into ? e : 1 - e;
+      if (m.t >= m.dur) this.move = null;
+    } else {
+      const k = 1 - Math.exp(-dt * sharpness);
+      this.pos.lerp(desiredPos, k);
+      this.look.lerp(desiredLook, Math.min(1, k * 1.3));
+      this.fov += (desiredFov - this.fov) * k;
+      this.weight += (weightWanted - this.weight) * (1 - Math.exp(-dt * (s.reduceMotion ? 50 : 4)));
+    }
     this.camera.position.copy(this.pos);
     this.camera.lookAt(this.look);
+    // the lens is the rig's to set while the diorama has any hold on it (Engine.resize sets the follow camera's, and does so afresh at each change of the render scale)
+    const near = THREE.MathUtils.lerp(0.1, DIORAMA_NEAR, this.weight);
+    if (Math.abs(this.camera.fov - this.fov) > 1e-4 || Math.abs(this.camera.near - near) > 1e-4) {
+      this.camera.fov = this.fov;
+      this.camera.near = near;
+      this.camera.updateProjectionMatrix();
+    }
+  }
+
+  /** Begin a timed move from the camera as it is now: into the diorama or back out of it. */
+  private startMove(into: boolean, reduceMotion: boolean) {
+    this.move = { t: 0, dur: reduceMotion ? 0 : into ? DIORAMA_MOVE.in : DIORAMA_MOVE.out, pos: this.pos.clone(), look: this.look.clone(), fov: this.fov, into };
   }
 
   get position() {

@@ -1,4 +1,7 @@
-// Small synthesised soundscape (no audio files): ambient drone, fold rumble, UI blips and a clear chime.
+// Small synthesised soundscape (no audio files): ambient drone, fold rumble and stop, a note for each joined path, the passage
+// over an exit, UI blips and a clear chime.
+import { joinNotes } from './foldFeel.ts';
+
 export class Sound {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -90,11 +93,6 @@ export class Sound {
     this.tone(160, 0.25, 'square', 0.05, 0, 110);
   }
 
-  open() {
-    this.tone(523, 0.2, 'triangle', 0.08);
-    this.tone(784, 0.3, 'triangle', 0.06, 0.08);
-  }
-
   fold(seconds: number) {
     if (!this.ctx || !this.master) return;
     const ctx = this.ctx;
@@ -113,8 +111,42 @@ export class Sound {
     n.start(t);
     this.tone(55, seconds + 0.5, 'sine', 0.18, 0, 41);
     this.tone(1320, 0.6, 'sine', 0.04, 0.05, 1500);
-    this.tone(196, 1.2, 'triangle', 0.07, seconds, 196);
-    this.tone(392, 1.0, 'sine', 0.05, seconds + 0.05);
+  }
+
+  /** The stop of a fold: stone coming to rest, a dull knock that falls away (the rumble of `fold` ends under it). */
+  thud(gentle = false) {
+    if (!this.ctx || !this.master) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const k = gentle ? 0.5 : 1;
+    this.tone(92, 0.42, 'sine', 0.2 * k, 0, 52);
+    this.tone(196, 0.22, 'triangle', 0.045 * k);
+    const n = this.noise(0.3);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 420;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.28 * k, t + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+    n.connect(lp).connect(g).connect(this.master);
+    n.start(t);
+    n.stop(t + 0.3);
+  }
+
+  /** The paths a fold joined: one note for each, each one step higher than the last (foldFeel.joinNotes); no path, no note. */
+  joined(count: number) {
+    joinNotes(count).forEach((f, i) => {
+      this.tone(f, 0.7, 'triangle', 0.075, i * 0.1);
+      this.tone(f * 2, 0.45, 'sine', 0.022, i * 0.1 + 0.01);
+    });
+  }
+
+  /** Stepping over the threshold of an exit: a low bell and a thin high one over it, not the notes of a joined path. */
+  passage() {
+    this.tone(131, 1.6, 'sine', 0.13, 0, 124);
+    this.tone(262, 1.2, 'sine', 0.05, 0.02);
+    this.tone(1568, 0.8, 'sine', 0.03, 0.06);
   }
 
   chime() {

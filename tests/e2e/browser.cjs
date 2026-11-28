@@ -1,13 +1,14 @@
 // Shared browser launch for the e2e scripts. On Windows, headless Chrome's default ANGLE backend (D3D11) rendered this
 // game all white (or with black floors) whenever the render scale was not 1, so headless runs use the GL backend there.
-// Headed runs and macOS use the defaults; Linux containers have no GPU and use SwiftShader.
+// Headed runs and macOS use the defaults; Linux containers have no GPU and use SwiftShader. `E2E_SOFTWARE=1` asks for
+// SwiftShader on any platform, to run what the CI job runs (software WebGL, a few frames a second) on a PC with a GPU.
 const { chromium } = require('playwright');
 
 /** Chromium launch arguments for a platform; `headed` runs keep the browser's default backend. */
 function launchArgs(platform = process.platform, { headed = false } = {}) {
   if (headed) return [];
+  if (platform === 'linux' || process.env.E2E_SOFTWARE === '1') return ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
   if (platform === 'win32') return ['--use-angle=gl'];
-  if (platform === 'linux') return ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
   return [];
 }
 
