@@ -50,7 +50,7 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text-1); font-family: var(--sans); font-size: var(--fs-2); }
-#game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+#game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; } /* (a finger on the canvas is the game's: Fold Mode's drag, not the page scrolling or zooming) */
 #hud { position: fixed; inset: 0; pointer-events: none; }
 #hud .layer { position: absolute; inset: 0; }
 :where(#hud) :is(button, input, select, textarea) { font: inherit; color: inherit; } /* zero specificity: the component rules below win */
@@ -131,6 +131,7 @@ kbd { font: inherit; font-weight: 600; color: var(--accent); border: 1px solid v
 .panel .status.ok::before { background: var(--accent); }
 .panel .help { margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px solid var(--hairline); font-size: var(--fs-1); color: var(--text-2); }
 .panel .help kbd + kbd { margin-left: var(--s-1); }
+.panel .help span { white-space: nowrap; } /* (a narrow window breaks the line between the hints, not inside one) */
 
 .hint { position: absolute; top: 22%; right: var(--s-5); width: min(340px, calc(100vw - 2 * var(--s-4))); padding: var(--s-3) var(--s-4);
   background: var(--panel); border: 1px solid var(--hairline); border-left: 3px solid var(--text-3);

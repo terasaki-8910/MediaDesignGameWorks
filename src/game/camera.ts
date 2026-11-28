@@ -39,6 +39,7 @@ export class CameraRig {
   private weight = 0; // 0 on the follow camera, 1 in the diorama, between during a move
   private ray = new THREE.Raycaster();
   private initialised = false;
+  private atRest = false;
   private blend = 0; // 1 right after leaving a framing or cinematic shot, easing back to 0
   private readonly camera: THREE.PerspectiveCamera;
   private readonly colliders: () => THREE.Object3D[];
@@ -203,6 +204,8 @@ export class CameraRig {
       this.fov += (desiredFov - this.fov) * k;
       this.weight += (weightWanted - this.weight) * (1 - Math.exp(-dt * (s.reduceMotion ? 50 : 4)));
     }
+    // (in the diorama, with its move over and the camera on its pose: what is on screen stands still from here)
+    this.atRest = mode === 'diorama' && !this.move && this.weight > 0.999 && this.pos.distanceToSquared(desiredPos) < 0.01 && Math.abs(this.fov - desiredFov) < 0.02;
     this.camera.position.copy(this.pos);
     this.camera.lookAt(this.look);
     // the lens is the rig's to set while the diorama has any hold on it (Engine.resize sets the follow camera's, and does so afresh at each change of the render scale)
@@ -221,5 +224,10 @@ export class CameraRig {
 
   get position() {
     return this.pos;
+  }
+
+  /** True once the camera has come to rest in the diorama (a test waits for it before it reads where things are on screen). */
+  get arrived() {
+    return this.atRest;
   }
 }

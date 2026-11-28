@@ -86,6 +86,7 @@ export class CompiledStage {
   private reachCache = new Map<string, string[]>();
   private bodyCache = new Map<string, boolean>();
   private hashCache = new Map<string, BoxHash>();
+  private clearCache = new Map<string, number>();
 
   constructor(stage: StageFile) {
     this.stage = stage;
@@ -394,6 +395,38 @@ export class CompiledStage {
       }
     }
     return [...blockers].sort();
+  }
+
+  /**
+   * How far the action's turn can go before the group meets something: the signed angle (radians, the sense of the action's
+   * turn) of the last step of the sweep that `sweepBlockers` found clear, or the whole turn when it finds nothing. Fold Mode's
+   * drag stops a group there, so a hand never carries it through a tower. Sampled exactly as `sweepBlockers` samples.
+   */
+  sweepClearance(s: PuzzleState, a: Action): number {
+    const key = `${this.stateKey(s)}#${actionKey(a)}`;
+    const hit = this.clearCache.get(key);
+    if (hit !== undefined) return hit;
+    const g = this.groups.get(a.group)!;
+    const moving = new Set(this.modules.filter((m) => m.group === g.id).map((m) => m.id));
+    const all = this.worldBoxes(s);
+    const hash = new BoxHash([...all.filter((b) => !moving.has(b.module)), ...this.anchorBoxes()]);
+    const points = all.filter((b) => moving.has(b.module)).flatMap(surfacePoints);
+    const { axis, quarters, pivot } = this.motionOf(s, a);
+    const total = (quarters * Math.PI) / 2;
+    const steps = Math.max(1, Math.ceil(Math.abs(total) / SWEEP_STEP));
+    let clear = total;
+    scan: for (let i = 0; i < steps; i++) {
+      const R = rotAngle(axis, (total * (i + 1)) / steps);
+      for (const p of points) {
+        const q = apply(R, sub(p, pivot));
+        if (hash.query([q[0] + pivot[0], q[1] + pivot[1], q[2] + pivot[2]]).length) {
+          clear = (total * i) / steps;
+          break scan;
+        }
+      }
+    }
+    this.clearCache.set(key, clear);
+    return clear;
   }
 
   /** Every action a console offers in a state, with what blocks it (empty = allowed). */

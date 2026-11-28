@@ -9,7 +9,7 @@ import type { StageFile } from '../src/core/types.ts';
 import { exitMarks, exitPad, exitPlacements, exitSide } from '../src/game/exitMarker.ts';
 import {
   FOLD_TIME_GAIN, NOTE_LADDER, NO_FEEL, OVER_MAX, PULL_MAX, STOP_AT, Shake,
-  feelFor, feelOf, feelReach, foldCurve, foldSeconds, jointsOf, joinNotes, sweepRadius,
+  feelFor, feelOf, feelReach, foldCurve, foldSeconds, jointsOf, joinNotes, settleCurve, settleSeconds, sweepRadius,
 } from '../src/game/foldFeel.ts';
 import { cubeFaceRoles, cubePlacements, faceInlays } from '../src/game/setPieces.ts';
 import { sectionStartStates } from '../src/game/shots.ts';
@@ -330,4 +330,40 @@ test('the pad of light under an exit mark is a soft-edged rectangle on the floor
     assert.equal(centre, 1);
     assert.ok(g.getAttribute('position').count > 100);
   }
+});
+
+test('a settle (a group let go of by the pointer) has no pull-back, overshoots at the same instant a fold stops, and ends exactly on the stop', () => {
+  const over = 0.04;
+  assert.equal(settleCurve(0, over), 0);
+  assert.equal(settleCurve(1, over), 1, 'ends where the state says');
+  assert.ok(Math.abs(settleCurve(STOP_AT, over) - (1 + over)) < 1e-12, 'the peak of the overshoot is at the stop');
+  let last = 0;
+  let max = 0;
+  let step = 0;
+  for (let i = 1; i <= 2000; i++) {
+    const v = settleCurve(i / 2000, over);
+    assert.ok(v >= 0, 'it never goes back before the start');
+    if (i / 2000 <= STOP_AT) assert.ok(v >= last - 1e-12, 'it only goes on until the stop');
+    step = Math.max(step, Math.abs(v - last));
+    max = Math.max(max, v);
+    last = v;
+  }
+  assert.ok(max <= 1 + over + 1e-12 && max > 1 + over - 1e-6);
+  assert.ok(step < 0.01, `no jump (${step})`);
+  // it is already moving: the first moments take it a good way (an ease-out), unlike a fold's slow start
+  assert.ok(settleCurve(0.1, over) > 0.2);
+  // with reduceMotion: one ease-out, no overshoot
+  for (let i = 0; i <= 100; i++) assert.ok(settleCurve(i / 100, over, true) <= 1 + 1e-12);
+  assert.equal(settleCurve(1, over, true), 1);
+  // and with no overshoot (snapping back to where it was) it is a plain ease-out
+  assert.equal(Math.max(...Array.from({ length: 101 }, (_, i) => settleCurve(i / 100, 0))), 1);
+});
+
+test("a settle takes the share of the turn's time that is left, and never so little that it cannot be seen", () => {
+  assert.equal(settleSeconds(1.8, 1, false), foldSeconds(1.8, false));
+  assert.ok(Math.abs(settleSeconds(1.8, 0.5, false) - foldSeconds(1.8, false) / 2) < 1e-12);
+  assert.equal(settleSeconds(1.8, 0.01, false), 0.32, "a stop a hand's width away still takes a moment");
+  assert.equal(settleSeconds(1.8, 0, true), 0.32);
+  assert.equal(settleSeconds(0.2, 0.01, false), 0.2, 'and never longer than the whole turn');
+  assert.equal(settleSeconds(1.8, 3, false), foldSeconds(1.8, false), 'a drag past the stop takes the whole turn at most');
 });

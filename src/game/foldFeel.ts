@@ -42,6 +42,27 @@ export function foldCurve(k: number, feel: Feel, reduce = false): number {
   return 1 + feel.over * (0.5 + 0.5 * Math.cos(((x - STOP_AT) / (1 - STOP_AT)) * Math.PI));
 }
 
+/**
+ * How far a group has come, as a fraction of the way from where the pointer let go of it (0) to the stop it is snapping to (1),
+ * at `k` of the settle. It is already in motion, so there is no pull-back: it eases out to the stop's overshoot (`over`, a
+ * fraction of that way) at STOP_AT, the same instant as a fold's, and settles back onto 1 as a fold does. With `reduce` it is one
+ * ease-out with no overshoot. Starts at 0, ends exactly on 1, and has no speed at its peak or at its end.
+ */
+export function settleCurve(k: number, over: number, reduce = false): number {
+  const x = Math.min(1, Math.max(0, k));
+  if (reduce) return 1 - (1 - x) ** 3;
+  if (x < STOP_AT) return (1 + over) * (1 - (1 - x / STOP_AT) ** 3);
+  return 1 + over * (0.5 + 0.5 * Math.cos(((x - STOP_AT) / (1 - STOP_AT)) * Math.PI));
+}
+
+/**
+ * The seconds a settle takes: the turn's own time (`plain`, as `foldSeconds` takes it) for the share of the way still to go,
+ * never less than `floor` (a stop a hand's width away still has to be seen to arrive).
+ */
+export function settleSeconds(plain: number, share: number, reduce: boolean, floor = 0.32): number {
+  return Math.max(Math.min(plain, floor), foldSeconds(plain, reduce) * Math.min(1, Math.max(0, share)));
+}
+
 /** The seconds a fold takes, from the seconds the plain turn took (`reduce`: the gentle ease takes no longer than the turn). */
 export function foldSeconds(plain: number, reduce: boolean): number {
   return reduce ? plain : plain * FOLD_TIME_GAIN;
