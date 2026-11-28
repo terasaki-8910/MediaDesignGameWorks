@@ -1028,6 +1028,9 @@ export class Game {
         for (const k of held) this.input.hold(k, true);
         for (let t = 0; t < seconds; t += 1 / 60) this.step(1 / 60);
         for (const k of held) this.input.hold(k, false);
+        // the wall-clock time this took is not game time: without this the frame loop would pay it back afterwards
+        this.last = performance.now();
+        this.stepper.reset();
         return { cell: this.player.cell, x: this.player.pos.x, z: this.player.pos.z, mode: this.mode, section: this.section.id };
       },
     };
