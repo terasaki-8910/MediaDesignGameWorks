@@ -59,7 +59,7 @@ const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([di
 /** The key list of the "操作方法" panel: key caps (or a plain label for the mouse) and what they do. */
 const KEYS: { caps?: string[]; label?: string; text: string }[] = [
   { caps: ['WASD'], text: '移動（Shiftでダッシュ、Spaceでジャンプ）' },
-  { label: 'マウス', text: '視点（クリックで固定）' },
+  { label: 'マウス', text: '視点（クリックで固定）。Fold Mode では全体を見回す' },
   { caps: ['E'], text: 'コンソールを起動・決定' },
   { caps: ['A', 'D'], text: '変形先を選ぶ（Fold Mode）' },
   { caps: ['R'], text: 'パズルをやり直す' },
@@ -329,12 +329,22 @@ export class Hud {
       `<div class="opt"><span class="arrow" aria-hidden="true">◀</span><span class="name">${escapeHtml(p.label)}</span><span class="arrow" aria-hidden="true">▶</span>` +
       `<span class="count">${p.index + 1} / ${p.count}</span></div>` +
       status +
-      `<div class="help"><kbd>A</kbd><kbd>D</kbd> 選択　<kbd>E</kbd> 実行　<kbd>Esc</kbd> 戻る</div>`;
+      `<div class="help"><kbd>A</kbd><kbd>D</kbd> 選択　<kbd>E</kbd> 実行　<kbd>Esc</kbd> 戻る　マウス 見回す</div>`;
   }
 
   hint(text: string | null) {
     if (text) this.hintEl.innerHTML = text;
     this.hintEl.classList.toggle('show', !!text);
+  }
+
+  /** Keep the hint out of sight (without dropping it) while Fold Mode shows the whole puzzle: its box would stand over the preview. */
+  holdHint(on: boolean) {
+    this.hintEl.classList.toggle('hold', on);
+  }
+
+  /** True while the hint on screen is this text. */
+  hintIs(text: string | undefined): boolean {
+    return !!text && this.hintEl.classList.contains('show') && this.hintEl.innerHTML === text;
   }
 
   flash() {

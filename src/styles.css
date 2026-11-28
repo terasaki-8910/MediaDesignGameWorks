@@ -136,6 +136,7 @@ kbd { font: inherit; font-weight: 600; color: var(--accent); border: 1px solid v
   background: var(--panel); border: 1px solid var(--hairline); border-left: 3px solid var(--text-3);
   font-size: var(--fs-2); line-height: 1.7; opacity: 0; transition: opacity .15s; }
 .hint.show { opacity: 1; }
+.hint.hold { opacity: 0; }
 
 .status-bar { position: absolute; top: var(--s-4); left: var(--s-4); padding: var(--s-1) var(--s-3); background: var(--scrim);
   font-size: var(--fs-1); letter-spacing: .06em; color: var(--text-2); }
