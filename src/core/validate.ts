@@ -3,8 +3,11 @@ import { CompiledStage, actionKey } from './compile.ts';
 import { kitErrors } from './kit.ts';
 import { CUBE_GROUP, cellKey } from './math.ts';
 import { resolveSlots } from './slots.ts';
-import { solveSection } from './solver.ts';
-import type { Id, StageFile } from './types.ts';
+import { reachableNodes, solveSection } from './solver.ts';
+import type { Id, PuzzleState, StageFile } from './types.ts';
+
+/** Below this the clockwork leaves too little time to cross while the group rests (C5). */
+export const MIN_DWELL_MS = 900;
 
 export interface Issue { rule: string; level: 'error' | 'warning'; message: string }
 
@@ -13,6 +16,10 @@ export interface SectionMetrics {
   explored: number;
   deadEnds: number;
   firstMoves: { key: string; penalty: number | null }[];
+  /** On the optimal plan: waits for the clockwork, tether links the walking must cross, rides on a turning group. */
+  waits: number;
+  links: number;
+  rides: number;
 }
 
 export interface StageReport {
@@ -42,6 +49,7 @@ export function validateStage(input: StageFile, opts: { checkSlotOptions?: boole
   unique('module', stage.modules);
   unique('group', stage.groups);
   unique('console', stage.interactables);
+  unique('handle', stage.handles ?? []);
   unique('section', stage.sections);
   unique('checkpoint', stage.checkpoints);
   unique('slot', stage.slots ?? []);
@@ -52,11 +60,28 @@ export function validateStage(input: StageFile, opts: { checkSlotOptions?: boole
     const g = stage.groups.find((g) => g.id === c.controls);
     if (g?.kind === 'orientation' && !c.axis) err('S2', `${c.id}: consoles of orientation groups need an axis`);
   }
+  for (const h of stage.handles ?? []) {
+    if (has('console', h.id)) err('S2', `${h.id}: a handle and a console share this id (mustUse names either)`);
+    if (!has('group', h.controls)) err('S2', `${h.id}: unknown group ${h.controls}`);
+    const g = stage.groups.find((g) => g.id === h.controls);
+    if (g?.kind === 'orientation' && !h.axis) err('S2', `${h.id}: handles of orientation groups need an axis`);
+    if (h.reach !== undefined && !(h.reach > 0)) err('S2', `${h.id}: reach must be positive`);
+  }
+  for (const g of stage.groups) {
+    const auto = (g as { auto?: { periodMs: number; dwellMs: number } }).auto;
+    if (!auto) continue;
+    if (g.kind !== 'states') err('S2', `${g.id}: only states groups can run on a clock`);
+    else if (g.states.length < 2) err('S2', `${g.id}: a group on a clock needs at least two states`);
+    if (!(auto.periodMs > 0)) err('S2', `${g.id}: periodMs must be positive`);
+    if (!(auto.dwellMs >= 0)) err('S2', `${g.id}: dwellMs must be zero or more`);
+  }
   for (const s of stage.sections) {
     for (const g of s.groups) if (!has('group', g)) err('S2', `${s.id}: unknown group ${g}`);
     for (const c of s.consoles) if (!has('console', c)) err('S2', `${s.id}: unknown console ${c}`);
+    for (const h of s.handles ?? []) if (!has('handle', h)) err('S2', `${s.id}: unknown handle ${h}`);
     if (!has('checkpoint', s.start)) err('S2', `${s.id}: unknown checkpoint ${s.start}`);
-    for (const c of s.intent.mustUse) if (!s.consoles.includes(c)) err('S2', `${s.id}: mustUse ${c} is not a console of the section`);
+    for (const c of s.intent.mustUse)
+      if (!s.consoles.includes(c) && !(s.handles ?? []).includes(c)) err('S2', `${s.id}: mustUse ${c} is not a console or handle of the section`);
   }
   for (const sl of stage.slots ?? []) {
     const k = sl.target.kind === 'console' ? 'console' : 'group';
@@ -92,7 +117,24 @@ export function validateStage(input: StageFile, opts: { checkSlotOptions?: boole
   }
   for (const cp of stage.checkpoints) if (!wm.tiles.get(cellKey(cp.at))) err('G2', `checkpoint ${cp.id} is not walkable`);
 
+  // T2: a tether hangs on a walkable landing cell from the start (another module's tile makes the cell walkable)
+  for (const m of cs.tethers) {
+    const end = cs.tetherEnd(m, s0);
+    if (!wm.tiles.has(end.key)) err('T2', `tether ${m.id}: its landing cell ${end.key} is not walkable in the initial state`);
+  }
+
+  // C4 / C5: the clock of a section is one clock, and it rests long enough to cross
+  for (const sec of stage.sections) {
+    const auto = cs.autoGroups(sec.id);
+    if (new Set(auto.map((g) => g.auto!.periodMs)).size > 1)
+      err('C4', `${sec.id}: auto groups ${auto.map((g) => `${g.id} (${g.auto!.periodMs} ms)`).join(', ')} have different periodMs`);
+    for (const g of auto)
+      if (g.auto!.dwellMs < MIN_DWELL_MS) warn('C5', `${sec.id}: ${g.id} rests only ${g.auto!.dwellMs} ms (under ${MIN_DWELL_MS} ms) before it moves`);
+  }
+
   // L1-L5 per section, plus G3 (no motion may sweep through a console's standing space)
+  const reached: Record<Id, { state: PuzzleState; cell: string; region: number }[]> = {};
+  const wantsReach = cs.tethers.length > 0 || cs.handles.size > 0 || stage.groups.some((g) => g.kind === 'states' && g.auto);
   for (const sec of stage.sections) {
     let r;
     try {
@@ -106,7 +148,11 @@ export function validateStage(input: StageFile, opts: { checkSlotOptions?: boole
       explored: r.explored,
       deadEnds: r.deadEnds,
       firstMoves: r.firstMoves.map((f) => ({ key: f.key, penalty: f.penalty })),
+      waits: r.waits,
+      links: r.links,
+      rides: r.rides,
     };
+    if (wantsReach) reached[sec.id] = reachableNodes(cs, sec.id);
     if (r.optimal === null) {
       err('L1', `${sec.id}: the exit cannot be reached`);
       continue;
@@ -120,9 +166,53 @@ export function validateStage(input: StageFile, opts: { checkSlotOptions?: boole
       if (without.optimal !== null && without.optimal <= r.optimal)
         err('L4', `${sec.id}: can be solved optimally without ${c}`);
     }
-    const used = new Set(r.plan.map((a) => a.console));
+    const used = new Set(r.moves.flatMap((m) => ('console' in m.action ? [m.action.console] : 'handle' in m.action ? [m.action.handle] : [])));
     for (const c of sec.consoles) if (!used.has(c) && !sec.intent.mustUse.includes(c)) warn('L5', `${sec.id}: console ${c} is not part of the optimal plan`);
+    for (const h of sec.handles ?? []) if (!used.has(h) && !sec.intent.mustUse.includes(h)) warn('L5', `${sec.id}: handle ${h} is not part of the optimal plan`);
   }
+  // T1 / H1 / C1-C3: what the reachable states of the sections hold (the solver's nodes: a state and a region of it)
+  const statesOf = (secs: readonly { id: Id }[]) => {
+    const byKey = new Map<string, PuzzleState>([[cs.stateKey(s0), s0]]);
+    for (const sec of secs) for (const n of reached[sec.id] ?? []) byKey.set(cs.stateKey(n.state), n.state);
+    return [...byKey.values()];
+  };
+  if (cs.tethers.length) {
+    const linked = new Set<Id>();
+    for (const st of statesOf(stage.sections)) for (const l of cs.walkMap(st).links) linked.add(l.a).add(l.b);
+    for (const m of cs.tethers) if (!linked.has(m.id)) warn('T1', `tether ${m.id} never links in any reachable state`);
+  }
+  for (const h of stage.handles ?? []) {
+    const listing = stage.sections.filter((sec) => (sec.handles ?? []).includes(h.id));
+    if (!statesOf(listing).some((st) => cs.handleReach(h.id, st).length > 0))
+      err('H1', `handle ${h.id}: no walkable cell is within reach with a clear line in any reachable state`);
+  }
+  for (const sec of stage.sections) {
+    const auto = new Set(cs.autoGroups(sec.id).map((g) => g.id));
+    if (!auto.size) continue;
+    const wait = { kind: 'wait', section: sec.id } as const;
+    const seen = new Set<string>();
+    const once = (rule: string, id: string, add: () => void) => {
+      if (seen.has(`${rule}|${id}`)) return;
+      seen.add(`${rule}|${id}`);
+      add();
+    };
+    for (const n of reached[sec.id] ?? []) {
+      const wmN = cs.walkMap(n.state);
+      const at = cs.stateKey(n.state);
+      const blockers = cs.sweepBlockers(n.state, wait);
+      if (blockers.length) once('C2', blockers.join(','), () => err('C2', `${sec.id}: an auto step is blocked by ${blockers.join(', ')}, so the clock jams (state ${at})`));
+      const cells = [...wmN.region].filter(([, r]) => r === n.region).map(([k]) => k);
+      for (const [cell, o] of cs.motionOutcomes(n.state, wait, cells)) {
+        if (o.ok || !o.blockedBy.includes('player')) continue;
+        const tile = wmN.tiles.get(cell)!;
+        const group = stage.modules.find((m) => m.id === tile.module)?.group;
+        if (group && auto.has(group))
+          once('C3', cell, () => warn('C3', `${sec.id}: an auto step would tip a rider off ${group} at ${cell} (state ${at}); the runtime sends them back to their last cell on a static module`));
+        else once('C1', cell, () => err('C1', `${sec.id}: an auto step sweeps through the player at ${cell} (state ${at}), and the clock cannot stop for them`));
+      }
+    }
+  }
+
   // G3: no motion, from any state of its group, may sweep through a console's standing space.
   const g3 = new Set<string>();
   for (const g of stage.groups) {
