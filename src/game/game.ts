@@ -14,9 +14,13 @@ import type { Background } from './foldcity/foldcity.ts';
 import { CameraRig } from './camera.ts';
 import { DemoDirector, type DemoOptions } from './demo.ts';
 import { sectionDiorama, type DioramaView } from './diorama.ts';
+import {
+  AngleTracker, HANDLE, REST, bodyWheel, clampTo, handleSpot, handleWheel, nearestStop, pixelRay, planeBasis, rangeOf, releaseAt, sideOf, stopAngles,
+  toPixel, wheelNormal, wheelRadius, type Range,
+} from './drag.ts';
 import { Engine } from './engine.ts';
 import { Hud, type Settings } from './hud.ts';
-import { Input } from './input.ts';
+import { Input, type PointerSample } from './input.ts';
 import { Kit } from './kit.ts';
 import { giltTakesSky, type Sun } from './look.ts';
 import { createMaterials } from './materials.ts';
@@ -47,6 +51,41 @@ interface FoldSession {
   options: { action: Action; blockedBy: string[] }[];
   index: number;
   browsed: Set<number>;
+  /** What a pointer can turn here: null when the console's options are not turns of one axis. */
+  grab: FoldGrab | null;
+}
+
+/** How the group of the console at hand turns, and where its handle stands (all fixed while Fold Mode is open). */
+interface FoldGrab {
+  group: string;
+  axisName: 'x' | 'y' | 'z';
+  axis: THREE.Vector3;
+  pivot: THREE.Vector3;
+  /** The end of the axis the handle is on, and where its wheel stands. */
+  side: 1 | -1;
+  spot: THREE.Vector3;
+  /** The turn of each option, in the order of `options`, and how far the group may be turned each way. */
+  angles: number[];
+  range: Range;
+  /** How far the group can really be turned each way: `range`, held back where the sweep towards a blocked stop meets something. */
+  reach: Range;
+  /** A direction across the axis, fixed in the world (see HandlePose.ref). */
+  ref: THREE.Vector3;
+}
+
+/** A pointer holding the handle or the group: where it took hold, whether the group has begun to turn, and how far it has. */
+interface DragSession {
+  kind: 'handle' | 'body';
+  tracker: AngleTracker;
+  x0: number;
+  y0: number;
+  live: boolean;
+  /** The turn the hand has asked for (radians about the axis, within the range), the stop that is nearest to it, and where the group is (the same, held back at a contact). */
+  angle: number;
+  near: number;
+  shown: number;
+  /** Let go: the group is on its way to a stop or back. */
+  settling: boolean;
 }
 
 interface SectionRun {
@@ -67,6 +106,12 @@ const SETTINGS_KEY = 'fold-city:settings';
 /** 2: the quality in the stored settings is the player's choice (earlier versions saved the default along with every other setting). */
 const SETTINGS_VERSION = 2;
 const UP = new THREE.Vector3(0, 1, 0);
+const AXES = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) };
+
+/** A grab on the group itself ignores the angle this close to its axis (metres). */
+const BODY_HUB = 1.2;
+/** A press has to move this far (CSS px) before the group begins to turn: a tap is no drag. */
+const DRAG_SLOP = { mouse: 5, touch: 9 };
 
 /**
  * The establishing view at the start of a section: the camera goes up into the diorama (camera.ts: DIORAMA_MOVE.in), holds,
@@ -139,6 +184,15 @@ export class Game {
   private readonly dioramas = new Map<string, DioramaView>();
   private readonly foldCameras: Record<string, 'diorama' | 'view'> = { ...FOLD_CAMERA };
   private readonly shots: boolean;
+  /** Fold Mode's drag, while a pointer holds the handle or the group, and the cursor the canvas shows. */
+  private drag: DragSession | null = null;
+  private handleHot = 0;
+  private cursor = '';
+  /** A point of the group to take hold of, for the debug hook `grabPoint` (null until it has been asked for). */
+  private bodyProbe: THREE.Vector3 | null = null;
+  /** Fold Mode let go of the mouse so that its cursor can be seen and moved: the lock is taken back when it closes. */
+  private lockBeforeFold = false;
+  private relockArmed = false;
   /** The character model, when it is the avatar in use (the review shots put it back into its rest pose). */
   private wanderer: WandererAvatar | null = null;
 
@@ -169,6 +223,12 @@ export class Game {
     this.player = new Player({ object: new THREE.Group(), animate: () => {} }); // nothing until the character has loaded
     this.engine.scene.add(this.player.root);
     this.input = new Input(canvas);
+    this.input.grab = {
+      down: (p) => this.grabDown(p),
+      move: (p) => this.grabMove(p),
+      up: () => this.grabUp(),
+      cancel: () => this.grabCancel(),
+    };
     this.hud = new Hud(hudRoot);
     this.rig = new CameraRig(this.engine.camera, () => this.world.colliders);
     const params = new URLSearchParams(location.search);
@@ -183,9 +243,10 @@ export class Game {
     this.showTitle();
     // Automated browsers and the demo cannot hold pointer lock; do not treat that as the player pausing.
     this.automated = navigator.webdriver === true || !!opts.demo || this.shots;
+    // (Fold Mode lets go of the lock on purpose, to show the cursor the drag needs: losing it there is not the player pausing)
     document.addEventListener('pointerlockchange', () => {
       if (this.automated) return;
-      if (!document.pointerLockElement && (this.mode === 'play' || this.mode === 'fold')) this.openPause();
+      if (!document.pointerLockElement && this.mode === 'play') this.openPause();
     });
     const vrmUrl = params.get('vrm') ?? './assets/player.vrm';
     // Wall-clock play compiles what it is about to show off the frame (see `precompile`); the capture and the review shots
@@ -321,6 +382,8 @@ export class Game {
     clearTimeout(this.introTimer);
     this.time = this.finaleClock = this.perfClock = 0;
     this.fold = null;
+    this.drag = null;
+    this.setCursor('');
     this.state = state;
     this.world.resetForShot(state);
     this.city.reset();
@@ -571,8 +634,9 @@ export class Game {
     this.world.update(dt);
     this.city.update(dt);
     // (the mouse looks round the follow camera in play, and round the diorama in Fold Mode; neither while the establishing view runs)
-    this.rig.update(dt, this.input, this.player.pos, { ...this.settings, distance: tun.camera.distance }, this.mode === 'play' && !this.establish, this.mode === 'fold');
+    this.rig.update(dt, this.input, this.player.pos, { ...this.settings, distance: tun.camera.distance }, this.mode === 'play' && !this.establish, this.mode === 'fold' && !this.input.grabbing);
     this.world.applyShake(this.engine.camera, this.settings.reduceMotion); // (the stop of a fold shakes it a little; none with reduceMotion)
+    this.updateGrabView(dt); // (the handle and the cursor stand where the camera has put the picture)
     if (this.mode === 'play' || this.mode === 'fold' || this.mode === 'anim') {
       this.telemetry.samplePosition(this.player.cell);
       this.perfClock += dt;
@@ -647,8 +711,16 @@ export class Game {
   private openFold(consoleId: string, index = 0) {
     const options = this.cs.consoleActions(consoleId, this.state);
     if (!options.length) return;
-    this.fold = { console: consoleId, options, index, browsed: new Set([index]) };
+    this.fold = { console: consoleId, options, index, browsed: new Set([index]), grab: this.foldGrab(consoleId, options) };
     this.mode = 'fold';
+    // the cursor has to be seen and moved to take hold of anything: the lock is let go of (and taken back when Fold Mode closes)
+    if (!this.automated && document.pointerLockElement) {
+      this.lockBeforeFold = true;
+      document.exitPointerLock();
+    }
+    this.handleHot = 0;
+    this.bodyProbe = null;
+    this.world.handle.show(!!this.fold.grab);
     this.endEstablish(false); // Fold Mode takes the diorama over, with the room its panel needs
     this.rig.setDiorama(this.dioramaOf('fold'));
     // the section's intro text would stand over the preview; a hint that helps with the choice (the player is stuck) stays
@@ -738,6 +810,7 @@ export class Game {
   private updateFold() {
     const f = this.fold!;
     if (this.input.hit('Escape', 'KeyQ') || this.input.rightClick) return this.closeFold(false);
+    if (this.drag || this.world.animating) return; // (a pointer has the group, or it is on its way: the keys and the wheel wait)
     let d = 0;
     if (this.input.hit('KeyA', 'ArrowLeft') || this.input.wheel < 0) d = -1;
     if (this.input.hit('KeyD', 'ArrowRight') || this.input.wheel > 0) d = 1;
@@ -749,25 +822,270 @@ export class Game {
     }
     if (this.input.hit('KeyE', 'Enter', 'Space')) {
       const opt = f.options[f.index];
-      if (opt.blockedBy.length) {
-        this.sound.denied();
-        this.telemetry.log({
-          type: 'action', section: this.section.id, console: f.console, action: actionKey(opt.action), ok: false,
-          blockedBy: opt.blockedBy, cell: this.player.cell,
-        });
-        return;
-      }
+      if (opt.blockedBy.length) return this.refuse(opt);
       this.commit(opt.action);
     }
+  }
+
+  // ---- Fold Mode's drag: the handle and the group itself, taken hold of by a pointer (drag.ts has the maths) ----
+
+  /** How the console's group turns and where its wheel stands; null for a console whose options are not turns about one axis. */
+  private foldGrab(consoleId: string, options: FoldSession['options']): FoldGrab | null {
+    const c = this.cs.consoles.get(consoleId)!;
+    const group = c.controls;
+    const motions = options.map((o) => this.cs.motionOf(this.state, o.action));
+    if (!motions.length || motions.some((m) => m.axis !== motions[0].axis)) return null;
+    const axisName = motions[0].axis;
+    const axis = AXES[axisName].clone();
+    const pivot = new THREE.Vector3(...motions[0].pivot);
+    const ids = new Set(this.cs.modules.filter((m) => m.group === group).map((m) => m.id));
+    const boxes = this.cs.worldBoxes(this.state).filter((b) => ids.has(b.module));
+    // the side the diorama camera is on at rest, so the wheel does not change sides as the player looks round
+    const rest = this.dioramaOf('fold').pose(this.engine.camera.aspect).pos;
+    const side = sideOf(axis, pivot, rest);
+    const angles = stopAngles(motions.map((m) => m.quarters));
+    const ref = AXES[axisName === 'y' ? 'x' : 'y'].clone();
+    // a group is not carried through what its fold would hit: the turn towards a blocked stop ends where the sweep meets something
+    const range = rangeOf(angles);
+    const reach = { ...range };
+    options.forEach((o, i) => {
+      if (!o.blockedBy.length) return;
+      const clear = this.cs.sweepClearance(this.state, o.action);
+      if (angles[i] > 0) reach.hi = Math.min(reach.hi, clear);
+      else reach.lo = Math.max(reach.lo, clear);
+    });
+    return { group, axisName, axis, pivot, side, spot: handleSpot(boxes, pivot, axis, side, HANDLE.clearance), angles, range, reach, ref };
+  }
+
+  /** The wheel as it is drawn now, and how far a pointer may be from its middle (CSS px) to take hold of it. */
+  private handleView(grab: FoldGrab, vp: { width: number; height: number }, touch: boolean) {
+    const cam = this.engine.camera;
+    cam.updateMatrixWorld();
+    const toCam = cam.position.clone().sub(grab.spot);
+    const distance = toCam.length();
+    toCam.divideScalar(distance);
+    const normal = wheelNormal(grab.axis.clone().multiplyScalar(grab.side), toCam);
+    const radius = wheelRadius(distance, cam.fov, vp.height, HANDLE.px, HANDLE.min, HANDLE.max);
+    const perMetre = vp.height / (2 * distance * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2));
+    const centre = toPixel(cam, grab.spot, vp);
+    const reach = Math.max(HANDLE.grabMin, radius * perMetre + 8) + (touch ? HANDLE.touch : 0);
+    return { normal, radius, centre, reach, perMetre };
+  }
+
+  /** What a pointer at `p` would take hold of: the handle, else the group's own solid (unless something else is in front of it). */
+  private pickGrab(p: PointerSample): { kind: 'handle' } | { kind: 'body'; point: THREE.Vector3 } | null {
+    const grab = this.fold?.grab;
+    if (!grab) return null;
+    const vp = { width: p.width, height: p.height };
+    const v = this.handleView(grab, vp, p.type === 'touch');
+    if (v.centre && Math.hypot(p.x - v.centre.x, p.y - v.centre.y) <= v.reach) return { kind: 'handle' };
+    // (the boxes are where the last frame drew them: that is what the pointer sees)
+    const point = this.world.pickBody(pixelRay(this.engine.camera, p.x, p.y, vp), grab.group);
+    return point ? { kind: 'body', point } : null;
+  }
+
+  private grabDown(p: PointerSample): boolean {
+    const f = this.fold;
+    const grab = f?.grab;
+    if (this.mode !== 'fold' || !f || !grab || this.drag || this.world.animating || this.director) return false;
+    const hit = this.pickGrab(p);
+    if (!hit) return false;
+    const cam = this.engine.camera;
+    const vp = { width: p.width, height: p.height };
+    const up = UP.clone().applyQuaternion(cam.quaternion);
+    let tracker: AngleTracker;
+    if (hit.kind === 'handle') {
+      const v = this.handleView(grab, vp, p.type === 'touch');
+      tracker = new AngleTracker(handleWheel(grab.spot, v.normal, grab.side), v.radius * HANDLE.hub, up);
+    } else tracker = new AngleTracker(bodyWheel(grab.axis, grab.pivot, hit.point, cam.position.clone().sub(hit.point).normalize()), BODY_HUB, up);
+    tracker.update(pixelRay(cam, p.x, p.y, vp)); // (the angle counts from where the press is)
+    this.drag = { kind: hit.kind, tracker, x0: p.x, y0: p.y, live: false, angle: 0, near: REST, shown: 0, settling: false };
+    return true;
+  }
+
+  private grabMove(p: PointerSample) {
+    const f = this.fold;
+    const d = this.drag;
+    const grab = f?.grab;
+    if (!f || !d || !grab || d.settling) return;
+    const turn = d.tracker.update(pixelRay(this.engine.camera, p.x, p.y, { width: p.width, height: p.height }));
+    if (!d.live) {
+      if (Math.hypot(p.x - d.x0, p.y - d.y0) < (p.type === 'touch' ? DRAG_SLOP.touch : DRAG_SLOP.mouse)) return;
+      d.live = true;
+      this.world.beginDrag(grab.group, grab.axisName);
+      this.showFoldRest();
+    }
+    d.angle = clampTo(turn, grab.range);
+    d.shown = clampTo(d.angle, grab.reach);
+    this.world.setDragAngle(d.shown);
+    const near = nearestStop(d.angle, grab.angles);
+    if (near === d.near) return;
+    d.near = near;
+    if (near === REST) this.showFoldRest();
+    else {
+      f.index = near;
+      f.browsed.add(near);
+      this.sound.select();
+      this.showFoldOption(); // (the ghost, the preview lines and the panel follow the stop that is nearest)
+    }
+  }
+
+  /** The pointer has let go. Near the pose it started in: nothing. At a free stop: the fold, from where the group is. At a blocked one: refused. */
+  private grabUp() {
+    const f = this.fold;
+    const d = this.drag;
+    const grab = f?.grab;
+    if (!f || !d || !grab) return;
+    if (!d.live) {
+      this.drag = null; // (a press that did not move: nothing)
+      return;
+    }
+    const r = releaseAt(d.angle, grab.angles, f.options.map((o) => o.blockedBy.length > 0));
+    if (r.kind === 'move') return this.commit(f.options[r.index].action, d.shown);
+    d.settling = true;
+    if (r.kind === 'blocked') this.refuse(f.options[r.index]); // (the same denial as E on a blocked option: the panel already says what is in the way)
+    this.showFoldOption();
+    this.world.settleDrag(d.shown, { refused: r.kind === 'blocked', reduceMotion: this.settings.reduceMotion, durationScale: this.foldScale }, () => {
+      this.drag = null;
+    });
+  }
+
+  /** The pointer was taken away (a gesture, the window lost focus): the group goes back where it was, at once. */
+  private grabCancel() {
+    if (!this.drag) return;
+    this.drag = null;
+    this.world.endDrag();
+    if (this.fold) this.showFoldOption();
+  }
+
+  /** A blocked option was chosen (E, or a drag let go of at it): the denial, and what the improvement loop is told. */
+  private refuse(opt: FoldSession['options'][number]) {
+    this.sound.denied();
+    this.telemetry.log({
+      type: 'action', section: this.section.id, console: this.fold!.console, action: actionKey(opt.action), ok: false,
+      blockedBy: opt.blockedBy, cell: this.player.cell,
+    });
+  }
+
+  /** The panel and the preview while the group is held near the pose it started in: no ghost, and a line that says letting go changes nothing. */
+  private showFoldRest() {
+    const f = this.fold!;
+    this.world.preview(null, [], []);
+    const g = this.cs.groups.get(this.cs.consoles.get(f.console)!.controls)!;
+    this.hud.fold({
+      title: g.label?.ja ?? g.id, index: f.index, count: f.options.length, label: '動かさない', blocked: null, fix: null, frees: [], opens: 0, closes: 0, rest: true,
+    });
+  }
+
+  private setCursor(cursor: string) {
+    if (cursor === this.cursor) return;
+    this.cursor = cursor;
+    this.engine.renderer.domElement.style.cursor = cursor;
+  }
+
+  /**
+   * Every step of Fold Mode: the cursor over what can be taken hold of, and the wheel where the camera has put it, turned with
+   * the group (and lit while it is under the pointer or in the hand).
+   */
+  private updateGrabView(dt: number) {
+    const f = this.mode === 'fold' ? this.fold : null;
+    const grab = f?.grab;
+    if (!f || !grab) return this.setCursor('');
+    const canvas = this.engine.renderer.domElement;
+    const vp = { width: canvas.clientWidth || 1, height: canvas.clientHeight || 1 };
+    const p = this.input.pointer;
+    const over = !this.drag && !this.world.animating && p && p.type !== 'touch' && !this.input.locked ? (this.pickGrab(p)?.kind ?? null) : null;
+    this.setCursor(this.drag?.live ? 'grabbing' : over ? 'grab' : '');
+    const want = this.drag?.live || over === 'handle' ? 1 : over === 'body' ? 0.5 : 0;
+    this.handleHot += (want - this.handleHot) * (1 - Math.exp(-dt * 14));
+    const v = this.handleView(grab, vp, false);
+    this.world.handle.place(
+      {
+        centre: grab.spot, normal: v.normal, up: UP.clone().applyQuaternion(this.engine.camera.quaternion), ref: grab.ref, radius: v.radius,
+        spin: grab.side * this.world.dragTurn, range: grab.range, hot: this.handleHot,
+      },
+      this.time,
+      this.settings.reduceMotion,
+    );
+  }
+
+  /** Take the mouse lock back after Fold Mode (a key press is no gesture the browser accepts for this: the next click takes it if it refused). */
+  private retakeLock() {
+    this.input.requestLock();
+    if (this.relockArmed) return;
+    this.relockArmed = true;
+    window.addEventListener('pointerdown', () => {
+      this.relockArmed = false;
+      if (this.mode === 'play') this.input.requestLock();
+    }, { once: true });
+  }
+
+  private foldView() {
+    const f = this.fold;
+    const grab = f?.grab;
+    if (!f || !grab || this.mode !== 'fold') return null;
+    const canvas = this.engine.renderer.domElement;
+    const vp = { width: canvas.clientWidth || 1, height: canvas.clientHeight || 1 };
+    const v = this.handleView(grab, vp, false);
+    const deg = (r: number) => (r * 180) / Math.PI;
+    return {
+      console: f.console, group: grab.group, index: f.index, angles: grab.angles.map(deg), range: { lo: deg(grab.range.lo), hi: deg(grab.range.hi) },
+      reach: { lo: deg(grab.reach.lo), hi: deg(grab.reach.hi) },
+      blocked: f.options.map((o) => o.blockedBy.length > 0),
+      /** The camera has come to rest in the diorama (the handle stands still on screen from here). */
+      arrived: this.rig.arrived,
+      handle: v.centre ? { x: v.centre.x, y: v.centre.y, reach: v.reach, radiusPx: v.radius * v.perMetre } : null,
+      drag: this.drag ? { live: this.drag.live, angle: deg(this.drag.angle), shown: deg(this.drag.shown), near: this.drag.near, settling: this.drag.settling, kind: this.drag.kind } : null,
+      cursor: this.cursor,
+      turn: deg(this.world.dragTurn),
+      animating: this.world.animating,
+    };
+  }
+
+  /** Screen point (CSS px) of the handle's rim, or of a point on the group, once the group has been turned by `turn` radians. */
+  private grabPoint(kind: 'handle' | 'body', turn: number) {
+    const grab = this.fold?.grab;
+    if (!grab) return null;
+    const canvas = this.engine.renderer.domElement;
+    const vp = { width: canvas.clientWidth || 1, height: canvas.clientHeight || 1 };
+    const cam = this.engine.camera;
+    cam.updateMatrixWorld();
+    if (kind === 'handle') {
+      const v = this.handleView(grab, vp, false);
+      const { e1, e2 } = planeBasis(v.normal, grab.ref);
+      const psi = grab.side * turn; // (the wheel turns with the group, the same way when the handle is on the + end, the other way on the - end)
+      return toPixel(cam, grab.spot.clone().addScaledVector(e1, Math.cos(psi) * v.radius * 0.88).addScaledVector(e2, Math.sin(psi) * v.radius * 0.88), vp);
+    }
+    // a point of the group the pointer can take hold of, found once (while the group is at rest) and then followed as it turns
+    if (!this.bodyProbe) {
+      this.engine.scene.updateMatrixWorld();
+      const handle = this.handleView(grab, vp, false);
+      for (const c of this.world.groupSamplePoints(grab.group)) {
+        const px = toPixel(cam, c, vp);
+        if (!px || px.x < 0 || px.y < 0 || px.x > vp.width || px.y > vp.height * 0.7) continue;
+        if (handle.centre && Math.hypot(px.x - handle.centre.x, px.y - handle.centre.y) < handle.reach + 12) continue; // (that press would take the handle)
+        this.bodyProbe = this.world.pickBody(pixelRay(cam, px.x, px.y, vp), grab.group);
+        if (this.bodyProbe) break;
+      }
+    }
+    return this.bodyProbe ? toPixel(cam, this.bodyProbe.clone().sub(grab.pivot).applyAxisAngle(grab.axis, turn).add(grab.pivot), vp) : null;
   }
 
   private closeFold(committed: boolean) {
     const f = this.fold;
     if (f) this.telemetry.log({ type: 'preview', section: this.section.id, console: f.console, browsed: f.browsed.size, committed });
     this.fold = null;
+    this.drag = null;
+    if (!committed) this.world.endDrag(); // (a fold that goes on from where the pointer let go of the group keeps what the drag set up)
+    this.world.handle.show(false);
+    this.setCursor('');
     this.world.preview(null, [], []);
     this.hud.fold(null);
     this.hud.holdHint(false);
+    if (this.lockBeforeFold) {
+      this.lockBeforeFold = false;
+      this.retakeLock();
+    }
     if (!committed) {
       this.rig.setFrame(null);
       this.rig.setDiorama(null);
@@ -776,7 +1094,8 @@ export class Game {
     }
   }
 
-  private commit(a: Action) {
+  /** `from`: the group has been turned by hand and let go of at this angle (radians about its axis): the fold goes on from there. */
+  private commit(a: Action, from?: number) {
     const sec = this.section;
     this.endEstablish(false); // (a fold made without Fold Mode, from the debug hooks)
     this.closeFold(true);
@@ -790,10 +1109,12 @@ export class Game {
     this.world.pulse(new THREE.Vector3(...cellFloor(c.at)));
     const big = a.group === 'g_street';
     this.city.wave(new THREE.Vector3(...g.pivot), big ? 0.85 : 0.3, big ? 55 : 90, big ? 2.6 : 1.6);
-    this.sound.fold(((g.durationMs ?? 2000) / 1000) * scale);
+    const turn = (this.cs.motionOf(this.state, a).quarters * Math.PI) / 2;
+    const share = from === undefined ? 1 : Math.min(1, Math.abs(turn - from) / Math.abs(turn)); // (the rumble is as long as what is left of the turn)
+    this.sound.fold(((g.durationMs ?? 2000) / 1000) * scale * share);
     this.world.highlightConsole(null);
     this.hud.hint(null);
-    this.frameFold(a);
+    this.frameFold(a, from !== undefined);
     const reduceMotion = this.settings.reduceMotion;
     this.world.startAction(a, scale, ({ joined }) => {
       this.state = this.world.state;
@@ -810,7 +1131,7 @@ export class Game {
       } else this.run.hintStale = true;
       if (left !== null) this.run.remaining = left;
       else this.hud.hint('ここからは先に進めないようです。<kbd>R</kbd> でこのパズルをやり直せます。');
-    }, { reduceMotion, onStop: () => this.sound.thud(reduceMotion) });
+    }, { reduceMotion, onStop: () => this.sound.thud(reduceMotion), from });
   }
 
   /**
@@ -819,8 +1140,9 @@ export class Game {
    * the lens: something hinged at one end (the street) from behind its hinge, looking the way it will lie, like a drawbridge
    * seen from its gate; something turning about its middle (the cube) along its axis, from whichever side has the clearer view.
    */
-  private frameFold(a: Action) {
-    if ((this.foldCameras[a.group] ?? 'diorama') === 'diorama') return this.rig.setDiorama(this.dioramaOf('fold')); // Fold Mode's view stays
+  private frameFold(a: Action, byHand = false) {
+    // (a fold the player has already turned most of the way by hand has a few tenths of a second left: the view they were watching it in stays)
+    if (byHand || (this.foldCameras[a.group] ?? 'diorama') === 'diorama') return this.rig.setDiorama(this.dioramaOf('fold')); // Fold Mode's view stays
     this.rig.setDiorama(null);
     const target = this.cs.apply(this.state, a);
     const fr = this.world.framing(a.group, [this.state, target], this.player.pos);
@@ -931,7 +1253,7 @@ export class Game {
       this.input.requestLock();
       // Escape is not a user gesture, so the browser may refuse the lock: take it on the next click instead
       if (!this.automated)
-        window.addEventListener('pointerdown', () => (this.mode === 'play' || this.mode === 'fold') && this.input.requestLock(), { once: true });
+        window.addEventListener('pointerdown', () => this.mode === 'play' && this.input.requestLock(), { once: true }); // (play only: a press on Fold Mode's handle must not take the cursor away)
     }, 'pause', this.autoChoice);
   }
 
@@ -1020,6 +1342,24 @@ export class Game {
       /** The establishing view is running. */
       establishing: () => !!this.establish,
       diorama: (use: 'intro' | 'fold') => this.dioramaOf(use),
+      /** What Fold Mode's drag shows now (null when Fold Mode is closed): where the handle is on screen, the stops, the turn. */
+      foldView: () => this.foldView(),
+      /** The screen point (CSS px) of the handle's rim, or of a point of the group, after the group has been turned by `deg` degrees. */
+      grabPoint: (kind: 'handle' | 'body', deg: number) => this.grabPoint(kind, (deg * Math.PI) / 180),
+      /** What a press at this screen point (CSS px) would take hold of: 'handle', 'body' or null. */
+      pickAt: (x: number, y: number) => {
+        this.engine.scene.updateMatrixWorld();
+        const c = this.engine.renderer.domElement;
+        return this.fold?.grab ? (this.pickGrab({ id: 0, type: 'mouse', x, y, width: c.clientWidth || 1, height: c.clientHeight || 1 })?.kind ?? null) : null;
+      },
+      /** Put the game in a section in a state, as a player walks into it (`stageShot` does it for the review shots, in a mode of its own). */
+      scene: (index: number, state: Record<string, number>) => {
+        this.state = state;
+        this.world.setState(state, false);
+        this.enterSection(index, false);
+        this.mode = 'play';
+        this.rig.setDiorama(null);
+      },
       press: (code: string) => this.input.press(code),
       hold: (code: string, on: boolean) => this.input.hold(code, on),
       setYaw: (y: number) => (this.rig.yaw = y),

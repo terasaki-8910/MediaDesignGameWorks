@@ -7,7 +7,8 @@ import type { Action, CubeFace, Id, PuzzleState } from '../core/types.ts';
 import type { DirName } from '../core/math.ts';
 import { Dust } from './dust.ts';
 import { exitMarks, exitPad, exitPlacements } from './exitMarker.ts';
-import { Shake, feelOf, foldCurve, foldSeconds, jointsOf, STOP_AT, type Feel, type Joints } from './foldFeel.ts';
+import { Shake, feelOf, foldCurve, foldSeconds, jointsOf, settleCurve, settleSeconds, STOP_AT, type Feel, type Joints } from './foldFeel.ts';
+import { DragHandle } from './dragHandle.ts';
 import type { Kit } from './kit.ts';
 import { RAIL_LINE, edgeKey, isStreet, planSlabs, sideMatrix } from './kitLayout.ts';
 import { buildModuleMesh, consoleMesh, faceArmsUV } from './kitMeshes.ts';
@@ -102,7 +103,14 @@ interface Anim {
   pivot: THREE.Object3D;
   qStart: THREE.Quaternion;
   axis: THREE.Vector3;
+  /** The turn the animation ends on, and the one it starts from (0 for a fold; where the pointer let go for a settle). */
   angle: number;
+  from: number;
+  /** A settle (a group let go of by the pointer: foldFeel.settleCurve, no pull-back) and the overshoot it is given, as a fraction of its way. */
+  settle: boolean;
+  over: number;
+  /** The camera's shake at the stop, radians (0: none). */
+  kick: number;
   t: number;
   dur: number;
   target: PuzzleState;
@@ -135,6 +143,13 @@ export class World {
   private glows: { mesh: THREE.Mesh; life: number; max: number }[] = [];
   private pulses: { mesh: THREE.Mesh; t: number }[] = [];
   private anim: Anim | null = null;
+  /** The group a pointer is turning, about which axis, and the pose it was in when it was taken hold of (see beginDrag). */
+  private drag: { group: Id; pivot: THREE.Object3D; base: THREE.Quaternion; axis: THREE.Vector3 } | null = null;
+  /** The hidden boxes of each moving group's modules: what a pointer takes hold of (the kit's pieces are merged meshes, far too many triangles to pick against). */
+  private readonly groupColliders = new Map<Id, THREE.Object3D[]>();
+  private readonly otherColliders = new Map<Id, THREE.Object3D[]>();
+  /** Fold Mode's handle (dragHandle.ts); hung on the root, not on a pivot, so the ghosts do not copy it. */
+  readonly handle: DragHandle;
   private readonly dust = new Dust();
   private readonly shake = new Shake();
   /** The marks of the sections' exits (none until the kit is in) and the section whose mark is lit. */
@@ -176,6 +191,7 @@ export class World {
     this.cs = cs;
     this.M = M;
     this.portal = portalMaterial(M.accent);
+    this.handle = new DragHandle(M);
     this.state = cs.initialState();
     const cube = cs.modules.find((m) => m.type === 'cube3');
     const ctx = cube && cube.type === 'cube3' ? { cubeFaces: cube.params.faces as Record<CubeFace, DirName[]> } : {};
@@ -201,6 +217,7 @@ export class World {
       }
       v.root.rotation.y = ((m.yaw ?? 0) * Math.PI) / 2;
       this.colliders.push(...v.colliders);
+      if (m.group) this.groupColliders.set(m.group, [...(this.groupColliders.get(m.group) ?? []), ...v.colliders]);
       if (v.fallback) this.fallbacks.push(v.fallback);
       if (m.type === 'plate') {
         const holder = v.root.children[0];
@@ -220,7 +237,7 @@ export class World {
       });
       this.root.add(node);
     }
-    this.root.add(this.rails, this.overlay, this.dust.group);
+    this.root.add(this.rails, this.overlay, this.dust.group, this.handle.group);
     this.setState(this.state, false);
   }
 
@@ -251,28 +268,41 @@ export class World {
    * back a little, swings, overshoots a little and settles (foldFeel.foldCurve), the whole taking FOLD_TIME_GAIN of the plain
    * turn's time; at the stop the camera shakes and dust rises at the joints. `reduceMotion` turns that into one gentle ease.
    * `onStop` is called at the stop, `onDone` when the state changes (the turn is over), with what the fold joined.
+   * `from`: a pointer has been turning the group (beginDrag) and let go of it at this angle (radians about the action's
+   * axis): it goes on from there to the stop, with no pull-back (foldFeel.settleCurve), in the share of the time that is left.
    */
-  startAction(a: Action, durationScale: number, onDone: (result: FoldResult) => void, fx: { reduceMotion?: boolean; onStop?: () => void } = {}) {
+  startAction(a: Action, durationScale: number, onDone: (result: FoldResult) => void, fx: { reduceMotion?: boolean; onStop?: () => void; from?: number } = {}) {
     const target = this.cs.apply(this.state, a);
     const motion = this.cs.motionOf(this.state, a);
     const g = this.cs.groups.get(a.group)!;
     const pivot = this.pivots.get(a.group)!;
     const moving = new Set(this.cs.modules.filter((m) => m.group === a.group).map((m) => m.id));
-    this.buildRails(this.cs.walkMap(this.state), moving);
-    for (const c of this.crowns) if (c.group === a.group) c.node.visible = false;
-    for (const c of this.sills) if (c.group === a.group) c.node.visible = false;
-    for (const pl of this.plates.values()) pl.target = 0;
+    const held = fx.from !== undefined && this.drag?.group === a.group ? this.drag : null; // (what beginDrag has put away is already away)
+    if (!held) {
+      this.buildRails(this.cs.walkMap(this.state), moving);
+      for (const c of this.crowns) if (c.group === a.group) c.node.visible = false;
+      for (const c of this.sills) if (c.group === a.group) c.node.visible = false;
+      for (const pl of this.plates.values()) pl.target = 0;
+    }
+    this.drag = null;
     const reduce = !!fx.reduceMotion;
     const { feel, radius } = feelOf(this.cs, this.state, a);
     const plain = ((g.durationMs ?? 2000) / 1000) * durationScale * (Math.abs(motion.quarters) === 2 ? 1.35 : 1);
+    const angle = (motion.quarters * Math.PI) / 2;
+    const from = held ? fx.from! : 0;
+    const left = Math.abs(angle - from);
     this.anim = {
       group: a.group,
       pivot,
-      qStart: pivot.quaternion.clone(),
+      qStart: held ? held.base : pivot.quaternion.clone(),
       axis: AXIS[motion.axis],
-      angle: (motion.quarters * Math.PI) / 2,
+      angle,
+      from,
+      settle: !!held,
+      over: held ? Math.min(0.3, (feel.over * Math.abs(angle)) / Math.max(left, 1e-6)) : 0,
+      kick: reduce ? 0 : SHAKE_BASE * Math.min(1.4, Math.max(0.7, radius / SHAKE_REFERENCE_RADIUS)),
       t: 0,
-      dur: foldSeconds(plain, reduce),
+      dur: held ? settleSeconds(plain, left / Math.abs(angle), reduce) : foldSeconds(plain, reduce),
       target,
       onDone,
       feel,
@@ -284,6 +314,117 @@ export class World {
     };
   }
 
+  // ---- turning a group by hand (Fold Mode's drag; game.ts drives it from pointer events) ----
+
+  /**
+   * A pointer has taken hold of `group`: what its fold would put away goes away now (its parapets stay in the world's frame
+   * and would be left standing, its plates retract, the crowns and sills of the tower are hidden), as at the start of a fold.
+   * `setDragAngle` then turns it about `axis` through its pivot, from the pose it is in.
+   */
+  beginDrag(group: Id, axis: 'x' | 'y' | 'z') {
+    if (this.drag || this.anim) return;
+    const moving = new Set(this.cs.modules.filter((m) => m.group === group).map((m) => m.id));
+    this.buildRails(this.cs.walkMap(this.state), moving);
+    for (const c of this.crowns) if (c.group === group) c.node.visible = false;
+    for (const c of this.sills) if (c.group === group) c.node.visible = false;
+    for (const pl of this.plates.values()) pl.target = 0;
+    this.drag = { group, pivot: this.pivots.get(group)!, base: this.groupQuaternion(group, this.state), axis: AXIS[axis] };
+  }
+
+  get dragging(): boolean {
+    return this.drag !== null;
+  }
+
+  /** How far the group a pointer holds is turned now (radians about its axis, from the pose it was taken in): 0 when none is held. It follows the settle too. */
+  get dragTurn(): number {
+    const d = this.drag;
+    if (!d) return 0;
+    const rel = d.pivot.quaternion.clone().multiply(d.base.clone().invert());
+    return 2 * Math.atan2(d.axis.x * rel.x + d.axis.y * rel.y + d.axis.z * rel.z, rel.w);
+  }
+
+  /** Places on a group's hidden boxes, the biggest box first: its middle, then a third of the way to each of its ends (somewhere to take hold of the group: the e2e). */
+  groupSamplePoints(group: Id): THREE.Vector3[] {
+    const out: THREE.Vector3[] = [];
+    const size = new THREE.Vector3();
+    const boxes = (this.groupColliders.get(group) ?? []).map((c) => new THREE.Box3().setFromObject(c)).sort((a, b) => b.getSize(size).lengthSq() - a.getSize(size).lengthSq());
+    for (const b of boxes) {
+      const c = b.getCenter(new THREE.Vector3());
+      const half = b.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+      out.push(c);
+      for (const [x, y, z] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]]) out.push(c.clone().add(half.clone().multiply(new THREE.Vector3(x, y, z)).multiplyScalar(0.66)));
+    }
+    return out;
+  }
+
+  /** Turn the group a pointer holds to `angle` (radians about its axis, from the pose it was taken in). */
+  setDragAngle(angle: number) {
+    const d = this.drag;
+    if (!d || this.anim) return;
+    d.pivot.quaternion.copy(d.base).premultiply(new THREE.Quaternion().setFromAxisAngle(d.axis, angle));
+  }
+
+  /**
+   * Let go of the group at `from` without changing the puzzle: it settles back to the pose it was taken in (foldFeel.settleCurve,
+   * no overshoot), and the camera shakes a little as it arrives if `refused` (the stop it was heading for is blocked). `onDone`
+   * runs when it is home.
+   */
+  settleDrag(from: number, opts: { refused?: boolean; reduceMotion?: boolean; durationScale?: number }, onDone: () => void) {
+    const d = this.drag;
+    if (!d || this.anim) return;
+    const g = this.cs.groups.get(d.group)!;
+    const reduce = !!opts.reduceMotion;
+    const plain = ((g.durationMs ?? 2000) / 1000) * (opts.durationScale ?? 1);
+    this.anim = {
+      group: d.group,
+      pivot: d.pivot,
+      qStart: d.base,
+      axis: d.axis,
+      angle: 0,
+      from,
+      settle: true,
+      over: 0,
+      kick: opts.refused && !reduce ? SHAKE_BASE : 0,
+      t: 0,
+      dur: Math.min(settleSeconds(plain, Math.abs(from) / (Math.PI / 2), reduce), 0.6),
+      target: this.state,
+      onDone: () => {
+        this.drag = null;
+        onDone();
+      },
+      feel: { ant: 0, over: 0 },
+      reduce,
+      joints: { joined: 0, seams: [] },
+      radius: 0,
+      stopped: false,
+    };
+  }
+
+  /** Drop a drag at once (Fold Mode closed, the page lost focus, a review shot): the group is back in its pose and everything put away is back. */
+  endDrag() {
+    if (!this.drag) return;
+    this.anim = null;
+    this.drag = null;
+    this.setState(this.state);
+  }
+
+  /**
+   * Where a pointer ray first meets `group`'s own (hidden) boxes, unless another module's box is nearer: the point it takes hold of,
+   * or null. The camera's matrices and the world's must be up to date.
+   */
+  pickBody(ray: THREE.Ray, group: Id): THREE.Vector3 | null {
+    const mine = this.groupColliders.get(group);
+    if (!mine?.length) return null;
+    const caster = new THREE.Raycaster();
+    caster.ray.copy(ray);
+    const hit = caster.intersectObjects(mine, false)[0];
+    if (!hit) return null;
+    let rest = this.otherColliders.get(group);
+    if (!rest) this.otherColliders.set(group, (rest = this.colliders.filter((c) => !mine.includes(c))));
+    const others = caster.intersectObjects(rest, false)[0];
+    return others && others.distance < hit.distance - 0.05 ? null : hit.point;
+  }
+
   /** Progress of the running fold animation, 0..1 (1 when idle). */
   get animProgress() {
     return this.anim ? Math.min(1, this.anim.t / this.anim.dur) : 1;
@@ -293,7 +434,7 @@ export class World {
   private stop(a: Anim) {
     a.stopped = true;
     this.dust.puff(a.joints.seams, a.reduce);
-    if (!a.reduce) this.shake.kick(SHAKE_BASE * Math.min(1.4, Math.max(0.7, a.radius / SHAKE_REFERENCE_RADIUS)));
+    if (a.kick > 0) this.shake.kick(a.kick);
     a.onStop?.();
   }
 
@@ -316,7 +457,8 @@ export class World {
       const a = this.anim;
       a.t += dt;
       const k = Math.min(1, a.t / a.dur);
-      const q = new THREE.Quaternion().setFromAxisAngle(a.axis, a.angle * foldCurve(k, a.feel, a.reduce));
+      const way = a.settle ? settleCurve(k, a.over, a.reduce) : foldCurve(k, a.feel, a.reduce);
+      const q = new THREE.Quaternion().setFromAxisAngle(a.axis, a.from + (a.angle - a.from) * way);
       a.pivot.quaternion.copy(a.qStart).premultiply(q);
       if (!a.stopped && k >= (a.reduce ? 0.92 : STOP_AT)) this.stop(a);
       if (k >= 1) {
@@ -456,7 +598,7 @@ export class World {
 
   /** The gilt materials of the kit (none until it has loaded). */
   giltMaterials(): THREE.MeshStandardMaterial[] {
-    return this.kit?.giltMaterials() ?? [];
+    return [...(this.kit?.giltMaterials() ?? []), this.handle.gilt];
   }
 
   /**
@@ -650,6 +792,8 @@ export class World {
    */
   resetForShot(state: PuzzleState) {
     this.anim = null;
+    this.drag = null;
+    this.handle.show(false);
     this.endWarmUp();
     this.preview(null, [], []);
     this.dust.clear();
