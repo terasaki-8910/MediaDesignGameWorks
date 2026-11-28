@@ -1,0 +1,130 @@
+{
+  "schema": "fold-city/stage@1",
+  "stageId": "proto-core",
+  "version": "0.1.0",
+  "title": { "ja": "試作：v0.5 の仕組み", "en": "Prototype: the v0.5 mechanics" },
+  "seed": 5,
+  "modules": [
+    { "id": "t_a", "type": "tile", "at": [0, 3, 0], "params": { "size": [3, 1] } },
+    { "id": "t_b", "type": "tile", "at": [7, 3, 0], "params": { "size": [3, 1] } },
+    { "id": "t_ra", "type": "tether", "at": [2, 3, 0], "params": { "facing": "E" } },
+    { "id": "t_rb", "type": "tether", "at": [7, 3, 0], "params": { "facing": "W" } },
+
+    { "id": "f_a", "type": "tile", "at": [0, 3, 10], "params": { "size": [3, 1] } },
+    { "id": "f_b", "type": "tile", "at": [8, 3, 10], "params": { "size": [3, 1] } },
+    { "id": "f_ra", "type": "tether", "at": [2, 3, 10], "params": { "facing": "E" } },
+    { "id": "f_rb", "type": "tether", "at": [8, 3, 10], "group": "g_ring", "params": { "facing": "E" } },
+
+    { "id": "h_row", "type": "tile", "at": [0, 3, 20], "params": { "size": [7, 1] } },
+    { "id": "h_bridge", "type": "bridge", "at": [7, 3, 20], "group": "g_hb", "params": { "length": 3, "inset": 0.4 } },
+    { "id": "h_far", "type": "tile", "at": [10, 3, 20], "params": { "size": [3, 1] } },
+    { "id": "h_wall", "type": "tower", "at": [1, 5, 19], "params": { "arms": [], "depth": 30 } },
+
+    { "id": "r_a", "type": "tile", "at": [7, 3, 32], "params": { "size": [3, 2] } },
+    { "id": "r_ferry", "type": "bridge", "at": [8, 3, 31], "yaw": 1, "group": "g_ferry", "params": { "length": 3, "inset": 0.4 } },
+    { "id": "r_c", "type": "tile", "at": [10, 3, 30], "params": { "size": [3, 1] } },
+    { "id": "r_street", "type": "bridge", "at": [11, 3, 29], "yaw": 1, "group": "g_street", "params": { "length": 3 } },
+    { "id": "r_d", "type": "tile", "at": [10, 3, 26], "params": { "size": [3, 1] } },
+
+    { "id": "c_a", "type": "tile", "at": [0, 3, 40], "params": { "size": [4, 1] } },
+    { "id": "c_bridge", "type": "bridge", "at": [4, 3, 40], "group": "g_clock", "params": { "length": 3, "inset": 0.4 } },
+    { "id": "c_b", "type": "tile", "at": [7, 3, 40], "params": { "size": [3, 1] } }
+  ],
+  "groups": [
+    {
+      "id": "g_ring", "kind": "states", "pivot": [34, 12, 42], "axis": "y", "states": [0, 2], "initial": 0, "durationMs": 900,
+      "label": { "ja": "輪", "en": "Ring" }
+    },
+    {
+      "id": "g_hb", "kind": "states", "pivot": [34, 12, 82], "axis": "y", "states": [1, 0], "initial": 0, "durationMs": 1800,
+      "label": { "ja": "回転橋", "en": "Turning bridge" }
+    },
+    {
+      "id": "g_ferry", "kind": "states", "pivot": [34, 12, 122], "axis": "y", "states": [0, 1], "initial": 0, "durationMs": 1800,
+      "label": { "ja": "渡し橋", "en": "Ferry bridge" }
+    },
+    {
+      "id": "g_street", "kind": "states", "pivot": [46, 11.4, 120], "axis": "x", "states": [3, 0], "initial": 0, "durationMs": 3200,
+      "label": { "ja": "折り畳まれた街路", "en": "Folded street" }
+    },
+    {
+      "id": "g_clock", "kind": "states", "pivot": [22, 12, 162], "axis": "y", "states": [1, 0], "initial": 0, "durationMs": 1800,
+      "auto": { "periodMs": 4000, "dwellMs": 1800 },
+      "label": { "ja": "時計仕掛けの橋", "en": "Clockwork bridge" }
+    }
+  ],
+  "interactables": [
+    {
+      "id": "c_ring", "kind": "console", "at": [0, 3, 10], "facing": "N", "controls": "g_ring",
+      "label": { "ja": "輪の操作盤", "en": "Ring console" }
+    }
+  ],
+  "handles": [
+    { "id": "h1", "at": [2, 3, 18], "controls": "g_hb", "reach": 3, "label": { "ja": "橋の把手", "en": "Bridge handle" } },
+    { "id": "h_ferry", "at": [10, 3, 32], "controls": "g_ferry", "reach": 3, "label": { "ja": "渡し橋の把手", "en": "Ferry handle" } },
+    { "id": "h_street", "at": [13, 3, 29], "controls": "g_street", "reach": 3, "label": { "ja": "街路の把手", "en": "Street handle" } }
+  ],
+  "sections": [
+    {
+      "id": "p_tether",
+      "name": { "ja": "糸", "en": "Tether" },
+      "groups": [],
+      "consoles": [],
+      "start": "cp_tether",
+      "exit": [[9, 3, 0]],
+      "intent": { "teaches": ["tether"], "optimalActions": { "min": 0, "max": 0 }, "mustUse": [], "maxDeadEndStates": 0 }
+    },
+    {
+      "id": "p_tether_fold",
+      "name": { "ja": "糸（折ってから）", "en": "Tether after a fold" },
+      "groups": ["g_ring"],
+      "consoles": ["c_ring"],
+      "start": "cp_fold",
+      "exit": [[10, 3, 10]],
+      "intent": { "teaches": ["tether", "fold"], "optimalActions": { "min": 1, "max": 1 }, "mustUse": ["c_ring"], "maxDeadEndStates": 0 }
+    },
+    {
+      "id": "p_handle",
+      "name": { "ja": "把手", "en": "Handle" },
+      "groups": ["g_hb"],
+      "consoles": [],
+      "handles": ["h1"],
+      "start": "cp_handle",
+      "exit": [[12, 3, 20]],
+      "intent": { "teaches": ["handle", "line-of-sight"], "optimalActions": { "min": 1, "max": 1 }, "mustUse": ["h1"], "maxDeadEndStates": 0 }
+    },
+    {
+      "id": "p_ride",
+      "name": { "ja": "乗る", "en": "Ride" },
+      "groups": ["g_ferry", "g_street"],
+      "consoles": [],
+      "handles": ["h_ferry", "h_street"],
+      "start": "cp_ride",
+      "exit": [[11, 3, 26]],
+      "intent": { "teaches": ["ride", "handle"], "optimalActions": { "min": 2, "max": 2 }, "mustUse": ["h_ferry", "h_street"], "maxDeadEndStates": 0 }
+    },
+    {
+      "id": "p_clock",
+      "name": { "ja": "時計仕掛け", "en": "Clockwork" },
+      "groups": ["g_clock"],
+      "consoles": [],
+      "start": "cp_clock",
+      "exit": [[9, 3, 40]],
+      "intent": { "teaches": ["clockwork", "wait"], "optimalActions": { "min": 0, "max": 0 }, "mustUse": [], "maxDeadEndStates": 0 }
+    }
+  ],
+  "checkpoints": [
+    { "id": "cp_tether", "at": [0, 3, 0], "facing": "E" },
+    { "id": "cp_fold", "at": [0, 3, 10], "facing": "E" },
+    { "id": "cp_handle", "at": [0, 3, 20], "facing": "E" },
+    { "id": "cp_ride", "at": [8, 3, 33], "facing": "N" },
+    { "id": "cp_clock", "at": [0, 3, 40], "facing": "E" }
+  ],
+  "goal": { "at": [11, 3, 26] },
+  "visualTheme": {
+    "sky": ["#140f3a", "#f0a7a0", "#2a2346"],
+    "fog": { "color": "#9a7f9e", "density": 0.0042 },
+    "accent": "#5ff2ff",
+    "city": { "seed": 5, "count": 200, "radius": [85, 360] }
+  }
+}

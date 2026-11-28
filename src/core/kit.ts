@@ -9,6 +9,8 @@ export interface Box { min: Vec3; max: Vec3 }
 export interface KitModule { tiles: KitTile[]; boxes: Box[] }
 
 export const SLAB = 0.6; // walkway thickness in metres
+export const TETHER_HEIGHT = 1.6; // metres above the floor of a tether's cell
+export const TETHER_SPAN = 8; // cells a tether reaches when `span` is left out
 const H = CELL / 2;
 const U = DIRS.U;
 
@@ -162,8 +164,15 @@ export function buildKit(m: ModuleInstance): KitModule {
       };
     }
     case 'deco':
+    case 'tether': // a ring, not a tile or a solid: its walkable landing comes from another module
       return { tiles: [], boxes: [] };
   }
+}
+
+/** The ring of a tether in the module's local frame: the middle of the `facing` edge of its cell, 1.6 m above the floor. */
+export function tetherRing(facing: Side): Vec3 {
+  const d = DIRS[facing];
+  return [d[0] * H, TETHER_HEIGHT, d[2] * H];
 }
 
 /** Validate module parameters that the type system cannot express. Returns error messages. */
@@ -180,6 +189,11 @@ export function kitErrors(m: ModuleInstance): string[] {
     }
   }
   if (m.type === 'bridge' && !(m.params.length >= 1)) errs.push(`${m.id}: bridge length must be >= 1`);
+  if (m.type === 'tether') {
+    if (!SIDES.includes(m.params.facing)) errs.push(`${m.id}: tether facing must be N, E, S or W`);
+    const span = m.params.span;
+    if (span !== undefined && !(Number.isInteger(span) && span >= 2)) errs.push(`${m.id}: tether span must be an integer >= 2`);
+  }
   if (m.type === 'tile') {
     const [w, d] = m.params.size ?? [1, 1];
     if (!(w >= 1 && d >= 1)) errs.push(`${m.id}: tile size must be >= 1`);

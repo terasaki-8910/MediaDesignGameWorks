@@ -187,6 +187,8 @@ export function buildModuleMesh(m: ModuleInstance, M: Materials, ctx: BuildConte
       }
       return { root, colliders: [], fallback };
     }
+    case 'tether':
+      return { root, colliders: [] }; // v0.5: a ring in the core only; the runtime draws it
   }
 }
 

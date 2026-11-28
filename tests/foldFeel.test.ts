@@ -146,7 +146,7 @@ function walkMap(tiles: [number, string, Side[], boolean?][]): WalkMap {
       open: Object.fromEntries(SIDES.map((s) => [s, open.includes(s)])) as Record<Side, boolean>,
     });
   }
-  return { tiles: map, region: new Map(), conflicts: [] };
+  return { tiles: map, region: new Map(), conflicts: [], links: [] };
 }
 
 test('a joined path is a new open seam between two modules; a plate between two roads counts once', () => {
